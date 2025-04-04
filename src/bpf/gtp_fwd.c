@@ -71,6 +71,17 @@ struct {
 	__type(value, struct port_mac_address);
 } mac_learning SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, PKT_STAT_MAX);
+	__type(key, __u32);
+	__type(value, __u64);
+} pkt_stats SEC(".maps");
+
+
+/* forward decl. */
+static int gtpu_ip_frag_timer_set(const struct ip_frag_key *frag_key);
+
 
 /* Packet rewrite */
 static __always_inline void swap_src_dst_mac(struct ethhdr *eth)
@@ -247,23 +258,42 @@ gtpu_teid_frag_get(struct iphdr *iph, __u16 *frag_off, __u16 *ipfl)
 {
 	struct gtp_teid_frag *gtpf = NULL;
 	struct ip_frag_key frag_key;
+	int ret;
 
 	*frag_off = bpf_ntohs(iph->frag_off);
 	*ipfl = *frag_off & ~IP_OFFSET;
 	*frag_off &= IP_OFFSET;
 	*frag_off <<= 3;		/* 8-byte chunk */
 
-	if (*frag_off != 0) {
-		__builtin_memset(&frag_key, 0, sizeof(struct ip_frag_key));
-		frag_key.saddr = iph->saddr;
-		frag_key.daddr = iph->daddr;
-		frag_key.id = iph->id;
-		frag_key.protocol = iph->protocol;
+	if (*frag_off == 0)
+		return NULL;
 
-		gtpf = bpf_map_lookup_elem(&ip_frag, &frag_key);
+	__builtin_memset(&frag_key, 0, sizeof(struct ip_frag_key));
+	frag_key.saddr = iph->saddr;
+	frag_key.daddr = iph->daddr;
+	frag_key.id = iph->id;
+	frag_key.protocol = iph->protocol;
+
+	gtpf = bpf_map_lookup_elem(&ip_frag, &frag_key);
+	if (gtpf != NULL) {
+		/* empty rule was already inserted. do not use it */
+		if (gtpf->dst_addr == 0)
+			return NULL;
+
+		/* 1st segment of fragmented packet was seen,
+		 * use its rule to rewrite this segment */
+		return gtpf;
 	}
 
-	return gtpf;
+	/* 1st segment was not seen. insert empty rule, thus:
+	 *  either 1st seg is missing: count STAT_FRAG_NOMATCH on timer expiration
+	 *  or 1st will come later: count STAT_FRAG_REORDER when it arrives */
+	struct gtp_teid_frag frag = {};
+	ret = bpf_map_update_elem(&ip_frag, &frag_key, &frag, BPF_NOEXIST);
+	if (!ret)
+		gtpu_ip_frag_timer_set(&frag_key);
+
+	return NULL;
 }
 
 static __always_inline int
@@ -300,7 +330,7 @@ gtpu_ipip_decap(struct parse_pkt *pkt, struct gtp_iptnl_rule *iptnl_rule, struct
 	if (iptnl_rule->flags & IPTNL_FL_UNTAG_VLAN) {
 		new_eth->h_proto = bpf_htons(ETH_P_IP);
 	}
-	
+
 	if ((iptnl_rule->flags & IPTNL_FL_TAG_VLAN) && pkt->vlan_id != 0) {
 		vlanh = data + offset;
 		if (vlanh + 1 > data_end)
@@ -475,6 +505,12 @@ gtpu_xlat_frag(struct parse_pkt *pkt, struct ethhdr *ethh, struct iphdr *iph, __
 static int
 gtpu_ip_frag_timer(void *map, int *key, struct gtp_teid_frag *val)
 {
+	if (val->dst_addr == 0) {
+		int key = PKT_STAT_FRAG_NOMATCH_DROP;
+		__u64 *val = bpf_map_lookup_elem(&pkt_stats, &key);
+		if (val != NULL)
+			++*val;
+	}
 	bpf_map_delete_elem(map, key);
 	return 0;
 }
@@ -640,13 +676,30 @@ gtpu_traffic_selector(struct parse_pkt *pkt)
 		frag_key.id = iph->id;
 		frag_key.protocol = iph->protocol;
 
-		__builtin_memset(&frag, 0, sizeof(struct gtp_teid_frag));
-		frag.dst_addr = rule->dst_addr;
-		ret = bpf_map_update_elem(&ip_frag, &frag_key, &frag, BPF_NOEXIST);
-		if (ret < 0)
-			return XDP_DROP;
+		struct gtp_teid_frag *gtpf = bpf_map_lookup_elem(&ip_frag, &frag_key);
+		if (gtpf != NULL) {
+			/* we already received and dropped fragment(s) of this packet */
+			int key = PKT_STAT_FRAG_REORDER_DROP;
+			__u64 *val = bpf_map_lookup_elem(&pkt_stats, &key);
+			if (val != NULL)
+				++*val;
 
-		gtpu_ip_frag_timer_set(&frag_key);
+			/* update rule and let it go */
+			gtpf->dst_addr = rule->dst_addr;
+
+		} else {
+			__builtin_memset(&frag, 0, sizeof(struct gtp_teid_frag));
+			frag.dst_addr = rule->dst_addr;
+			ret = bpf_map_update_elem(&ip_frag, &frag_key, &frag, BPF_NOEXIST);
+			if (ret < 0)
+				return XDP_DROP;
+			gtpu_ip_frag_timer_set(&frag_key);
+
+			int key = PKT_STAT_FRAG_FWD;
+			__u64 *val = bpf_map_lookup_elem(&pkt_stats, &key);
+			if (val != NULL)
+				++*val;
+		}
 	}
 
 	return gtpu_xlat(pkt, ethh, iph, udph, gtph, rule);

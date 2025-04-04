@@ -192,4 +192,12 @@ struct rps_opts {
 } __attribute__ ((__aligned__(8)));
 
 
+/* Program statistics */
+enum pkt_stats_type {
+	PKT_STAT_FRAG_FWD = 0,
+	PKT_STAT_FRAG_REORDER_DROP,
+	PKT_STAT_FRAG_NOMATCH_DROP,
+	PKT_STAT_MAX,
+};
+
 #endif
