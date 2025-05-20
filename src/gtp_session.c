@@ -44,23 +44,6 @@ static timer_thread_t gtp_session_timer;
 /*
  *	Session handling
  */
-gtp_session_t *
-gtp_session_get_by_ptype(gtp_conn_t *c, uint8_t ptype)
-{
-	gtp_session_t *s;
-
-	pthread_mutex_lock(&c->session_mutex);
-	list_for_each_entry(s, &c->gtp_sessions, next) {
-		if (s->ptype == ptype) {
-			pthread_mutex_unlock(&c->session_mutex);
-			return s;
-		}
-	}
-	pthread_mutex_unlock(&c->session_mutex);
-
-	return NULL;
-}
-
 gtp_teid_t *
 gtp_session_gtpu_teid_get_by_sqn(gtp_session_t *s, uint32_t sqn)
 {
@@ -127,9 +110,9 @@ gtp_session_gtu_teid_xdp_rule_add(gtp_teid_t *teid)
 	int err = -1;
 
 	if (__test_bit(GTP_TEID_FL_FWD, &teid->flags))
-		err = gtp_xdp_fwd_teid_action(RULE_ADD, teid);
+		err = gtp_bpf_fwd_teid_action(RULE_ADD, teid);
 	else if (__test_bit(GTP_TEID_FL_RT, &teid->flags))
-		err = gtp_xdp_rt_teid_action(RULE_ADD, teid);
+		err = gtp_bpf_rt_teid_action(RULE_ADD, teid);
 
 	if (!err)
 		__set_bit(GTP_TEID_FL_XDP_SET, &teid->flags);
@@ -235,9 +218,6 @@ gtp_session_roaming_status_set(gtp_session_t *s)
 		return 0;
 	}
 
-	if (list_empty(l))
-		return -1;
-
 	list_for_each_entry(p, l, next) {
 		if (bcd_imsi_plmn_match(imsi, p->plmn)) {
 			__set_bit(GTP_SESSION_FL_ROAMING_OUT, &s->flags);
@@ -268,6 +248,10 @@ gtp_session_alloc(gtp_conn_t *c, gtp_apn_t *apn,
 	/* This is a local session id, simply monotonically incremented */
 	__sync_add_and_fetch(&gtp_session_id, 1);
 	new->id = gtp_session_id;
+
+	/* CDR context */
+	if (apn->cdr_spool)
+		new->cdr = gtp_cdr_alloc();
 
 	gtp_session_add(c, new);
 	gtp_session_add_timer(new);
@@ -319,10 +303,14 @@ __gtp_session_gtpu_teid_destroy(gtp_teid_t *teid)
 	if (!__test_bit(GTP_TEID_FL_XDP_SET, &teid->flags))
 		goto end;
 
+	/* cdr volume update from bpf counters */
+	gtp_cdr_volumes_update_from_bpf(teid);
+
+	/* release bpf ruleset */
 	if (__test_bit(GTP_TEID_FL_FWD, &teid->flags))
-		gtp_xdp_fwd_teid_action(RULE_DEL, teid);
+		gtp_bpf_fwd_teid_action(RULE_DEL, teid);
 	else if (__test_bit(GTP_TEID_FL_RT, &teid->flags))
-		gtp_xdp_rt_teid_action(RULE_DEL, teid);
+		gtp_bpf_rt_teid_action(RULE_DEL, teid);
 
   end:
 	gtp_teid_free(teid);
@@ -378,6 +366,17 @@ __gtp_session_send_delete_bearer(gtp_session_t *s)
 }
 
 static int
+__gtp_session_free(gtp_session_t *s)
+{
+	__gtp_session_teid_destroy(s);
+	gtp_apn_cdr_commit(s->apn, s->cdr);
+	__spppoe_destroy(s->s_pppoe);
+	list_head_del(&s->next);
+	FREE(s);
+	return 0;
+}
+
+static int
 __gtp_session_destroy(gtp_session_t *s)
 {
 	gtp_conn_t *c = s->conn;
@@ -388,15 +387,7 @@ __gtp_session_destroy(gtp_session_t *s)
 	if (s->action == GTP_ACTION_SEND_DELETE_BEARER_REQUEST)
 		__gtp_session_send_delete_bearer(s);
 
-	/* Release teid */
-	__gtp_session_teid_destroy(s);
-
-	/* Release PPPoE related */
-	__spppoe_destroy(s->s_pppoe);
-
-	/* Release session */
-	list_head_del(&s->next);
-	FREE(s);
+	__gtp_session_free(s);
 
 	pthread_mutex_unlock(&c->session_mutex);
 
@@ -487,6 +478,26 @@ gtp_session_destroy_teid(gtp_teid_t *teid)
 	return 0;
 }
 
+int
+gtp_session_uniq_ptype(gtp_conn_t *c, uint8_t ptype)
+{
+	gtp_session_t *s;
+	int err = 0;
+
+	pthread_mutex_lock(&c->session_mutex);
+	list_for_each_entry(s, &c->gtp_sessions, next) {
+		if (s->ptype != ptype)
+			continue;
+
+		s->action = GTP_ACTION_SEND_DELETE_BEARER_REQUEST;
+		gtp_session_destroy(s);
+		err = -1;
+	}
+	pthread_mutex_unlock(&c->session_mutex);
+
+	return err;
+}
+
 
 /*
  *	Session expiration handling
@@ -517,9 +528,8 @@ gtp_sessions_release(gtp_conn_t *c)
 
 	/* Release sessions */
 	pthread_mutex_lock(&c->session_mutex);
-	list_for_each_entry_safe(s, _s, l, next) {
+	list_for_each_entry_safe(s, _s, l, next)
 		gtp_session_expire_now(s);
-	}
 	pthread_mutex_unlock(&c->session_mutex);
 
 	return 0;
@@ -532,11 +542,8 @@ gtp_sessions_free(gtp_conn_t *c)
 	gtp_session_t *s, *_s;
 
 	pthread_mutex_lock(&c->session_mutex);
-	list_for_each_entry_safe(s, _s, l, next) {
-		__gtp_session_teid_destroy(s);
-		list_head_del(&s->next);
-		FREE(s);
-	}
+	list_for_each_entry_safe(s, _s, l, next)
+		__gtp_session_free(s);
 	pthread_mutex_unlock(&c->session_mutex);
 
 	return 0;
@@ -601,13 +608,13 @@ __gtp_session_teid_up_vty(vty_t *vty, list_head_t *l)
 				   , t->vid, ntohl(t->id), t->sqn, t->bearer_id, NIPQUAD(t->ipv4)
 				   , VTY_NEWLINE);
 			if (t->vid)
-				gtp_xdp_fwd_teid_vty(vty, ntohl(t->vid));
+				gtp_bpf_fwd_teid_vty(vty, ntohl(t->vid));
 		} else if (__test_bit(GTP_TEID_FL_RT, &t->flags)) {
 			vty_out(vty, "  [UP] teid:0x%.8x"
 				     " bearer-id:0x%.2x remote_ipaddr:%u.%u.%u.%u%s"
 				   , ntohl(t->id), t->bearer_id, NIPQUAD(t->ipv4)
 				   , VTY_NEWLINE);
-			gtp_xdp_rt_teid_vty(vty, t);
+			gtp_bpf_rt_teid_vty(vty, t);
 		}
 	}
 	return 0;

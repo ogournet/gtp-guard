@@ -19,21 +19,12 @@
  * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _GTP_XDP_MIRROR_H
-#define _GTP_XDP_MIRROR_H
+#ifndef _GTP_PROXY_HDL_V2_H
+#define _GTP_PROXY_HDL_V2_H
 
-struct gtp_mirror_rule {
-	__be32	addr;
-	__be16	port;
-	__u8	protocol;
-	int	ifindex;
-} __attribute__ ((__aligned__(8)));
-
+/* Defines */
 
 /* Prototypes */
-extern int gtp_xdp_mirror_action(int, gtp_mirror_rule_t *);
-extern int gtp_xdp_mirror_vty(vty_t *);
-extern int gtp_xdp_mirror_load(gtp_bpf_opts_t *);
-extern void gtp_xdp_mirror_unload(gtp_bpf_opts_t *);
+extern gtp_teid_t *gtpc_proxy_handle_v2(gtp_server_worker_t *, struct sockaddr_storage *);
 
 #endif

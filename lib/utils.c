@@ -33,7 +33,7 @@ unsigned long debug = 0;
 
 /* Display a buffer into a HEXA formated output */
 void
-dump_buffer(char *prefix, char *buff, int count)
+dump_buffer(const char *prefix, char *buff, int count)
 {
         int i, j, c;
         int printnext = 1;
@@ -72,6 +72,19 @@ dump_buffer(char *prefix, char *buff, int count)
                         }
                 }
         }
+}
+
+void
+buffer_to_c_array(const char *name, char *buffer, size_t blen)
+{
+	int i;
+
+	printf("const char %s[%ld] = {\n  ", name, blen);
+	for (i = 0; i < blen; i++)
+		printf("0x%.2x%s%s", buffer[i] & 0xff
+				   , (i < blen - 1) ? "," : ""
+				   , ((i + 1) % 16) ? " " : "\n  ");
+	printf("\n};\n");
 }
 
 /* Compute a checksum */
@@ -693,6 +706,18 @@ bsd_strlcat(char *dst, const char *src, size_t dsize)
 	*dst = '\0';
 
 	return(dlen + (src - osrc));	/* count does not include NUL */
+}
+
+char *
+memcpy2str(char *dst, size_t dsize, const void *src, size_t ssize)
+{
+	uint8_t *cp = (uint8_t *) src;
+	size_t i;
+
+	for (i = 0; i < ssize && i < dsize - 1; i++)
+		dst[i] = *cp++;
+	dst[i] = '\0';
+	return dst;
 }
 
 /*

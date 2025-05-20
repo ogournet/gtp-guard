@@ -132,6 +132,7 @@ enum pppoe_flags {
 	PPPOE_FL_LCP_MAX_CONFIGURE_BIT,
 	PPPOE_FL_LCP_MAX_FAILURE_BIT,
 	PPPOE_FL_IGNORE_INGRESS_PPP_BRD_BIT,
+	PPPOE_FL_STRICT_AC_NAME_BIT,
 };
 
 struct rps_opts {
@@ -154,10 +155,8 @@ typedef struct _gtp_pppoe_worker {
 	pkt_queue_t		pkt_q;
 
 	/* Stats */
-	uint64_t		rx_packets;
-	uint64_t		rx_bytes;
-	uint64_t		tx_packets;
-	uint64_t		tx_bytes;
+	gtp_stats_pkt_t		rx_stats;
+	gtp_stats_pkt_t		tx_stats;
 } gtp_pppoe_worker_t;
 
 typedef struct _gtp_pppoe_bundle {
@@ -177,6 +176,7 @@ typedef struct _gtp_pppoe {
 	unsigned int		ifindex;
 	uint8_t			vmac_hbits;
 	char			ac_name[PPPOE_NAMELEN];
+	int			ac_name_len;
 	char			service_name[PPPOE_NAMELEN];
 	char			pap_username[PPPOE_NAMELEN];
 	char			pap_passwd[PPPOE_NAMELEN];

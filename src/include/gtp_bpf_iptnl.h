@@ -19,18 +19,20 @@
  * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _GTP_XDP_PPP_H
-#define _GTP_XDP_PPP_H
+#ifndef _GTP_BPF_IPTNL_H
+#define _GTP_BPF_IPTNL_H
 
-struct ppp_key {
-	__u8	hw[6];
-	__u16	session_id;
+struct gtp_iptnl_rule {
+	__be32	selector_addr;
+	__be32	local_addr;
+	__be32	remote_addr;
+	__be16	encap_vlan_id;
+	__be16	decap_vlan_id;
+	__u8	flags;
 } __attribute__ ((__aligned__(8)));
 
 /* Prototypes */
-extern int gtp_xdp_ppp_action(int, gtp_teid_t *, int, struct bpf_map *, struct bpf_map *);
-extern int gtp_xdp_ppp_teid_vty(vty_t *, gtp_teid_t *, int, struct bpf_map *, struct bpf_map *);
-extern int gtp_xdp_ppp_load(gtp_bpf_opts_t *);
-extern void gtp_xdp_ppp_unload(gtp_bpf_opts_t *);
+extern int gtp_bpf_iptnl_action(int, gtp_iptnl_t *, struct bpf_map *);
+extern int gtp_bpf_iptnl_vty(vty_t *, struct bpf_map *);
 
 #endif

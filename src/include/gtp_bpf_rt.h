@@ -19,8 +19,8 @@
  * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _GTP_XDP_RT_H
-#define _GTP_XDP_RT_H
+#ifndef _GTP_BPF_RT_H
+#define _GTP_BPF_RT_H
 
 enum {
 	XDP_RT_MAP_TEID_INGRESS = 0,
@@ -68,14 +68,15 @@ struct port_mac_address {
 
 
 /* Prototypes */
-extern int gtp_xdp_rt_load(gtp_bpf_opts_t *);
-extern void gtp_xdp_rt_unload(gtp_bpf_opts_t *);
-extern int gtp_xdp_rt_key_set(gtp_teid_t *, struct ip_rt_key *);
-extern int gtp_xdp_rt_teid_action(int, gtp_teid_t *);
-extern int gtp_xdp_rt_teid_vty(vty_t *, gtp_teid_t *);
-extern int gtp_xdp_rt_vty(vty_t *);
-extern int gtp_xdp_rt_iptnl_action(int, gtp_iptnl_t *);
-extern int gtp_xdp_rt_iptnl_vty(vty_t *);
-extern int gtp_xdp_rt_mac_learning_vty(vty_t *);
+extern int gtp_bpf_rt_load(gtp_bpf_opts_t *);
+extern void gtp_bpf_rt_unload(gtp_bpf_opts_t *);
+extern int gtp_bpf_rt_key_set(gtp_teid_t *, struct ip_rt_key *);
+extern int gtp_bpf_rt_teid_action(int, gtp_teid_t *);
+extern int gtp_bpf_rt_teid_vty(vty_t *, gtp_teid_t *);
+extern int gtp_bpf_rt_vty(vty_t *);
+extern int gtp_bpf_rt_teid_bytes(gtp_teid_t *, uint64_t *);
+extern int gtp_bpf_rt_iptnl_action(int, gtp_iptnl_t *);
+extern int gtp_bpf_rt_iptnl_vty(vty_t *);
+extern int gtp_bpf_rt_mac_learning_vty(vty_t *);
 
 #endif

@@ -19,33 +19,65 @@
  * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _GTP_XDP_H
-#define _GTP_XDP_H
-
-enum {
-	RULE_ADD = 0,
-	RULE_UPDATE,
-	RULE_DEL,
-	RULE_LIST
-};
-
-#define GTP_XDP_STRERR_BUFSIZE	128
-#define XDP_PATH_MAX 128
-#define GTP_INGRESS	0
-#define GTP_EGRESS	1
-
-typedef struct _xdp_exported_maps {
-	struct bpf_map	*map;
-} xdp_exported_maps_t;
+/* local includes */
+#include "gtp_guard.h"
 
 
-/* Prototypes */
-extern int gtp_xdp_mac_learning_vty(vty_t *, struct bpf_map *);
-extern struct bpf_map *gtp_bpf_load_map(struct bpf_object *, const char *);
-extern struct bpf_program *gtp_xdp_load_prog(gtp_bpf_opts_t *);
-extern int gtp_xdp_load(gtp_bpf_opts_t *);
-extern void gtp_xdp_unload(gtp_bpf_opts_t *);
-extern int gtp_xdp_init(void);
-extern int gtp_xdp_destroy(void);
+/*
+ *	Utilities
+ */
 
-#endif
+/* FIXME: maybe inline this */
+int
+gtp_stats_rx(gtp_stats_msg_t *stats, uint8_t msg_type)
+{
+	stats->rx[msg_type].count++;
+	return 0;
+}
+
+int
+gtp_stats_rx_notsup(gtp_stats_msg_t *stats, uint8_t msg_type)
+{
+	stats->rx[msg_type].unsupported++;
+	return 0;
+}
+
+int
+gtp_stats_tx(gtp_stats_msg_t *stats, uint8_t msg_type)
+{
+	stats->tx[msg_type].count++;
+	return 0;
+}
+
+int
+gtp_stats_tx_notsup(gtp_stats_msg_t *stats, uint8_t msg_type)
+{
+	stats->tx[msg_type].unsupported++;
+	return 0;
+}
+
+int
+gtp_stats_pkt_update(gtp_stats_pkt_t *pstats, ssize_t nbytes)
+{
+	if (nbytes <= 0)
+		return -1;
+
+	pstats->bytes += nbytes;
+	pstats->pkts++;
+	return 0;
+}
+
+int
+gtp_stats_cause_update(gtp_stats_cause_t *cstats, pkt_buffer_t *pbuff)
+{
+	gtp_ie_cause_t *ie_cause;
+	uint8_t *cp;
+
+	cp = gtp_get_ie(GTP_IE_CAUSE_TYPE, pbuff);
+	if (!cp)
+		return -1;
+
+	ie_cause = (gtp_ie_cause_t *) cp;
+	cstats->cause[ie_cause->value]++;
+	return 0;
+}

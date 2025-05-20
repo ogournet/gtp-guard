@@ -22,7 +22,29 @@
 #ifndef _GTP_DISK_H
 #define _GTP_DISK_H
 
+/* defines */
+#define GTP_DISK_ASYNC	0
+#define GTP_DISK_SYNC	1
+
+/* Map file */
+typedef struct _map_file {
+	char			path[GTP_PATH_MAX_LEN];
+	struct stat		fstat;
+	int			fd;
+	void			*map;
+} map_file_t;
+
 /* Prototypes */
+extern int gtp_disk_open(map_file_t *, size_t);
+extern int gtp_disk_close(map_file_t *);
+extern int gtp_disk_resize(map_file_t *, size_t);
+extern int gtp_disk_rm(const char *);
+extern int gtp_disk_mv(char *, char *);
+extern int gtp_disk_chown(const char *, uid_t, gid_t);
+extern int gtp_disk_msync_offset(map_file_t *, off_t, size_t, int);
+extern int gtp_disk_write(map_file_t *, off_t, const void *, size_t);
+extern int gtp_disk_write_sync(map_file_t *, off_t, const void *, size_t);
+extern int gtp_disk_write_async(map_file_t *, off_t, const void *, size_t);
 extern int gtp_disk_write_restart_counter(void);
 extern int gtp_disk_read_restart_counter(void);
 

@@ -80,6 +80,10 @@
 	(unsigned char)__eth_addr[4],		\
 	(unsigned char)__eth_addr[5]
 
+#define ETHER_IS_BROADCAST(__eth_addr)					\
+	(((__eth_addr)[0] & (__eth_addr)[1] & (__eth_addr)[2] &		\
+	  (__eth_addr)[3] & (__eth_addr)[4] & (__eth_addr)[5]) == 0xff)
+
 /* ASM related */
 static inline void cpu_relax(void)
 {
@@ -126,7 +130,8 @@ sockstorage_equal(const struct sockaddr_storage *s1, const struct sockaddr_stora
 extern unsigned long debug;
 
 /* Prototypes defs */
-extern void dump_buffer(char *, char *, int);
+extern void dump_buffer(const char *, char *, int);
+extern void buffer_to_c_array(const char *, char *, size_t);
 extern uint16_t in_csum(uint16_t *, int, uint16_t);
 extern uint16_t udp_csum(const void *, size_t, uint32_t, uint32_t);
 extern char *inet_ntop2(uint32_t);
@@ -158,6 +163,7 @@ extern uint32_t poor_prng(unsigned int *);
 extern uint32_t xorshift_prng(uint64_t *);
 extern size_t bsd_strlcpy(char *, const char *, size_t);
 extern size_t bsd_strlcat(char *, const char *, size_t);
+extern char *memcpy2str(char *, size_t, const void *, size_t);
 extern char *fd2str(int, char *, size_t);
 
 #endif

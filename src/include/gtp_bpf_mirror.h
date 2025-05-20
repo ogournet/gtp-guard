@@ -19,15 +19,21 @@
  * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _GTP_SWITCH_HDL_H
-#define _GTP_SWITCH_HDL_H
+#ifndef _GTP_BPF_MIRROR_H
+#define _GTP_BPF_MIRROR_H
 
-/* Defines */
+struct gtp_mirror_rule {
+	__be32	addr;
+	__be16	port;
+	__u8	protocol;
+	int	ifindex;
+} __attribute__ ((__aligned__(8)));
+
 
 /* Prototypes */
-extern gtp_session_t *gtpc_retransmit_detected(gtp_server_worker_t *);
-extern gtp_teid_t *gtpu_switch_handle(gtp_server_worker_t *, struct sockaddr_storage *);
-extern gtp_teid_t *gtpc_switch_handle(gtp_server_worker_t *, struct sockaddr_storage *);
-extern int gtpc_switch_handle_post(gtp_server_worker_t *, gtp_teid_t *);
+extern int gtp_bpf_mirror_action(int, gtp_mirror_rule_t *);
+extern int gtp_bpf_mirror_vty(vty_t *);
+extern int gtp_bpf_mirror_load(gtp_bpf_opts_t *);
+extern void gtp_bpf_mirror_unload(gtp_bpf_opts_t *);
 
 #endif

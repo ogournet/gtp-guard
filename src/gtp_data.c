@@ -86,7 +86,7 @@ gtp_mirror_action(int action, int ifindex)
 		if (r->ifindex == ifindex &&
 		    ((action == RULE_ADD && !r->active) ||
 		     (action == RULE_DEL && r->active))) {
-			ret = gtp_xdp_mirror_action(action, r);
+			ret = gtp_bpf_mirror_action(action, r);
 			if (!ret)
 				r->active = (action == RULE_ADD);
 		}
@@ -276,7 +276,8 @@ alloc_daemon_data(void)
 	INIT_LIST_HEAD(&new->pppoe);
 	INIT_LIST_HEAD(&new->pppoe_bundle);
 	INIT_LIST_HEAD(&new->gtp_apn);
-	INIT_LIST_HEAD(&new->gtp_switch_ctx);
+	INIT_LIST_HEAD(&new->gtp_cdr);
+	INIT_LIST_HEAD(&new->gtp_proxy_ctx);
 	INIT_LIST_HEAD(&new->gtp_router_ctx);
 
 	return new;
@@ -286,24 +287,25 @@ void
 free_daemon_data(void)
 {
 	if (__test_bit(GTP_FL_GTP_FORWARD_LOADED_BIT, &daemon_data->flags))
-		gtp_xdp_fwd_unload(&daemon_data->xdp_gtp_forward);
+		gtp_bpf_fwd_unload(&daemon_data->xdp_gtp_forward);
 	if (__test_bit(GTP_FL_MIRROR_LOADED_BIT, &daemon_data->flags))
-		gtp_xdp_mirror_unload(&daemon_data->xdp_mirror);
+		gtp_bpf_mirror_unload(&daemon_data->xdp_mirror);
 	if (__test_bit(GTP_FL_GTP_ROUTE_LOADED_BIT, &daemon_data->flags))
-		gtp_bpf_opts_destroy(&daemon_data->xdp_gtp_route, gtp_xdp_rt_unload);
-	gtp_switch_server_destroy();
+		gtp_bpf_opts_destroy(&daemon_data->xdp_gtp_route, gtp_bpf_rt_unload);
+	gtp_proxy_server_destroy();
 	gtp_router_server_destroy();
 	gtp_request_destroy();
 	gtp_pppoe_bundle_destroy();
 	gtp_pppoe_destroy();
-	gtp_sessions_destroy();
 	gtp_conn_destroy();
-	gtp_switch_destroy();
+	gtp_sessions_destroy();
+	gtp_proxy_destroy();
 	gtp_router_destroy();
-	gtp_xdp_destroy();
+	gtp_bpf_destroy();
 	gtp_teid_destroy();
 	gtp_mirror_destroy();
 	gtp_vrf_destroy();
+	gtp_cdr_spool_destroy(NULL);
 	gtp_apn_destroy();
 	FREE(daemon_data);
 }

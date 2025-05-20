@@ -19,12 +19,39 @@
  * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#ifndef _GTP_SWITCH_HDL_V2_H
-#define _GTP_SWITCH_HDL_V2_H
+#ifndef _GTP_STATS_H
+#define _GTP_STATS_H
 
 /* Defines */
+#define GTP_STATS_MAX_MSG	(1 << 8)
+
+/* Statistics */
+typedef struct _gtp_counter {
+	uint32_t		count;
+	uint32_t		unsupported;
+} gtp_counter_t;
+
+typedef struct _gtp_stats_msg {
+	gtp_counter_t		rx[GTP_STATS_MAX_MSG];
+	gtp_counter_t		tx[GTP_STATS_MAX_MSG];
+} gtp_stats_msg_t;
+
+typedef struct _gtp_stats_cause {
+	uint32_t		cause[GTP_STATS_MAX_MSG];
+} gtp_stats_cause_t;
+
+typedef struct _gtp_stats_pkt {
+	uint64_t		bytes;
+	uint64_t		pkts;
+} gtp_stats_pkt_t;
+
 
 /* Prototypes */
-extern gtp_teid_t *gtpc_switch_handle_v2(gtp_server_worker_t *, struct sockaddr_storage *);
+extern int gtp_stats_rx(gtp_stats_msg_t *, uint8_t);
+extern int gtp_stats_rx_notsup(gtp_stats_msg_t *, uint8_t);
+extern int gtp_stats_tx(gtp_stats_msg_t *, uint8_t);
+extern int gtp_stats_tx_notsup(gtp_stats_msg_t *, uint8_t);
+extern int gtp_stats_pkt_update(gtp_stats_pkt_t *, ssize_t);
+extern int gtp_stats_cause_update(gtp_stats_cause_t *, pkt_buffer_t *);
 
 #endif
