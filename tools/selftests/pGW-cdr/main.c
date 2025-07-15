@@ -32,12 +32,13 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <pcap/pcap.h>
 #include <linux/if_ether.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 
 #include "gtp_guard.h"
+
+#include <pcap/pcap.h>
 
 
 /* Local data */
@@ -138,7 +139,7 @@ parse_cmdline(int argc, char **argv)
 			exit(1);
 			break;
 		}
-                curind = optind;
+		curind = optind;
 	}
 
 	if (optind < argc) {
