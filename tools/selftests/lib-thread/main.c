@@ -26,7 +26,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
-#define _XOPEN_SOURCE
 #include <time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
