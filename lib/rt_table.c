@@ -214,6 +214,9 @@ rt_unlock_node(rt_node_t *node)
 		rt_node_delete(node);
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+
 /* Find matched prefix. */
 rt_node_t *
 rt_node_match(const rt_table_t *table, const prefix_t *p)
@@ -241,6 +244,8 @@ rt_node_match(const rt_table_t *table, const prefix_t *p)
 
 	return NULL;
 }
+
+#pragma GCC diagnostic pop
 
 rt_node_t *
 rt_node_match_ipv4(const rt_table_t *table, const struct in_addr *addr)
