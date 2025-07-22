@@ -16,13 +16,14 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2025 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <syslog.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <string.h>
 
 /* Boolean flag - send messages to console as well as syslog */
 static bool log_console = false;
@@ -34,20 +35,23 @@ enable_console_log(void)
 }
 
 void
-log_message(const int facility, const char *format, ...)
+log_message(const int priority, const char *format, ...)
 {
 	va_list args;
-	char buf[256];
+	char buf[128000];
 
 	va_start(args, format);
 	vsnprintf(buf, sizeof(buf), format, args);
 	va_end(args);
 
 	if (log_console) {
+		int l = strlen(buf);
+		if (l > 0 && buf[l - 1] == '\n')
+			buf[l - 1] = 0;
 		fprintf(stderr, "%s\n", buf);
+	} else {
+		syslog(priority, "%s", buf);
 	}
-
-	syslog(facility, "%s", buf);
 }
 
 void
