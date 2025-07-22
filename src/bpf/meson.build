@@ -5,18 +5,19 @@ fs = import('fs')
 bpf_sources = files(
   'gtp_fwd.c',
   'gtp_route.c',
-  'gtp_mirror.c'
+  'gtp_mirror.c',
+  'cgn.c',
 )
 
 clang_bpf_flags = [
-  '-Wno-unused-value',
-  '-Wno-pointer-sign',
+#   '-Wno-unused-value',
+#   '-Wno-pointer-sign',
   '-Wno-compare-distinct-pointer-types',
-  '-Wno-gnu-variable-sized-type-not-at-end',
-  '-Wno-tautological-compare',
-  '-Wno-unknown-warning-option',
-  '-Wno-address-of-packed-member',
-  '-fno-asynchronous-unwind-tables',
+#   '-Wno-gnu-variable-sized-type-not-at-end',
+#   '-Wno-tautological-compare',
+#   '-Wno-unknown-warning-option',
+#   '-Wno-address-of-packed-member',
+#   '-fno-asynchronous-unwind-tables',
 ]
 
 libbpf_inc = libbpf_dep.get_variable('includedir') + '/bpf'
