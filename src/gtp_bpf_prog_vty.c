@@ -231,7 +231,7 @@ DEFUN(show_bpf_prog,
 	gtp_bpf_prog_t *p = NULL;
 
 	if (!argc) {
-		gtp_bpf_prog_foreach_prog(gtp_bpf_prog_show, vty, BPF_PROG_MODE_MAX);
+		gtp_bpf_prog_foreach_prog(gtp_bpf_prog_show, vty, NULL);
 		return CMD_SUCCESS;
 	}
 

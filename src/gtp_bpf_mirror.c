@@ -166,7 +166,7 @@ gtp_bpf_mirror_vty(vty_t *vty, gtp_bpf_prog_t *p)
 }
 
 static gtp_bpf_prog_tpl_t gtp_bpf_tpl_mirror = {
-	.mode = BPF_PROG_MODE_GTP_MIRROR,
+	.name = "gtp_mirror",
 	.description = "gtp-mirror",
 	.loaded = gtp_bpf_mirror_load_maps,
 };

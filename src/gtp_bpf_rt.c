@@ -138,7 +138,7 @@ gtp_bpf_rt_metrics_init(gtp_bpf_prog_t *p, int ifindex, int type)
 	struct bpf_map *map = p->bpf_maps[XDP_RT_MAP_IF_STATS].map;
 	int err;
 
-	if (!gtp_bpf_prog_has_tpl_mode(p, BPF_PROG_MODE_GTP_ROUTE))
+	if (!gtp_bpf_prog_has_tpl_mode(p, "gtp_route"))
 		return -1;
 
 	err = gtp_bpf_rt_metrics_add(map, ifindex, type, IF_DIRECTION_RX);
@@ -585,12 +585,10 @@ gtp_bpf_rt_iptnl_action(int action, gtp_iptnl_t *t)
 {
 	switch (action) {
 	case RULE_ADD:
-		gtp_bpf_prog_foreach_prog(gtp_bpf_rt_iptnl_add, t,
-					  BPF_PROG_MODE_GTP_ROUTE);
+		gtp_bpf_prog_foreach_prog(gtp_bpf_rt_iptnl_add, t, "gtp_route");
 		break;
 	case RULE_DEL:
-		gtp_bpf_prog_foreach_prog(gtp_bpf_rt_iptnl_del, t,
-					  BPF_PROG_MODE_GTP_ROUTE);
+		gtp_bpf_prog_foreach_prog(gtp_bpf_rt_iptnl_del, t, "gtp_route");
 		break;
 	default:
 		return -1;
@@ -719,7 +717,7 @@ gtp_bpf_rt_lladdr_vty(gtp_bpf_prog_t *p, void *arg)
 
 
 static gtp_bpf_prog_tpl_t gtp_bpf_tpl_rt = {
-	.mode = BPF_PROG_MODE_GTP_ROUTE,
+	.name = "gtp_route",
 	.description = "gtp-route",
 	.loaded = gtp_bpf_rt_load_maps,
 	.direct_tx_lladdr_updated = gtp_bpf_rt_lladdr_update_prog,
