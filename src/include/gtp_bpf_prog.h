@@ -20,8 +20,11 @@
  */
 #pragma once
 
+#define BPF_PROG_TPL_MAX	6
+
 typedef struct _gtp_bpf_prog gtp_bpf_prog_t;
 typedef struct _gtp_interface gtp_interface_t;
+struct bpf_object;
 
 typedef struct _gtp_bpf_prog_var
 {
@@ -51,14 +54,13 @@ typedef struct _gtp_bpf_prog_tpl {
 	char			description[GTP_STR_MAX_LEN];
 	char			def_progname[GTP_STR_MAX_LEN];
 
-	/* load bpf program on the latest moment: on xdp_attach */
-	bool			load_on_attach;
-
 	int (*bind_itf)(gtp_bpf_prog_t *, gtp_interface_t *);
 	int (*opened)(gtp_bpf_prog_t *, struct bpf_object *);
 	int (*loaded)(gtp_bpf_prog_t *, struct bpf_object *);
 
 	void (*direct_tx_lladdr_updated)(gtp_bpf_prog_t *, gtp_interface_t *);
+
+	void (*vty_iface_show)(gtp_bpf_prog_t *, gtp_interface_t *, vty_t *);
 
 	list_head_t		next;
 } gtp_bpf_prog_tpl_t;
@@ -83,7 +85,8 @@ typedef struct _gtp_bpf_prog {
 	struct bpf_object	*bpf_obj;
 	struct bpf_program	*bpf_prog;
 	gtp_bpf_maps_t		*bpf_maps;
-	const gtp_bpf_prog_tpl_t *tpl;
+	const gtp_bpf_prog_tpl_t *tpl[BPF_PROG_TPL_MAX];
+	int			tpl_n;
 	void			*data;
 
 	list_head_t		next;
@@ -120,3 +123,15 @@ extern int gtp_bpf_progs_destroy(void);
 extern const char *gtp_bpf_prog_tpl_mode2str(gtp_bpf_prog_mode_t);
 extern void gtp_bpf_prog_tpl_register(gtp_bpf_prog_tpl_t *);
 extern const gtp_bpf_prog_tpl_t *gtp_bpf_prog_tpl_get(gtp_bpf_prog_mode_t);
+
+
+static inline bool
+gtp_bpf_prog_has_tpl_mode(gtp_bpf_prog_t *p, gtp_bpf_prog_mode_t mode)
+{
+	int i;
+
+	for (i = 0; i < p->tpl_n; i++)
+		if (mode == p->tpl[i]->mode)
+			return true;
+	return false;
+}

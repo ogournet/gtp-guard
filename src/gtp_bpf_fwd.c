@@ -322,7 +322,7 @@ gtp_bpf_fwd_teid_bytes(gtp_teid_t *t, uint64_t *bytes)
 int
 gtp_bpf_fwd_iptnl_action(int action, gtp_iptnl_t *t, gtp_bpf_prog_t *p)
 {
-	if (!p || !p->tpl || p->tpl->mode != BPF_PROG_MODE_GTP_FORWARD)
+	if (!gtp_bpf_prog_has_tpl_mode(p, BPF_PROG_MODE_GTP_FORWARD))
 		return -1;
 
 	return gtp_bpf_iptnl_action(action, t, p->bpf_maps[XDP_FWD_MAP_IPTNL].map);
