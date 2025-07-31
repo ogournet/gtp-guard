@@ -33,15 +33,7 @@ typedef struct _gtp_bpf_prog_var
 	uint32_t size;
 } gtp_bpf_prog_var_t;
 
-/* BPF program mode & type */
-typedef enum {
-	BPF_PROG_MODE_GTP_FORWARD,
-	BPF_PROG_MODE_GTP_ROUTE,
-	BPF_PROG_MODE_GTP_MIRROR,
-	BPF_PROG_MODE_CGN,
-	BPF_PROG_MODE_MAX,
-} gtp_bpf_prog_mode_t;
-
+/* BPF program type */
 enum {
 	GTP_BPF_PROG_TYPE_XDP = 0,
 	GTP_BPF_PROG_TYPE_TC,
@@ -50,7 +42,7 @@ enum {
 
 /* BPF prog template */
 typedef struct _gtp_bpf_prog_tpl {
-	gtp_bpf_prog_mode_t	mode;
+	char			name[GTP_STR_MAX_LEN];
 	char			description[GTP_STR_MAX_LEN];
 	char			def_progname[GTP_STR_MAX_LEN];
 
@@ -115,23 +107,22 @@ extern int gtp_bpf_prog_load(gtp_bpf_prog_t *);
 extern void gtp_bpf_prog_unload(gtp_bpf_prog_t *);
 extern int gtp_bpf_prog_destroy(gtp_bpf_prog_t *p);
 extern void gtp_bpf_prog_foreach_prog(int (*hdl) (gtp_bpf_prog_t *, void *),
-				      void *, gtp_bpf_prog_mode_t);
+				      void *, const char *);
 extern gtp_bpf_prog_t *gtp_bpf_prog_get(const char *);
 extern int gtp_bpf_prog_put(gtp_bpf_prog_t *);
 extern gtp_bpf_prog_t *gtp_bpf_prog_alloc(const char *);
 extern int gtp_bpf_progs_destroy(void);
-extern const char *gtp_bpf_prog_tpl_mode2str(gtp_bpf_prog_mode_t);
 extern void gtp_bpf_prog_tpl_register(gtp_bpf_prog_tpl_t *);
-extern const gtp_bpf_prog_tpl_t *gtp_bpf_prog_tpl_get(gtp_bpf_prog_mode_t);
+extern const gtp_bpf_prog_tpl_t *gtp_bpf_prog_tpl_get(const char *);
 
 
 static inline bool
-gtp_bpf_prog_has_tpl_mode(gtp_bpf_prog_t *p, gtp_bpf_prog_mode_t mode)
+gtp_bpf_prog_has_tpl_mode(gtp_bpf_prog_t *p, const char *mode)
 {
 	int i;
 
 	for (i = 0; i < p->tpl_n; i++)
-		if (mode == p->tpl[i]->mode)
+		if (!strcmp(mode, p->tpl[i]->name))
 			return true;
 	return false;
 }
