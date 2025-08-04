@@ -125,6 +125,7 @@ enum {
 #define CMD_COMPLETE_MATCH	8
 #define CMD_COMPLETE_LIST_MATCH	9
 #define CMD_SUCCESS_DAEMON	10
+#define CMD_ERROR		11
 
 #define CMD_ARGC_MAX		256
 
