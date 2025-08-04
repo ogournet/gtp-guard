@@ -392,6 +392,8 @@ int
 spppoe_tracking_destroy(void)
 {
 	spppoe_sessions_destroy(pppoe_session_tab);
+	gtp_htab_destroy(pppoe_session_tab);
+	gtp_htab_destroy(pppoe_unique_tab);
 	gtp_htab_free(pppoe_session_tab);
 	gtp_htab_free(pppoe_unique_tab);
 	return 0;
