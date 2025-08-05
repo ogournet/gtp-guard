@@ -20,6 +20,7 @@
  */
 
 #include "lib/gtp_fwd.h"
+#include "lib/gtp_mirror.h"
 
 
 SEC("xdp")
@@ -28,5 +29,11 @@ int xdp_fwd(struct xdp_md *ctx)
 	return gtp_fwd(ctx);
 }
 
-const char _mode[] = "gtp_fwd";
+SEC("tcx/ingress")
+int tc_gtp_mirror(struct __sk_buff *skb)
+{
+	return gtp_mirror(skb);
+}
+
+const char _mode[] = "gtp_fwd,gtp_mirror";
 char _license[] SEC("license") = "GPL";
