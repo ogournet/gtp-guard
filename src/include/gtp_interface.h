@@ -16,9 +16,13 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2025 Alexandre Cassen, <acassen@gmail.com>
  */
 #pragma once
+
+
+typedef struct _gtp_bpf_interface_rule gtp_bpf_interface_rule_t;
+
 
 /* Flags */
 enum gtp_interface_flags {
@@ -43,10 +47,15 @@ typedef struct _gtp_interface {
 	char			cgn_name[GTP_STR_MAX_LEN];
 	int			ifindex;
 	char			description[GTP_STR_MAX_LEN];
-	gtp_bpf_prog_attr_t	bpf_prog_attr[GTP_BPF_PROG_TYPE_MAX];
+	gtp_bpf_prog_t		*bpf_prog;
+	struct bpf_link		*bpf_xdp_lnk;
+	struct bpf_link		*bpf_tc_lnk;
 
 	/* metrics */
 	struct rtnl_link_stats64 *link_metrics;
+
+	/* bpf rules */
+	gtp_bpf_interface_rule_t *bpf_itf;
 
 	list_head_t		next;
 
@@ -71,7 +80,5 @@ extern gtp_interface_t *gtp_interface_get(const char *);
 extern gtp_interface_t *gtp_interface_get_by_ifindex(int);
 extern int gtp_interface_put(gtp_interface_t *);
 extern gtp_interface_t *gtp_interface_alloc(const char *, int);
-extern int gtp_interface_load_bpf(gtp_interface_t *);
-extern int gtp_interface_unload_bpf(gtp_interface_t *);
-extern int gtp_interface_destroy(gtp_interface_t *);
+extern void gtp_interface_destroy(gtp_interface_t *);
 extern int gtp_interfaces_destroy(void);
