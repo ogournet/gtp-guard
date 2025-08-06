@@ -62,6 +62,8 @@ gtp_interface_update_direct_tx_lladdr(ip_address_t *addr, const uint8_t *hw_addr
 	list_head_t *l = &daemon_data->interfaces;
 	gtp_interface_t *iface;
 	ip_address_t *addr_iface;
+	gtp_bpf_prog_t *p;
+	int i;
 
 	list_for_each_entry(iface, l, next) {
 		addr_iface = &iface->direct_tx_gw;
@@ -93,8 +95,11 @@ gtp_interface_update_direct_tx_lladdr(ip_address_t *addr, const uint8_t *hw_addr
 	memcpy(iface->direct_tx_hw_addr, hw_addr, ETH_ALEN);
 
 	/* Update BPF prog accordingly */
-	gtp_bpf_rt_lladdr_update(iface);
-	gtp_interface_rule_lladdr_updated(iface);
+	p = iface->bpf_prog;
+	for (i = 0; p && i < p->tpl_n; i++) {
+		if (p->tpl[i]->iface_lladdr_updated)
+			p->tpl[i]->iface_lladdr_updated(p, p->tpl_data[i], iface);
+	}
 }
 
 gtp_interface_t *

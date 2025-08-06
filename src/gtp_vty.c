@@ -205,7 +205,7 @@ DEFUN(show_xdp_forwarding,
       SHOW_STR
       "XDP GTP Fowarding Dataplane ruleset\n")
 {
-	gtp_bpf_prog_foreach_prog(gtp_bpf_fwd_vty, vty, "gtp_fwd");
+	gtp_bpf_prog_list_vty_cmd(vty, "gtp_fwd", "stats");
 	return CMD_SUCCESS;
 }
 
@@ -215,7 +215,7 @@ DEFUN(show_xdp_forwarding_iptnl,
       SHOW_STR
       "GTP XDP Forwarding IPIP Tunnel ruleset\n")
 {
-	gtp_bpf_prog_foreach_prog(gtp_bpf_fwd_iptnl_vty, vty, "gtp_fwd");
+	gtp_bpf_prog_list_vty_cmd(vty, "gtp_fwd", "iptnl");
 	return CMD_SUCCESS;
 }
 
@@ -225,7 +225,7 @@ DEFUN(show_xdp_routing,
       SHOW_STR
       "GTP XDP Routing Dataplane ruleset\n")
 {
-	gtp_bpf_prog_foreach_prog(gtp_bpf_rt_vty, vty, "gtp_route");
+	gtp_bpf_prog_list_vty_cmd(vty, "gtp_route", "stats");
 	return CMD_SUCCESS;
 }
 
@@ -235,7 +235,7 @@ DEFUN(show_xdp_routing_iptnl,
       SHOW_STR
       "GTP XDP Routing IPIP Tunnel ruleset\n")
 {
-	gtp_bpf_prog_foreach_prog(gtp_bpf_rt_iptnl_vty, vty, "gtp_route");
+	gtp_bpf_prog_list_vty_cmd(vty, "gtp_route", "iptnl");
 	return CMD_SUCCESS;
 }
 
@@ -245,7 +245,7 @@ DEFUN(show_xdp_routing_lladdr,
       SHOW_STR
       "GTP XDP Routing link-layer Address\n")
 {
-	gtp_bpf_prog_foreach_prog(gtp_bpf_rt_lladdr_vty, vty, "gtp_route");
+	gtp_bpf_prog_list_vty_cmd(vty, "gtp_route", "lladdr");
 	return CMD_SUCCESS;
 }
 

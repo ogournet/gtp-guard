@@ -535,9 +535,45 @@ gtp_bpf_prog_tpl_data_set(gtp_bpf_prog_t *p, const char *tpl_name, void *udata)
 /*
  *	BPF progs related
  */
+
+void
+gtp_bpf_prog_vty_cmd(gtp_bpf_prog_t *p, vty_t *vty, const char *template,
+		     const char *cmd_name, gtp_interface_t *iface)
+{
+	int i, j;
+
+	for (i = 0; i < p->tpl_n; i++) {
+		if (template && strcmp(template, p->tpl[i]->name))
+			continue;
+		for (j = 0; p->tpl[i]->vty[j].name; j++) {
+			const gtp_bpf_prog_vty_cmd_t *vcmd = &p->tpl[i]->vty[j];
+			if (!strcmp(vcmd->name, cmd_name)) {
+				if (iface && vcmd->iface_func)
+					vcmd->iface_func(p, p->tpl_data[i], vty, iface);
+				else if (vcmd->func)
+					vcmd->func(p, p->tpl_data[i], vty);
+			}
+		}
+	}
+}
+
+/* execute vty command 'cmd_name' on all bpf programs, of mode 'template' */
+void
+gtp_bpf_prog_list_vty_cmd(vty_t *vty, const char *template, const char *cmd_name)
+{
+	gtp_bpf_prog_t *p;
+
+	list_for_each_entry(p, &daemon_data->bpf_progs, next) {
+		__sync_add_and_fetch(&p->refcnt, 1);
+		gtp_bpf_prog_vty_cmd(p, vty, template, cmd_name, NULL);
+		__sync_sub_and_fetch(&p->refcnt, 1);
+	}
+}
+
+
 void
 gtp_bpf_prog_foreach_prog(int (*hdl) (gtp_bpf_prog_t *, void *), void *arg,
-			  const char * filter_mode)
+			  const char *filter_mode)
 {
 	gtp_bpf_prog_t *p;
 

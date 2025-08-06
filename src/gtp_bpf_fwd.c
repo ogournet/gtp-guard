@@ -292,11 +292,10 @@ gtp_bpf_fwd_teid_vty(vty_t *vty, gtp_teid_t *t)
 	return gtp_bpf_teid_vty(pf->teid_xlat, vty, ntohl(t->vid));
 }
 
-int
-gtp_bpf_fwd_vty(gtp_bpf_prog_t *p, void *arg)
+static int
+gtp_bpf_fwd_vty(gtp_bpf_prog_t *p, void *udata, vty_t *vty)
 {
-	gtp_bpf_fwd_t *pf = gtp_bpf_prog_tpl_data_get(p, "gtp_fwd");
-	vty_t *vty = arg;
+	gtp_bpf_fwd_t *pf = udata;
 
 	if (!pf)
 		return -1;
@@ -341,11 +340,10 @@ gtp_bpf_fwd_iptnl_action(int action, gtp_iptnl_t *t, gtp_bpf_prog_t *p)
 	return gtp_bpf_iptnl_action(action, t, pf->teid_xlat);
 }
 
-int
-gtp_bpf_fwd_iptnl_vty(gtp_bpf_prog_t *p, void *arg)
+static int
+gtp_bpf_fwd_iptnl_vty(gtp_bpf_prog_t *p, void *udata, vty_t *vty)
 {
-	gtp_bpf_fwd_t *pf = gtp_bpf_prog_tpl_data_get(p, "gtp_fwd");
-	vty_t *vty = arg;
+	gtp_bpf_fwd_t *pf = udata;
 
 	vty_out(vty, "bpf-program '%s'%s", p->name, VTY_NEWLINE);
 
@@ -358,6 +356,10 @@ static gtp_bpf_prog_tpl_t gtp_bpf_tpl_fwd = {
 	.description = "gtp-forward",
 	.udata_alloc_size = sizeof (gtp_bpf_fwd_t),
 	.loaded = gtp_bpf_fwd_load_maps,
+	.vty = {
+		{ "stats", gtp_bpf_fwd_vty },
+		{ "iptnl", gtp_bpf_fwd_iptnl_vty },
+	},
 };
 
 static void __attribute__((constructor))

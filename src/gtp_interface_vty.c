@@ -41,10 +41,8 @@ cmd_node_t interface_node = {
 static int
 gtp_interface_show(gtp_interface_t *iface, void *arg)
 {
-	gtp_bpf_prog_t *p = iface->bpf_prog;
 	vty_t *vty = arg;
 	char addr_str[INET6_ADDRSTRLEN];
-	int i;
 
 	vty_out(vty, "interface %s%s"
 		   , iface->ifname
@@ -63,10 +61,8 @@ gtp_interface_show(gtp_interface_t *iface, void *arg)
 			   , inet_ipaddresstos(&iface->direct_tx_gw, addr_str)
 			   , ETHER_BYTES(iface->direct_tx_hw_addr)
 			   , VTY_NEWLINE);
-	for (i = 0; p && i < p->tpl_n; i++) {
-		if (p->tpl[i]->vty_iface_show)
-			p->tpl[i]->vty_iface_show(p, iface, vty);
-	}
+	if (iface->bpf_prog != NULL)
+		gtp_bpf_prog_vty_cmd(iface->bpf_prog, vty, NULL, "show", iface);
 
 	vty_out(vty, "%s", VTY_NEWLINE);
 	return 0;
