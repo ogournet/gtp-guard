@@ -236,16 +236,16 @@ gtp_bytes_dropped_dump(void *arg, __u8 type, __u8 direction, struct metrics *m)
 	return fprintf((FILE *) arg, "%lld\n", m->dropped_bytes);
 }
 
-static int
+int
 gtp_interface_metrics_var_dump(gtp_interface_t *iface, void *arg,
 			       const char *var, int var_type,
 			       __u8 type, __u8 direction)
 {
-	gtp_bpf_prog_t *p = iface->bpf_prog;
+	gtp_bpf_rt_t *pr = gtp_bpf_prog_tpl_data_get(iface->bpf_prog, "gtp_route");
 	__u16 inuse = type << 8;
 	FILE *fp = arg;
 
-	if (!gtp_bpf_prog_has_tpl_mode(p, "gtp_route"))
+	if (!pr)
 		return -1;
 
 	gtp_interface_metric_inuse(iface, &inuse);
@@ -254,14 +254,14 @@ gtp_interface_metrics_var_dump(gtp_interface_t *iface, void *arg,
 
 	fprintf(fp, "%s{interface=\"%s\"} "
 		  , var, iface->description);
-	gtp_bpf_rt_metrics_dump(p, (var_type == METRIC_PACKET) ? gtp_pkt_dump :
+	gtp_bpf_rt_metrics_dump(pr, (var_type == METRIC_PACKET) ? gtp_pkt_dump :
 								 gtp_bytes_dump
-				 , fp, iface->ifindex, type, direction);
+				  , fp, iface->ifindex, type, direction);
 	fprintf(fp, "%s{interface=\"%s\",type=\"dropped\"} "
 		  , var, iface->description);
-	gtp_bpf_rt_metrics_dump(p, (var_type == METRIC_PACKET) ? gtp_pkt_dropped_dump :
-								 gtp_bytes_dropped_dump
-				 , fp, iface->ifindex, type, direction);
+	gtp_bpf_rt_metrics_dump(pr, (var_type == METRIC_PACKET) ?
+				     gtp_pkt_dropped_dump : gtp_bytes_dropped_dump
+				  , fp, iface->ifindex, type, direction);
 	return 0;
 }
 

@@ -26,9 +26,6 @@
 #include "gtp_guard.h"
 
 
-/* Extern data */
-extern data_t *daemon_data;
-
 
 /*
  *	BPF Interface topology reflection

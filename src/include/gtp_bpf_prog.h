@@ -21,17 +21,24 @@
 #pragma once
 
 #define BPF_PROG_TPL_MAX	6
+#define BPF_PROG_VTY_CMD_MAX	8
 
 typedef struct _gtp_bpf_prog gtp_bpf_prog_t;
 typedef struct _gtp_interface gtp_interface_t;
 struct bpf_object;
 
-typedef struct _gtp_bpf_prog_var
-{
+typedef struct _gtp_bpf_prog_var {
 	const char *name;
 	const void *value;
 	uint32_t size;
 } gtp_bpf_prog_var_t;
+
+
+typedef struct _gtp_bpf_prog_vty_cmd {
+	const char *name;
+	int (*func)(gtp_bpf_prog_t *, void *, vty_t *);
+	int (*iface_func)(gtp_bpf_prog_t *, void *, vty_t *, gtp_interface_t *);
+} gtp_bpf_prog_vty_cmd_t;
 
 
 /* BPF prog template */
@@ -46,8 +53,9 @@ typedef struct _gtp_bpf_prog_tpl {
 	int (*iface_bind)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
 	int (*iface_bound)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
 	void (*iface_unbind)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
+	void (*iface_lladdr_updated)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
 
-	void (*vty_iface_show)(gtp_bpf_prog_t *, gtp_interface_t *, vty_t *);
+	gtp_bpf_prog_vty_cmd_t vty[BPF_PROG_VTY_CMD_MAX];
 
 	list_head_t		next;
 } gtp_bpf_prog_tpl_t;
@@ -94,6 +102,9 @@ extern int gtp_bpf_prog_load(gtp_bpf_prog_t *);
 extern void gtp_bpf_prog_unload(gtp_bpf_prog_t *);
 extern int gtp_bpf_prog_destroy(gtp_bpf_prog_t *);
 extern int gtp_bpf_prog_tpl_data_set(gtp_bpf_prog_t *, const char *, void *);
+extern void gtp_bpf_prog_vty_cmd(gtp_bpf_prog_t *, vty_t *,
+				 const char *, const char *, gtp_interface_t *);
+extern void gtp_bpf_prog_list_vty_cmd(vty_t *, const char *, const char *);
 extern void gtp_bpf_prog_foreach_prog(int (*hdl) (gtp_bpf_prog_t *, void *),
 				      void *, const char *);
 extern gtp_bpf_prog_t *gtp_bpf_prog_get(const char *);
