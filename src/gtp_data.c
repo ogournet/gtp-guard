@@ -73,5 +73,6 @@ free_daemon_data(void)
 	gtp_bpf_progs_destroy();
 	gtp_cdr_spool_destroy(NULL);
 	gtp_apn_destroy();
+	cgn_destroy();
 	FREE(daemon_data);
 }

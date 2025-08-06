@@ -91,7 +91,6 @@
 #include "gtp_cmd.h"
 #include "gtp_netlink.h"
 #include "cgn.h"
-#include "cgn_vty.h"
 
 #ifndef _WITHOUT_BPF_
  #include "gtp_bpf_utils.h"
