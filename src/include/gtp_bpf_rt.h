@@ -102,4 +102,5 @@ extern int gtp_bpf_rt_vty(gtp_bpf_prog_t *p, void *arg);
 extern int gtp_bpf_rt_teid_bytes(gtp_teid_t *, uint64_t *);
 extern int gtp_bpf_rt_iptnl_action(int, gtp_iptnl_t *);
 extern int gtp_bpf_rt_iptnl_vty(gtp_bpf_prog_t *p, void *arg);
+extern int gtp_bpf_rt_lladdr_update(void *);
 extern int gtp_bpf_rt_lladdr_vty(gtp_bpf_prog_t *p, void *arg);
