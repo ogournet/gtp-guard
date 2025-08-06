@@ -26,7 +26,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
-#define _XOPEN_SOURCE
 #include <time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -36,6 +35,14 @@
 #include <errno.h>
 
 #include "gtp_guard.h"
+
+/* XXX: defined in gtp_bpf_rt.c */
+int
+gtp_bpf_rt_lladdr_update(void *)
+{
+	return 0;
+}
+
 
 /* Local data */
 data_t *daemon_data;
