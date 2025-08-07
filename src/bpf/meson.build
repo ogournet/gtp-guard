@@ -10,6 +10,10 @@ bpf_sources = files(
 )
 
 clang_bpf_flags = [
+  '-DEBPF_SRC',
+  libbpf_uapi_inc != '' ? '-I' + libbpf_uapi_inc : '',
+  '-I' + meson.current_source_dir(),
+  '-I' + libbpf_inc,
   '-Wno-unused-value',
   '-Wno-pointer-sign',
   '-Wno-compare-distinct-pointer-types',
@@ -27,14 +31,7 @@ foreach bsrc : bpf_sources
 			  output : name + '.ll',
 			  depfile : name + '.d',
 			  build_by_default: true,
-			  command : [clang, '-c',
-				     '-g', '-O2',
-				     '-emit-llvm',
-				     '-target', 'bpf',
-				     '-D__TARGET_ARCH_' + arch,
-				     '-DEBPF_SRC',
-				     '-I' + meson.current_source_dir(),
-				     '-I' + libbpf_inc,
+			  command : [clang, '-c', '-g', '-O2', '-emit-llvm',
 				     clang_bpf_flags,
 				     '-MD', '-MF', '@DEPFILE@',
 				     '-o', '@OUTPUT@', '@INPUT@'
