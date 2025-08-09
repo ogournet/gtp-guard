@@ -422,7 +422,6 @@ static void
 netlink_neigh_lookup_event(__attribute__((unused)) thread_t *thread)
 {
 	netlink_neigh_lookup();
-	netlink_close(&nl_cmd);
 }
 
 
