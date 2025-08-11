@@ -42,6 +42,7 @@ typedef struct _gtp_interface {
 	uint8_t			hw_addr[ETH_ALEN];
 	uint8_t			hw_addr_len;
 	uint16_t		vlan_id;
+	uint16_t		ip_table;
 	ip_address_t		direct_tx_gw;
 	uint8_t			direct_tx_hw_addr[ETH_ALEN];
 	char			cgn_name[GTP_STR_MAX_LEN];

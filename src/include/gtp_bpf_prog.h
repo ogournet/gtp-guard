@@ -95,8 +95,8 @@ typedef struct _gtp_bpf_prog {
 /* Prototypes */
 extern int gtp_bpf_prog_obj_update_var(struct bpf_object *,
 				       const gtp_bpf_prog_var_t *);
-extern int gtp_bpf_prog_attach(gtp_bpf_prog_t *p, gtp_interface_t *iface);
-extern void gtp_bpf_prog_detach(gtp_bpf_prog_t *p, gtp_interface_t *iface);
+extern int gtp_bpf_prog_attach(gtp_bpf_prog_t *, gtp_interface_t *);
+extern void gtp_bpf_prog_detach(gtp_bpf_prog_t *, gtp_interface_t *);
 extern int gtp_bpf_prog_open(gtp_bpf_prog_t *);
 extern int gtp_bpf_prog_load(gtp_bpf_prog_t *);
 extern void gtp_bpf_prog_unload(gtp_bpf_prog_t *);

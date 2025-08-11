@@ -42,10 +42,11 @@ gtp_interface_rule_add(gtp_interface_t *from, gtp_interface_t *to, int action)
 	k.vlan_id = from->vlan_id;
 
 	ar.action = action;
-	//ar.table = to->force_ip_table;
+	ar.table = to->ip_table;
 	ar.vlan_id = to->vlan_id;
 
-	printf("add acl if:%d vlan:%d gre:%d sizeof:%ld\n", k.ifindex, k.vlan_id,
+	printf("add acl if:%d vlan:%d ip-table:%d gre:%d sizeof:%ld\n",
+	       k.ifindex, k.vlan_id, ar.table,
 	       k.gre_remote, sizeof (k));
 
 	ret = bpf_map__update_elem(r->acl, &k, sizeof (k),
