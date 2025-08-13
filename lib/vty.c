@@ -1665,8 +1665,9 @@ vty_read_file(FILE *confp)
 			log_message(LOG_ERR, "There is no such command.\n");
 			break;
 		}
-		log_message(LOG_ERR, "Error occured during reading below line.\n%s\n"
-				   , vty->buf);
+		if (ret != CMD_WARNING)
+			log_message(LOG_ERR, "Error occured during reading below line.\n%s\n"
+				           , vty->buf);
 		vty_close(vty);
 		return -1;
 	}
@@ -1800,7 +1801,9 @@ vty_read_config(char *config_file, char *config_default_dir)
 		}
 	}
 
-	vty_read_file(confp);
+	if (vty_read_file(confp) < 0)
+		log_message(LOG_ERR, "%s: error loading configuration file"
+			           , fullpath);
 	fclose(confp);
 	host_config_set(fullpath);
 	FREE_PTR(tmp);
