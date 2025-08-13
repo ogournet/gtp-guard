@@ -23,6 +23,5 @@
 typedef struct _gtp_bpf_interface_rule gtp_bpf_interface_rule_t;
 
 /* Prototypes */
-extern void gtp_interface_rule_add(gtp_interface_t *, gtp_interface_t *, int);
+extern void gtp_interface_rule_add(gtp_interface_t *, gtp_interface_t *, int, int);
 extern void gtp_interface_rule_del(gtp_interface_t *);
-extern void gtp_interface_rule_lladdr_updated(gtp_interface_t *);

@@ -46,8 +46,8 @@ typedef enum _node_type {
 	CFG_LOG_NODE,					/* Configure the logging */
 
 	PDN_NODE,					/* PDN daemon commands. */
-	CGN_NODE,					/* Carrier Grade NAT */
 	BPF_PROG_NODE,					/* BPF prog commands. */
+	CGN_NODE,					/* Carrier Grade NAT */
 	INTERFACE_NODE,					/* Interface commands. */
 	MIRROR_NODE,					/* Mirror commands. */
 	PPPOE_NODE,					/* PPPoE commands. */

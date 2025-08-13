@@ -51,7 +51,6 @@ typedef struct _gtp_bpf_prog_tpl {
 	int (*loaded)(gtp_bpf_prog_t *, void *);
 
 	int (*iface_bind)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
-	int (*iface_bound)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
 	void (*iface_unbind)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
 	void (*iface_lladdr_updated)(gtp_bpf_prog_t *, void *, gtp_interface_t *);
 
