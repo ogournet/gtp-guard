@@ -20,6 +20,7 @@
  */
 #pragma once
 
+typedef struct _gtp_bpf_interface_rule gtp_bpf_interface_rule_t;
 
 typedef struct _gtp_bpf_interface_rule gtp_bpf_interface_rule_t;
 
@@ -59,6 +60,8 @@ typedef struct _gtp_interface {
 	gtp_bpf_interface_rule_t *bpf_itf;
 
 	list_head_t		next;
+
+	struct _gtp_interface	*parent;
 
 	int			refcnt;
 	unsigned long		flags;
