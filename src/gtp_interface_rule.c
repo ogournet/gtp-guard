@@ -61,7 +61,7 @@ gtp_interface_rule_add(struct gtp_interface *from, struct gtp_interface *to,
 	if (from->bpf_prog == NULL && from->link_iface)
 		iface = from->link_iface;
 
-	r = iface->bpf_itf;
+	r = iface->rules;
 	if (!r)
 		return;
 
@@ -105,7 +105,7 @@ gtp_interface_rule_del(struct gtp_interface *from)
 	if (from->bpf_prog == NULL && from->link_iface)
 		iface = from->link_iface;
 
-	r = iface->bpf_itf;
+	r = iface->rules;
 	if (!r)
 		return;
 
@@ -137,7 +137,7 @@ gtp_ifrule_bind_itf(struct gtp_bpf_prog *p, void *udata, struct gtp_interface *i
 {
 	struct gtp_bpf_interface_rule *r = udata;
 
-	iface->bpf_itf = r;
+	iface->rules = r;
 
 	return 0;
 }
@@ -145,7 +145,7 @@ gtp_ifrule_bind_itf(struct gtp_bpf_prog *p, void *udata, struct gtp_interface *i
 static void
 gtp_ifrule_unbind_itf(struct gtp_bpf_prog *p, void *udata, struct gtp_interface *iface)
 {
-	iface->bpf_itf = NULL;
+	iface->rules = NULL;
 }
 
 static struct gtp_bpf_prog_tpl gtp_interface_rule_module = {

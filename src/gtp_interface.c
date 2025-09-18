@@ -172,8 +172,10 @@ gtp_interface_destroy(struct gtp_interface *iface)
 		if (if_child->link_iface == iface)
 			if_child->link_iface = NULL;
 	}
-	if (iface->bpf_prog)
+	if (iface->bpf_prog) {
 		gtp_bpf_prog_detach(iface->bpf_prog, iface);
+		list_del(&iface->bpf_prog_list);
+	}
 	FREE_PTR(iface->link_metrics);
 	list_head_del(&iface->next);
 	FREE(iface);

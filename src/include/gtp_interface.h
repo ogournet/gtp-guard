@@ -52,10 +52,13 @@ struct gtp_interface {
 	uint8_t			direct_tx_hw_addr[ETH_ALEN];
 	int			ifindex;
 	char			description[GTP_STR_MAX_LEN];
+
+	/* bpf-prog */
 	struct gtp_bpf_prog	*bpf_prog;
+	struct list_head	bpf_prog_list;
 	struct bpf_link		*bpf_xdp_lnk;
 	struct bpf_link		*bpf_tc_lnk;
-	struct gtp_bpf_interface_rule *bpf_itf;
+	struct gtp_bpf_interface_rule *rules;
 
 	/* metrics */
 	struct rtnl_link_stats64 *link_metrics;

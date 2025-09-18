@@ -180,7 +180,11 @@ DEFUN(interface_bpf_prog,
 		return CMD_WARNING;
 	}
 
-	iface->bpf_prog = p;
+	if (!iface->bpf_prog) {
+		iface->bpf_prog = p;
+		list_add(&iface->bpf_prog_list, &p->iface_bind_list);
+	}
+
 	return CMD_SUCCESS;
 }
 
@@ -364,7 +368,7 @@ DEFUN(interface_no_shutdown,
       "Activate interface\n")
 {
 	struct gtp_interface *iface = vty->index;
-	struct gtp_bpf_prog *p = iface->bpf_prog;
+	struct gtp_bpf_prog *p;
 	int err = 0;
 
 	if (!__test_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags)) {
@@ -374,9 +378,11 @@ DEFUN(interface_no_shutdown,
 		return CMD_WARNING;
 	}
 
-	if (!p)
+	/* Interface without bpf program */
+	if (!iface->bpf_prog)
 		goto end;
 
+	p = iface->bpf_prog;
 	err = gtp_bpf_prog_attach(p, iface);
 	if (err) {
 		vty_out(vty, "%% error attaching bpf-program to interface:'%s'%s"

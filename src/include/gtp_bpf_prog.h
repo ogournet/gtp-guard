@@ -46,6 +46,7 @@ struct gtp_bpf_prog_tpl {
 
 	int (*opened)(struct gtp_bpf_prog *, void *);
 	int (*loaded)(struct gtp_bpf_prog *, void *);
+	int (*closed)(struct gtp_bpf_prog *, void *);
 
 	int (*iface_bind)(struct gtp_bpf_prog *, void *, struct gtp_interface *);
 	void (*iface_unbind)(struct gtp_bpf_prog *, void *, struct gtp_interface *);
@@ -58,11 +59,12 @@ struct gtp_bpf_prog_tpl {
 
 /* Flags */
 enum gtp_bpf_prog_flags {
-	GTP_BPF_PROG_FL_SHUTDOWN_BIT,
 	GTP_BPF_PROG_FL_LOAD_ERR_BIT,
 };
 
 struct gtp_bpf_prog_obj {
+	char			tc_progname[GTP_STR_MAX_LEN];
+	char			xdp_progname[GTP_STR_MAX_LEN];
 	struct bpf_object	*obj;
 	struct bpf_program	*tc;
 	struct bpf_program	*xdp;
@@ -72,14 +74,14 @@ struct gtp_bpf_prog {
 	char			name[GTP_STR_MAX_LEN];
 	char			description[GTP_STR_MAX_LEN];
 	char			path[GTP_PATH_MAX_LEN];
-	char			tc_progname[GTP_STR_MAX_LEN];
-	char			xdp_progname[GTP_STR_MAX_LEN];
 	const struct gtp_bpf_prog_tpl *tpl[BPF_PROG_TPL_MAX];
 	void			*tpl_data[BPF_PROG_TPL_MAX];
 	int			tpl_n;
-	struct gtp_bpf_prog_obj	run;	/* bpf running */
+	struct gtp_bpf_prog_obj	run;	/* running bpf */
 	struct gtp_bpf_prog_obj	load;	/* bpf being loaded */
+	char			*log_buf;
 
+	struct list_head	iface_bind_list;
 	struct list_head	next;
 
 	int			watch_id;
@@ -93,7 +95,7 @@ int gtp_bpf_prog_obj_update_var(struct bpf_object *,
  			       const struct gtp_bpf_prog_var *);
 int gtp_bpf_prog_attach(struct gtp_bpf_prog *, struct gtp_interface *);
 void gtp_bpf_prog_detach(struct gtp_bpf_prog *, struct gtp_interface *);
-int gtp_bpf_prog_open(struct gtp_bpf_prog *);
+int gtp_bpf_prog_open(struct gtp_bpf_prog *, bool);
 void gtp_bpf_prog_unload(struct gtp_bpf_prog *);
 int gtp_bpf_prog_destroy(struct gtp_bpf_prog *);
 int gtp_bpf_prog_tpl_data_set(struct gtp_bpf_prog *, const char *, void *);
