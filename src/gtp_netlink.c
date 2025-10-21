@@ -395,45 +395,6 @@ netlink_neigh_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct nlm
 	return 0;
 }
 
-static int
-netlink_neigh_request(struct nl_handle *nl, unsigned char family, uint16_t type)
-{
-	ssize_t status;
-	struct sockaddr_nl snl = { .nl_family = AF_NETLINK };
-	struct {
-		struct nlmsghdr nlh;
-		struct ndmsg ndm;
-		char buf[256];
-	} req = {
-		.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(struct ndmsg)),
-		.nlh.nlmsg_type = type,
-		.nlh.nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST,
-		.nlh.nlmsg_seq = ++nl->seq,
-		.ndm.ndm_family = family,
-	};
-
-	status = sendto(nl->fd, (void *) &req, sizeof(req), 0
-			      , (struct sockaddr *) &snl, sizeof(snl));
-	if (status < 0) {
-		log_message(LOG_INFO, "Netlink: sendto() failed: %m");
-		return -1;
-	}
-
-	return 0;
-}
-
-static void
-netlink_neigh_lookup(__attribute__((unused)) struct thread *thread)
-{
-	int err;
-
-	err = netlink_neigh_request(&nl_cmd, AF_UNSPEC, RTM_GETNEIGH);
-	if (err)
-		return;
-
-	netlink_parse_info(netlink_neigh_filter, &nl_cmd, NULL, NULL, false);
-}
-
 
 /*
  *	Kernel Netlink reflector
@@ -543,6 +504,36 @@ netlink_if_request(struct nl_handle *nl, unsigned char family, uint16_t type, in
 	return 0;
 }
 
+static int
+netlink_ifa_request(struct nl_handle *nl, int type, int ifindex)
+{
+	ssize_t status;
+	struct sockaddr_nl snl = { .nl_family = AF_NETLINK };
+	struct {
+		struct nlmsghdr nlh;
+		struct ifaddrmsg a;
+		char buf[1024];
+	} req = {
+		.nlh.nlmsg_len = NLMSG_LENGTH(sizeof req.a),
+		.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP,
+		.nlh.nlmsg_type = type,
+		.nlh.nlmsg_pid = 0,
+		.nlh.nlmsg_seq = ++nl->seq,
+		.a.ifa_family = AF_INET,
+		.a.ifa_index = ifindex,
+	};
+
+	status = sendto(nl->fd, (void *) &req, sizeof (req), 0
+			      , (struct sockaddr *) &snl, sizeof(snl));
+	if (status < 0) {
+		log_message(LOG_INFO, "Netlink: sendto() failed: %m");
+		return -1;
+	}
+
+	return 0;
+}
+
+
 /*
  * fill gtp_interface data from kernel for vlan or gre devices
  */
@@ -586,6 +577,8 @@ netlink_if_link_info(struct rtattr *tb, struct gtp_interface *iface)
 			     RTA_PAYLOAD(linkdata), NLA_F_NESTED);
 
 		if (!attr[IFLA_GRE_REMOTE] ||
+		    RTA_PAYLOAD(attr[IFLA_GRE_REMOTE]) != 4 ||
+		    !attr[IFLA_GRE_REMOTE] ||
 		    RTA_PAYLOAD(attr[IFLA_GRE_REMOTE]) != 4)
 			return -1;
 
@@ -600,7 +593,38 @@ netlink_if_link_info(struct rtattr *tb, struct gtp_interface *iface)
 		}
 
 		addr_fromip4(&iface->tunnel_remote,
+			     *(uint32_t *)RTA_DATA(attr[IFLA_GRE_LOCAL]));
+		addr_fromip4(&iface->tunnel_remote,
 			     *(uint32_t *)RTA_DATA(attr[IFLA_GRE_REMOTE]));
+
+	} else if (!strcmp(kind, "ipip")) {
+		struct rtattr *attr[IFLA_IPTUN_MAX + 1];
+		struct gtp_interface *link_iface;
+		int link_ifindex;
+
+		parse_rtattr(attr, IFLA_IPTUN_MAX, RTA_DATA(linkdata),
+			     RTA_PAYLOAD(linkdata), NLA_F_NESTED);
+
+		if (!attr[IFLA_IPTUN_LOCAL] ||
+		    RTA_PAYLOAD(attr[IFLA_IPTUN_LOCAL]) != 4 ||
+		    !attr[IFLA_IPTUN_REMOTE] ||
+		    RTA_PAYLOAD(attr[IFLA_IPTUN_REMOTE]) != 4)
+			return -1;
+
+		iface->tunnel_mode = 2;
+
+		/* "ip tunnel .... dev xxx" specified, attach to this device */
+		if (attr[IFLA_IPTUN_LINK]) {
+			link_ifindex = *(uint32_t *)RTA_DATA(attr[IFLA_IPTUN_LINK]);
+			link_iface = gtp_interface_get_by_ifindex(link_ifindex);
+			if (link_iface != NULL)
+				iface->link_iface = link_iface;
+		}
+
+		addr_fromip4(&iface->tunnel_local,
+			     *(uint32_t *)RTA_DATA(attr[IFLA_IPTUN_LOCAL]));
+		addr_fromip4(&iface->tunnel_remote,
+			     *(uint32_t *)RTA_DATA(attr[IFLA_IPTUN_REMOTE]));
 	}
 
 	return 0;
@@ -633,19 +657,17 @@ netlink_if_link_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct n
 			return 0;
 
 		/* reflect interface topology */
-		iface = gtp_interface_alloc((char *)RTA_DATA(tb[IFLA_IFNAME])
-					    , ifi->ifi_index);
+		iface = gtp_interface_alloc((char *)RTA_DATA(tb[IFLA_IFNAME]),
+					    ifi->ifi_index);
 		if (!iface)
 			return -1;
 
 		/* get mac address (if it's a device) */
 		err = netlink_if_get_ll_addr(iface, tb);
 		if (err) {
-			if (err) {
-				log_message(LOG_INFO, "%s(): Error getting ll_addr for interface:'%s'"
-						    , __FUNCTION__
-						    , iface->ifname);
-			}
+			log_message(LOG_INFO, "%s(): Error getting ll_addr for interface:'%s'"
+					    , __FUNCTION__
+					    , iface->ifname);
 			gtp_interface_destroy(iface);
 			return err;
 		}
@@ -670,6 +692,41 @@ netlink_if_link_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct n
 	gtp_interface_put(iface);
 	return 0;
 }
+
+static int
+netlink_if_addr_filter(__attribute__((unused)) struct sockaddr_nl *snl,
+		       struct nlmsghdr *h, void *arg)
+{
+	struct ifaddrmsg *ifa = NLMSG_DATA(h);
+	struct rtattr *tb[IFA_MAX + 1];
+	struct gtp_interface *iface;
+	int len = h->nlmsg_len;
+
+	if (h->nlmsg_type != RTM_NEWADDR)
+		return 0;
+
+	len -= NLMSG_LENGTH(sizeof(*ifa));
+	if (len < 0)
+		return -1;
+
+	if (ifa->ifa_family != AF_INET)
+		return 0;
+
+	parse_rtattr(tb, IFA_MAX, IFA_RTA(ifa), len, 0);
+
+	if (tb[IFA_ADDRESS] == NULL ||
+	    RTA_PAYLOAD(tb[IFA_ADDRESS]) != sizeof (uint32_t))
+		return 0;
+
+	iface = gtp_interface_get_by_ifindex(ifa->ifa_index);
+	if (!iface)
+		return 0;
+
+	addr_fromip4(&iface->addr, *(uint32_t *)RTA_DATA(tb[IFA_ADDRESS]));
+
+	return 0;
+}
+
 
 static void
 netlink_if_stats_update(__attribute__((unused)) struct thread *t)
@@ -702,8 +759,12 @@ gtp_netlink_if_lookup(int ifindex)
 {
 	if (netlink_if_request(&nl_cmd, AF_PACKET, RTM_GETLINK, ifindex, true) < 0)
 		return -1;
-
 	netlink_parse_info(netlink_if_link_filter, &nl_cmd, NULL, (void *)1, false);
+
+	if (netlink_ifa_request(&nl_cmd, RTM_GETADDR, ifindex) < 0)
+		return -1;
+	netlink_parse_info(netlink_if_addr_filter, &nl_cmd, NULL, (void *)1, false);
+
 	return 0;
 }
 
@@ -719,16 +780,8 @@ netlink_if_init(void)
 		return -1;
 	}
 
-	thread_add_event(master, netlink_if_stats_update, NULL, 0);
-
-	/* Interface configuration induces the fetching of information via
-	 * the netlink channel. However, interface configuration occurs
-	 * after the initial Netlink neighbor lookup. Therefore, if an
-	 * entry is already present in the neighbor table, we will never
-	 * receive a Netlink broadcast for it until next ARP state.
-	 * Register an I/O MUX event to force fetching after parsing the
-	 * configuration. */
-	thread_add_event(master, netlink_neigh_lookup, NULL, 0);
+	nl_cmd.thread = thread_add_timer(master, netlink_if_stats_update
+					       , NULL, TIMER_HZ);
 	return 0;
 }
 
