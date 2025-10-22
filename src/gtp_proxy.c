@@ -16,7 +16,7 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2025 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <sys/prctl.h>
@@ -31,7 +31,8 @@
 #include "gtp_proxy_hdl.h"
 #include "bitops.h"
 #include "memory.h"
-
+#include "inet_utils.h"
+#include "bpf/lib/gtp_fwd-def.h"
 
 /* Extern data */
 extern struct data *daemon_data;
@@ -129,47 +130,187 @@ gtp_proxy_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr
 	return 0;
 }
 
-
-/*
- *	GTP Proxy init
- */
-struct pfx_vlan *
-pfx_vlan_alloc(void)
+static void
+_set_base_rules(struct gtp_proxy *ctx)
 {
-	struct pfx_vlan *new;
-
-	PMALLOC(new);
-	if (!new)
-		return NULL;
-        INIT_LIST_HEAD(&new->next);
-	return new;
+	struct if_rule_key k = {};
+	struct gtp_if_rule ifr_ingress = {
+		.from = ctx->iface_ingress,
+		.to = ctx->iface_egress,
+		.key = &k,
+		.key_size = sizeof (k),
+		.action = 10,
+		.prio = 100,
+	};
+	struct gtp_if_rule ifr_egress = {
+		.from = ctx->iface_egress,
+		.to = ctx->iface_ingress,
+		.key = &k,
+		.key_size = sizeof (k),
+		.action = 11,
+		.prio = 100,
+	};
+	gtp_interface_rule_add(&ifr_ingress);
+	gtp_interface_rule_add(&ifr_egress);
 }
 
-int
-pfx_vlan_add(struct gtp_iptnl *tnl, struct pfx_vlan *pfx)
+static void
+_set_tun_rules(struct gtp_proxy *ctx)
 {
-	list_add_tail(&pfx->next, &tnl->decap_pfx_vlan);
-	return 0;
+	struct if_rule_key k1 = {
+		.selector_addr = addr_toip4(&ctx->iface_ingress->addr)
+	};
+	struct if_rule_key k2 = {
+		.selector_addr = addr_toip4(&ctx->iface_egress->addr)
+	};
+
+	/* ipip-egress */
+	struct if_rule_key k3 = {
+		.selector_addr = addr_toip4(&ctx->iface_egress->addr)
+	};
+	struct if_rule_key k4 = {
+		.selector_addr = htonl(0xc0a83d01), // XXX install from teid ?
+	};
+
+	struct gtp_if_rule ifr1 = {
+		.from = ctx->iface_ingress,
+		.to = ctx->iface_tun,
+		.key = &k1,
+		.key_size = sizeof (k1),
+		.action = 12,
+		.prio = 100,
+	};
+	struct gtp_if_rule ifr2 = {
+		.from = ctx->iface_egress,
+		.to = ctx->iface_tun,
+		.key = &k2,
+		.key_size = sizeof (k2),
+		.action = 13,
+		.prio = 100,
+	};
+	struct gtp_if_rule ifr3 = {
+		.from = ctx->iface_tun,
+		.to = ctx->iface_ingress,
+		.key = &k3,
+		.key_size = sizeof (k3),
+		.action = 14,
+		.prio = 100,
+	};
+	struct gtp_if_rule ifr4 = {
+		.from = ctx->iface_tun,
+		.to = ctx->iface_egress,
+		.key = &k4,
+		.key_size = sizeof (k4),
+		.action = 15,
+		.prio = 100,
+	};
+	gtp_interface_rule_add(&ifr1);
+	gtp_interface_rule_add(&ifr2);
+	gtp_interface_rule_add(&ifr3);
+	gtp_interface_rule_add(&ifr4);
 }
 
-int
-pfx_vlan_free(struct pfx_vlan *pfx)
+void
+gtp_proxy_set_rules(struct gtp_proxy *ctx)
 {
-	list_head_del(&pfx->next);
-	FREE(pfx);
-	return 0;
+	printf("set rule: %d\n", ctx->rules_set);
+
+	/* set new traffic rules */
+	if (ctx->bind_ingress && ctx->bind_egress &&
+	    ctx->bind_ipip && !(ctx->tun_flags & IPTNL_FL_DEAD)) {
+		if (ctx->rules_set == 0) {
+			_set_base_rules(ctx);
+			ctx->rules_set = 1;
+		}
+		if (ctx->rules_set == 1) {
+			_set_tun_rules(ctx);
+			ctx->rules_set = 2;
+		}
+
+	} else if (ctx->bind_ingress && ctx->bind_egress) {
+		if (ctx->rules_set == 0) {
+			_set_base_rules(ctx);
+			ctx->rules_set = 1;
+		}
+		if (ctx->rules_set == 2) {
+			gtp_interface_rule_del_iface(ctx->iface_tun);
+			ctx->rules_set = 1;
+		}
+
+	} else {
+		if (ctx->rules_set == 2) {
+			gtp_interface_rule_del_iface(ctx->iface_tun);
+			ctx->rules_set = 1;
+		}
+		if (ctx->rules_set == 1) {
+			gtp_interface_rule_del_iface(ctx->iface_ingress);
+			gtp_interface_rule_del_iface(ctx->iface_egress);
+			ctx->rules_set = 0;
+		}
+	}
+
+	printf("set rule done: %d\n", ctx->rules_set);
 }
 
-static int
-pfx_vlan_destroy(struct list_head *l)
+void
+gtp_proxy_iface_event_cb(struct gtp_interface *iface,
+			 enum gtp_interface_event type,
+			 void *ud, void *arg)
 {
-	struct pfx_vlan *p, *_p;
+	struct gtp_proxy *ctx = ud;
 
-	list_for_each_entry_safe(p, _p, l, next)
-		pfx_vlan_free(p);
+	printf("iface:%s event %d\n", iface->ifname, type);
 
-	return 0;
+	switch (type) {
+	case GTP_INTERFACE_EV_PRG_BIND:
+		if (iface == ctx->iface_ingress)
+			ctx->bind_ingress = true;
+		if (iface == ctx->iface_egress)
+			ctx->bind_egress = true;
+		if (iface == ctx->iface_tun)
+			ctx->bind_ipip = true;
+		break;
+
+	case GTP_INTERFACE_EV_PRG_UNBIND:
+	case GTP_INTERFACE_EV_DESTROYING:
+		if (iface == ctx->iface_ingress)
+			ctx->bind_ingress = false;
+		if (iface == ctx->iface_egress)
+			ctx->bind_egress = false;
+		if (iface == ctx->iface_tun)
+			ctx->bind_ipip = false;
+		break;
+
+	case GTP_INTERFACE_EV_VTY_SHOW:
+	{
+		struct vty *vty = arg;
+		if (iface == ctx->iface_ingress)
+			vty_out(vty, " gtp-proxy:%s side gtpu-ingress\n",
+				ctx->name);
+		if (iface == ctx->iface_egress)
+			vty_out(vty, " gtp-proxy:%s side gtpu-egress\n",
+				ctx->name);
+		if (iface == ctx->iface_tun)
+			vty_out(vty, " gtp-proxy:%s side gtpu-tun\n",
+				ctx->name);
+		break;
+	}
+	default:
+		break;
+	}
+
+	gtp_proxy_set_rules(ctx);
+
+	if (type == GTP_INTERFACE_EV_DESTROYING) {
+		if (iface == ctx->iface_ingress)
+			ctx->iface_ingress = NULL;
+		if (iface == ctx->iface_egress)
+			ctx->iface_egress = NULL;
+		if (iface == ctx->iface_tun)
+			ctx->iface_tun = NULL;
+	}
 }
+
 
 struct gtp_proxy *
 gtp_proxy_get(const char *name)
@@ -195,10 +336,10 @@ gtp_proxy_init(const char *name)
 		errno = ENOMEM;
 		return NULL;
 	}
-        INIT_LIST_HEAD(&new->next);
-        INIT_LIST_HEAD(&new->iptnl.decap_pfx_vlan);
-        strncpy(new->name, name, GTP_NAME_MAX_LEN - 1);
-        list_add_tail(&new->next, &daemon_data->gtp_proxy_ctx);
+	INIT_LIST_HEAD(&new->next);
+	INIT_LIST_HEAD(&new->iptnl.decap_pfx_vlan);
+	strncpy(new->name, name, GTP_NAME_MAX_LEN - 1);
+	list_add_tail(&new->next, &daemon_data->gtp_proxy_ctx);
 
 	/* Init hashtab */
 	gtp_htab_init(&new->gtpc_teid_tab, CONN_HASHTAB_SIZE);
@@ -222,12 +363,12 @@ gtp_proxy_ctx_server_destroy(struct gtp_proxy *ctx)
 int
 gtp_proxy_ctx_destroy(struct gtp_proxy *ctx)
 {
-	pfx_vlan_destroy(&ctx->iptnl.decap_pfx_vlan);
 	gtp_htab_destroy(&ctx->gtpc_teid_tab);
 	gtp_htab_destroy(&ctx->gtpu_teid_tab);
 	gtp_htab_destroy(&ctx->vteid_tab);
 	gtp_htab_destroy(&ctx->vsqn_tab);
 	list_head_del(&ctx->next);
+	FREE(ctx);
 	return 0;
 }
 
@@ -249,7 +390,6 @@ gtp_proxy_destroy(void)
 
 	list_for_each_entry_safe(c, _c, &daemon_data->gtp_proxy_ctx, next) {
 		gtp_proxy_ctx_destroy(c);
-		FREE(c);
 	}
 
 	return 0;
