@@ -181,7 +181,7 @@ pfcp_bpf_teid_action(struct pfcp_router *r, int action, struct pfcp_teid *t,
 	char gtpu_str[INET6_ADDRSTRLEN];
 	int err;
 
-	if (!t || !r->bpf_data)
+	if (!t || !r->bpf_data || !r->bpf_data->user_ingress)
 		return -1;
 
 	if (__test_bit(PFCP_TEID_F_EGRESS, &t->flags)) {
