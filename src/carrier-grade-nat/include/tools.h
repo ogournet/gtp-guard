@@ -37,25 +37,3 @@
 #define notice(Mod, Fmt, ...)	log_message(LOG_NOTICE, Fmt, ## __VA_ARGS__)
 #define warn(Mod, Fmt, ...)	log_message(LOG_WARNING, Fmt, ## __VA_ARGS__)
 #define err(Mod, Fmt, ...)	log_message(LOG_ERR, Fmt, ## __VA_ARGS__)
-
-
-/* always useful */
-#ifndef min
-# define min(A, B) ((A) > (B) ? (B) : (A))
-#endif
-#ifndef max
-# define max(A, B) ((A) > (B) ? (A) : (B))
-#endif
-
-static inline uint32_t
-next_power_of_2(uint32_t n)
-{
-	n--;
-	n |= n >> 1;
-	n |= n >> 2;
-	n |= n >> 4;
-	n |= n >> 8;
-	n |= n >> 16;
-
-	return n + 1;
-}
