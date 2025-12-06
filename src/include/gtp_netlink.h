@@ -16,7 +16,7 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2025 Alexandre Cassen, <acassen@gmail.com>
  */
 #pragma once
 
@@ -47,6 +47,8 @@ struct nl_handle {
 #define RTA_TAIL(rta)	(struct rtattr *) (char *)(rta) + RTA_ALIGN((rta)->rta_len)
 
 /* Prototypes */
+int gtp_netlink_link_create_veth(const char *name, const char *peer_name);
+int gtp_netlink_link_delete(int ifindex);
 int gtp_netlink_if_lookup(int ifindex);
 int gtp_netlink_init(void);
-int gtp_netlink_destroy(void);
+void gtp_netlink_destroy(void);
