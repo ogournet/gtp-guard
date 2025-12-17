@@ -50,7 +50,10 @@
 #include "gtp_netlink.h"
 #include "gtp_interface.h"
 #include "gtp_bpf_prog.h"
+#include "gtp_bpf_ifrules.h"
 #include "gtp_bpf_xsk.h"
+#include "bpf/lib/if_rule-def.h"
+
 
 /*
  * userland packet handling using AF_XDP.
@@ -68,22 +71,7 @@
  */
 
 
-struct gtp_bpf_xsk;
-struct gtp_xsk_socket;
-
-
-enum {
-	GTP_XSK_NOTIF_SHUTDOWN = 1,
-	GTP_XSK_NOTIF_ADD_XS,
-	GTP_XSK_NOTIF_DEL_XS,
-};
-
-struct gtp_xsk_notif_xs
-{
-	uint32_t		type;	/* GTP_XSK_NOTIF_ADD/DEL_XS */
-	struct gtp_xsk_socket	*xs;
-};
-
+/* notification system between pthread worker and main context */
 typedef void (*gtp_xsk_notif_t)(void *, void *, size_t);
 
 struct gtp_xsk_notif
@@ -99,15 +87,14 @@ struct gtp_xsk_notif
 /* wrap xsk_socket with data we need */
 struct gtp_xsk_socket
 {
-	int			refcnt;
 	int			queue_id;
-	uint32_t		xsk_map_idx;
 	struct gtp_xsk_iface	*xi;
 	struct gtp_xsk_ctx	*xc;
 	struct xsk_socket	*xsk;
 
 	/* rx */
 	bool			have_rx;
+	uint32_t		xsk_map_idx;
 	struct xsk_ring_cons	rx;
 	struct xsk_ring_prod	fq;
 	struct thread		*read_th;
@@ -145,7 +132,9 @@ struct gtp_xsk_ctx
 	/* main -> thead notification channel */
 	int			th_r_fd;
 	int			m_w_fd;
-	struct thread		*notif_th;
+	struct thread		*notif_th_th;
+	struct list_head	notif_th_list;
+	pthread_mutex_t		notif_th_lock;
 
 	/* thread -> main notification channel */
 	int			th_w_fd;
@@ -158,8 +147,7 @@ struct gtp_xsk_ctx
 	struct list_head	iface_list;
 
 	/* egress xdp hook */
-	int			veth_ifindex_rx;
-	struct gtp_interface	*veth_iface_tx;
+	struct gtp_interface	*veth_iface_rx;
 	struct gtp_xsk_socket	*veth_xs;
 };
 
@@ -180,17 +168,16 @@ struct gtp_bpf_xsk
 	struct xsk_umem		*umem;
 	struct xsk_ring_prod	unused_fq;
 	struct xsk_ring_cons	unused_cq;
-	uint32_t		desc_n;		// number of descriptors in buffer
-	size_t			buffer_size;	// desc_n * frame_size
 	void			*buffer;
+	uint32_t		desc_n;		/* # descriptors */
+	uint64_t		*desc_free;	/* addresses of free desc */
+	uint32_t		desc_free_n;	/* # free descriptors */
 #if 0
 	/* pkt buffering */
 	struct pq_desc		*desc_pending;
 	uint32_t		desc_pending_b;
 	uint32_t		desc_pending_e;
 #endif
-	uint64_t		*desc_free;
-	uint32_t		desc_free_n;
 };
 
 /* locals */
@@ -200,9 +187,10 @@ static int next_instance_id;
 extern struct thread_master *master;
 
 
+
 /*************************************************************************/
 /*
- *	Helpers
+ *	ethtool helpers
  */
 
 
@@ -316,11 +304,7 @@ timeout_cb(struct ev_loop * /* loop */, struct ev_timer *t, int /* revents */)
 		u->desc_pending_b = 0;
 	}
 }
-#endif
 
-
-
-#if 0
 static inline struct gg_desc *
 _get_pending_desc(struct gtp_bpf_xsk *ctx, uint32_t idx)
 {
@@ -435,14 +419,15 @@ _socket_cb(struct thread *t)
 	struct gtp_bpf_xsk *x = xs->xc->x;
 	struct gtp_xsk_desc pkt;
 	uint32_t rcvd, i;
-	uint32_t idx_rx = 0, idx_fq = 0;
+	uint32_t idx_rx, idx_fq = 0;
 	int ret;
+
+	printf("socket_cb: %d from %s\n", rcvd, xs->xi->iface->ifname);
 
 	/* how many descriptors to read ? */
 	rcvd = xsk_ring_cons__peek(&xs->rx, 64, &idx_rx);
 	if (!rcvd)
 		goto end;
-	printf("socket_cb: %d\n", rcvd);
 
 	/* read packets */
 	for (i = 0; i < rcvd; i++) {
@@ -456,7 +441,9 @@ _socket_cb(struct thread *t)
 		ret = xc->c.pkt_read(xc->c.priv, &pkt);
 		switch (ret) {
 		case GTP_XSK_DROP:
+			x->desc_free[x->desc_free_n++] = desc->addr;
 			break;
+
 		case GTP_XSK_TX:
 			printf("%s tx\n", __func__);
 			if (xc->veth_xs != NULL)
@@ -464,6 +451,7 @@ _socket_cb(struct thread *t)
 			else
 				_sock_tx_select(xs, &pkt);
 			break;
+
 		case GTP_XSK_QUEUE:
 #if 0
 			// add this packet to pending list
@@ -474,23 +462,23 @@ _socket_cb(struct thread *t)
 			++x->desc_pending_e;
 #endif
 			break;
-		}
 
-		if (ret != GTP_XSK_QUEUE)
-			x->desc_free[x->desc_free_n++] = desc->addr;
+		default:
+			abort();
+		}
 	}
 
 	// acke'd, we read them
 	xsk_ring_cons__release(&xs->rx, rcvd);
 
-	// now we give back to kernel the same number of descriptors,
-	// so it won't run out.
+	/* now we give back to kernel the same number of descriptors, */
+	/* so it won't run out. */
 	if (x->desc_free_n < rcvd) {
 		printf("ooops, running out of RX descriptors :/\n");
 		goto end;
 	}
 	if (xsk_ring_prod__reserve(&xs->fq, rcvd, &idx_fq) == 0) {
-		printf("cannot write into fill queue, what the kernel is doing ?\n");
+		printf("cannot write into fill queue\n");
 		goto end;
 	}
 	for (i = 0; i < rcvd; i++)
@@ -506,53 +494,97 @@ _socket_cb(struct thread *t)
 
 
 static void
-_notif_read_cb(struct thread *th)
+_notif_th_shutdown(void *ctx, void *ud, size_t size)
 {
-	struct gtp_xsk_ctx *xc = THREAD_ARG(th);
-	struct gtp_xsk_notif_xs *n_xs;
-	struct gtp_xsk_socket *xs;
-	int fd = THREAD_FD(th);
+	struct gtp_xsk_ctx *xc = ctx;
+
+	thread_add_terminate_event(xc->master);
+}
+
+static void
+_notif_th_add_xs(void *ctx, void *ud, size_t size)
+{
+	struct gtp_xsk_ctx *xc = ctx;
+	struct gtp_xsk_socket *xs = *(struct gtp_xsk_socket **)ud;
+	int fd;
+
+	fd = xsk_socket__fd(xs->xsk);
+	xs->read_th = thread_add_read(xc->master, _socket_cb,
+				      xs, fd, TIMER_NEVER, 0);
+}
+
+static void
+_notif_th_del_xs(void *ctx, void *ud, size_t size)
+{
+	struct gtp_xsk_socket *xs = *(struct gtp_xsk_socket **)ud;
+
+	thread_del(xs->read_th);
+	xsk_socket__delete(xs->xsk);
+	free(xs);
+}
+
+/* process all notifs from main context, in thread */
+static void
+_notif_th_read_cb(struct thread *t)
+{
+	struct gtp_xsk_ctx *xc = THREAD_ARG(t);
+	struct gtp_xsk_notif *n, *n_tmp;
+	struct list_head tmp_list = LIST_HEAD_INIT(tmp_list);
+	int fd = THREAD_FD(t);
 	char buf[PIPE_BUF];
-	uint32_t *type;
 	int ret;
 
 	ret = read(fd, buf, sizeof (buf));
 	if (ret < 0) {
-		printf("read pipe: %m\n");
+		log_message(LOG_ERR, "notif_th_read pipe: %m");
 		return;
 	}
 
-	/* process notifications */
-	type = (uint32_t *)(buf);
-	switch (*type) {
-	case GTP_XSK_NOTIF_SHUTDOWN:
-		printf("receive shutdown notif\n");
-		thread_add_terminate_event(xc->master);
-		xc->notif_th = NULL;
-		return;
+	pthread_mutex_lock(&xc->notif_th_lock);
+	list_splice_init(&xc->notif_th_list, &tmp_list);
+	pthread_mutex_unlock(&xc->notif_th_lock);
 
-	case GTP_XSK_NOTIF_ADD_XS:
-		n_xs = (struct gtp_xsk_notif_xs *)buf;
-		fd = xsk_socket__fd(n_xs->xs->xsk);
-		n_xs->xs->read_th = thread_add_read(xc->master, _socket_cb,
-						    n_xs->xs, fd, TIMER_NEVER, 0);
-		break;
-
-	case GTP_XSK_NOTIF_DEL_XS:
-		n_xs = (struct gtp_xsk_notif_xs *)buf;
-		xs = n_xs->xs;
-		thread_del(xs->read_th);
-		xsk_socket__delete(xs->xsk);
-		free(xs);
-		break;
-
-	default:
-		break;
+	list_for_each_entry_safe(n, n_tmp, &tmp_list, list) {
+		n->cb(n->cb_ud, n->data, n->size);
+		free(n);
 	}
 
-	xc->notif_th = thread_add_read(xc->master, _notif_read_cb, xc,
-				       xc->th_r_fd, TIMER_NEVER, 0);
+	xc->notif_th_th = thread_add_read(xc->master, _notif_th_read_cb, xc,
+					  xc->th_r_fd, TIMER_NEVER, 0);
 }
+
+
+/* should be called from main context.
+ * it will call 'cb' in thread context. */
+static void
+gtp_xsk_send_thread_notif(struct gtp_xsk_ctx *xc, gtp_xsk_notif_t cb, void *cb_ud,
+			  const void *data, size_t size)
+{
+	struct gtp_xsk_notif *n;
+	bool wake_up;
+
+	n = malloc(sizeof(*n) + size);
+	if (n == NULL)
+		return;
+	n->cb = cb;
+	n->cb_ud = cb_ud;
+	n->size = size;
+	if (size && data)
+		memcpy(n->data, data, size);
+
+	pthread_mutex_lock(&xc->notif_th_lock);
+	wake_up = list_empty(&xc->notif_th_list);
+	list_add_tail(&n->list, &xc->notif_th_list);
+	pthread_mutex_unlock(&xc->notif_th_lock);
+
+	if (wake_up) {
+		uint8_t c = 77;
+		int ret = write(xc->m_w_fd, &c, 1);
+		if (ret < 0)
+			log_message(LOG_ERR, "notif_th_write pipe: %m");
+	}
+}
+
 
 static void *
 gtp_xsk_main_loop(void *arg)
@@ -569,12 +601,13 @@ gtp_xsk_main_loop(void *arg)
 	if (xc->master == NULL)
 		return NULL;
 
-	xc->notif_th = thread_add_read(xc->master, _notif_read_cb, xc,
-				       xc->th_r_fd, TIMER_NEVER, 0);
+	xc->notif_th_th = thread_add_read(xc->master, _notif_th_read_cb, xc,
+					  xc->th_r_fd, TIMER_NEVER, 0);
 
 	if (xc->c.thread_init != NULL)
 		xc->c.thread_init(xc->c.priv);
 
+	printf("%s: start\n", __func__);
 	launch_thread_scheduler(xc->master);
 
 	if (xc->c.thread_release != NULL)
@@ -592,6 +625,78 @@ gtp_xsk_main_loop(void *arg)
 /*
  *	context / sockets management (run in main context)
  */
+
+static int
+_xsk_sock_dump(struct gtp_xsk_socket *xs, char *buf, int size, bool rx)
+{
+	int k = 0;
+
+	k += scnprintf(buf + k, size - k, "   - queue_id         : %d\n",
+		       xs->queue_id);
+	if (rx) {
+		k += scnprintf(buf + k, size - k, "     xsk_map_idx     : %d\n",
+			       xs->xsk_map_idx);
+	} else {
+		k += scnprintf(buf + k, size - k, "     outstanding_tx  : %d\n",
+			       xs->outstanding_tx);
+	}
+
+	return k;
+}
+
+static int
+_xsk_ctx_dump(struct gtp_xsk_ctx *xc, char *buf, int size)
+{
+	struct gtp_xsk_iface *xi;
+	struct list_head *lh;
+	int cm = 0, cth = 0;
+	int k = 0;
+	int i;
+
+	k += scnprintf(buf + k, size - k,
+		       " name                 : %s\n"
+		       " instance_id          : %d\n"
+		       " running pthread      : %d\n",
+		       xc->c.name, xc->instance_id, xc->task_running);
+
+	/* get number of pending notifications */
+	pthread_mutex_lock(&xc->notif_m_lock);
+	list_for_each(lh, &xc->notif_m_list)
+		cm++;
+	pthread_mutex_unlock(&xc->notif_m_lock);
+	pthread_mutex_lock(&xc->notif_th_lock);
+	list_for_each(lh, &xc->notif_th_list)
+		cth++;
+	pthread_mutex_unlock(&xc->notif_th_lock);
+	k += scnprintf(buf + k, size - k,
+		       " pending notification\n"
+		       "   - main -> thread   : %d\n"
+		       "   - thread -> main   : %d\n",
+		       cth, cm);
+
+	list_for_each_entry(xi, &xc->iface_list, list) {
+		k += scnprintf(buf + k, size - k, " interface '%s'\n",
+			       xi->iface->ifname);
+		if (xi->rx_sock_n) {
+			k += scnprintf(buf + k, size - k,
+				       "  bpf_base_index      : %d\n",
+				       xi->bpf_base_index);
+			k += scnprintf(buf + k, size - k,
+				       "  rx sockets          : %d\n",
+				       xi->rx_sock_n);
+		}
+		for (i = 0; i < xi->rx_sock_n; i++)
+			k += _xsk_sock_dump(xi->rx_sock[i], buf + k, size - k, true);
+		if (xi->tx_sock_n > 0)
+			k += scnprintf(buf + k, size - k,
+				       "  tx sockets          : %d\n",
+				       xi->tx_sock_n);
+		for (i = 0; i < xi->tx_sock_n; i++)
+			k += _xsk_sock_dump(xi->tx_sock[i], buf + k, size - k, false);
+	}
+
+	return k;
+}
 
 /*
  * setup AF_XDP sockets (xsk), one per rx queue.
@@ -627,7 +732,6 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 	xs = calloc(1, sizeof (*xs));
 	if (xs == NULL)
 		return NULL;
-	xs->refcnt = !!w_rx + !!w_tx;
 	xs->queue_id = queue_id;
 	xs->xsk_map_idx = xi->bpf_base_index + queue_id;
 	xs->have_rx = w_rx;
@@ -650,7 +754,7 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 		xsd_cfg.tx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
 	}
 
-	/* wait for 1ms max. */
+	/* wait for 1ms max. may happen if delete then setup is too fast */
 	for (i = 0; i < 100; i++) {
 		xs->xsk = xsk_socket__create_opts(ifname, queue_id, x->umem, &xsd_cfg);
 		if (xs->xsk != NULL || errno != EBUSY)
@@ -661,12 +765,9 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 		printf("cannot create xsk socket: %m\n");
 		return NULL;
 	}
-	printf("fq cons: %p prod: %p\n", xs->fq.consumer, xs->fq.producer);
 
-	if (!w_rx) {
-		printf("done creating TX xsk\n");
+	if (!w_rx)
 		return xs;
-	}
 
 	/* insert this fd into bpf's map BPF_MAP_TYPE_XSKMAP */
 	fd = xsk_socket__fd(xs->xsk);
@@ -674,13 +775,7 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 			     &fd, sizeof (fd), 0);
 
 	/* add socket into thread's iomux */
-	struct gtp_xsk_notif_xs n = {
-		.type = GTP_XSK_NOTIF_ADD_XS,
-		.xs = xs,
-	};
-	ret = write(xc->m_w_fd, &n, sizeof (n));
-	if (ret < 0)
-		printf("write pipe: %m\n");
+	gtp_xsk_send_thread_notif(xc, _notif_th_add_xs, xc, &xs, sizeof (xs));
 
 	/* give kernel some descriptors for RX, by writting into fill ring */
 	ret = xsk_ring_prod__reserve(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS, &idx);
@@ -693,29 +788,29 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 }
 
 static void
-_socket_cleanup(struct gtp_xsk_socket *xs)
+_socket_cleanup(struct gtp_xsk_socket *xs, bool rx)
 {
 	struct gtp_xsk_ctx *xc = xs->xc;
-	int ret;
 
-	if (--xs->refcnt)
+	/* TX only socket */
+	if (!xs->have_rx) {
+		assert(!rx);
+		xsk_socket__delete(xs->xsk);
+		free(xs);
 		return;
+	}
 
-	bpf_map__delete_elem(xc->x->xsks_map, &xs->xsk_map_idx,
-			     sizeof (uint32_t), 0);
-
-	struct gtp_xsk_notif_xs n = {
-		.type = GTP_XSK_NOTIF_DEL_XS,
-		.xs = xs,
-	};
-	ret = write(xc->m_w_fd, &n, sizeof (n));
-	if (ret < 0)
-		printf("write pipe: %m\n");
+	/* RX socket: will destroy in thread */
+	if (rx && xs->have_rx) {
+		bpf_map__delete_elem(xc->x->xsks_map, &xs->xsk_map_idx,
+				     sizeof (uint32_t), 0);
+		gtp_xsk_send_thread_notif(xc, _notif_th_del_xs, xc, &xs, sizeof (xs));
+	}
 }
 
 
 static int
-_xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
+_xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface, bool is_veth)
 {
 	struct gtp_bpf_xsk *x = xc->x;
 	struct gtp_xsk_iface *xi;
@@ -733,24 +828,23 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
 	if (ret < 0)
 		goto err;
 
-	printf("iface_add{%s}: %p %p\n", iface->ifname, iface, xc->veth_iface_tx);
-	if (iface != xc->veth_iface_tx) {
+	if (is_veth) {
+		xi->rx_sock_n = 0;
+	} else {
 		xi->rx_sock = calloc(xi->rx_sock_n, sizeof (*xi->rx_sock));
 		if (xi->rx_sock == NULL)
 			goto err;
-	} else {
-		xi->rx_sock_n = 0;
 	}
 
-	if (xc->c.egress_xdp_hook && iface != xc->veth_iface_tx) {
+	if (xc->c.egress_xdp_hook && !is_veth) {
 		xi->tx_sock_n = 0;
 	} else {
 		xi->tx_sock = calloc(xi->tx_sock_n, sizeof (*xi->tx_sock));
 		if (xi->tx_sock == NULL)
 			goto err;
 	}
-	printf("iface %s rx_queue: %d tx_queue: %d\n", iface->ifname,
-	       xi->rx_sock_n, xi->tx_sock_n);
+	printf("iface %s rx_queue: %d tx_queue: %d is_veth:%d\n", iface->ifname,
+	       xi->rx_sock_n, xi->tx_sock_n, is_veth);
 
 	/* initialize sockets */
 	sock_n = max(xi->rx_sock_n, xi->tx_sock_n);
@@ -766,7 +860,7 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
 	}
 
 	/* shortcut when using egress xdp hook */
-	if (iface == xc->veth_iface_tx)
+	if (is_veth)
 		xc->veth_xs = xi->tx_sock[0];
 
 	if (xi->rx_sock_n) {
@@ -774,15 +868,12 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
 					   &iface->ifindex, sizeof (uint32_t),
 					   &xi->bpf_base_index, sizeof (uint32_t),
 					   0);
-		if (ret < 0) {
+		if (ret < 0)
 			printf("map_insert{xsks_base} failed: %m\n");
-		}
-
-		// xxx also set this index in ifrule input, as an optimization
 	}
 
 	x->bpf_next_base_index += xi->rx_sock_n;
-	list_add(&xi->list, &xc->iface_list);
+	list_add_tail(&xi->list, &xc->iface_list);
 	return 0;
 
  err:
@@ -816,10 +907,10 @@ _xsk_iface_del(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
 			printf("map_delete{xsks_base} failed: %m\n");
 	}
 
-	for (i = 0; i < xi->rx_sock_n; i++)
-		_socket_cleanup(xi->rx_sock[i]);
 	for (i = 0; i < xi->tx_sock_n; i++)
-		_socket_cleanup(xi->tx_sock[i]);
+		_socket_cleanup(xi->tx_sock[i], false);
+	for (i = 0; i < xi->rx_sock_n; i++)
+		_socket_cleanup(xi->rx_sock[i], true);
 	free(xi->rx_sock);
 	free(xi->tx_sock);
 
@@ -829,6 +920,18 @@ _xsk_iface_del(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
 	return 0;
 }
 
+
+static void
+_xsk_veth_iface_event_cb(struct gtp_interface *iface, enum gtp_interface_event type,
+			 void *udata, void *arg)
+{
+	struct gtp_xsk_ctx *xc = udata;
+
+	if (type == GTP_INTERFACE_EV_DESTROYING) {
+		gtp_netlink_link_delete(iface->ifindex);
+		xc->veth_iface_rx = NULL;
+	}
+}
 
 
 static int
@@ -842,6 +945,7 @@ _xsk_create_veth_socket(struct gtp_xsk_ctx *xc)
 	snprintf(veth_in, sizeof (veth_in), "%.9s-xi%d", xc->c.name, xc->instance_id);
 	snprintf(veth_out, sizeof (veth_out), "%.9s-xo%d", xc->c.name, xc->instance_id);
 
+	/* create virtual 'rx' interface */
 	iface = gtp_interface_get(veth_in, true);
 	if (iface == NULL) {
 		ret = gtp_netlink_link_create_veth(veth_in, veth_out);
@@ -863,23 +967,83 @@ _xsk_create_veth_socket(struct gtp_xsk_ctx *xc)
 		 "%s_xsk", xc->c.name);
 	list_add(&iface->bpf_prog_list, &p->iface_bind_list);
 	__clear_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags);
-	xc->veth_ifindex_rx = iface->ifindex;
+	xc->veth_iface_rx = iface;
 	if (gtp_interface_start(iface) < 0) {
 		gtp_netlink_link_delete(iface->ifindex);
+		gtp_interface_destroy(iface);
+		xc->veth_iface_rx = NULL;
 		return -1;
 	}
+	gtp_interface_register_event(xc->veth_iface_rx, _xsk_veth_iface_event_cb, xc);
 
-	/* start output side, to be added to ifrule */
-	// XXX: only need to retrieve ifindex ?
+	/* start tx side (packet entry in veth from userspace) */
 	iface = gtp_interface_get(veth_out, true);
 	if (iface == NULL)
 		return -1;
-	xc->veth_iface_tx = iface;
 	__set_bit(GTP_INTERFACE_FL_BPF_NO_DEFAULT_ROUTE_BIT, &iface->flags);
 	__clear_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags);
 	gtp_interface_start(iface);
 
-	return _xsk_iface_add(xc, xc->veth_iface_tx);
+	return _xsk_iface_add(xc, iface, true);
+}
+
+static void
+_xsk_ifrules_event(void *user_data, enum gtp_bpf_ifrules_event type, void *arg)
+{
+	struct gtp_xsk_ctx *xc = user_data;
+	struct gtp_xsk_iface *xi;
+	struct gtp_if_rule *r = arg;
+	bool found = false;
+	int i;
+
+	/* not interested by rules that are not binded to an interface */
+	if (r->from == NULL || r->from == xc->veth_iface_rx)
+		return;
+
+	/* map to xsk_iface */
+	list_for_each_entry(xi, &xc->iface_list, list) {
+		if (r->from == xi->iface || r->from->link_iface == xi->iface) {
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return;
+
+	switch (type) {
+	case GTP_BPF_IFRULES_IN_ADDING:
+		/* before installing input_rule: set xsk base index if source
+		 * interface has some af_xdp socket created */
+		if (!xc->c.egress_xdp_hook && xi->rx_sock_n)
+			r->xsk_base_idx = xi->bpf_base_index;
+		break;
+
+	case GTP_BPF_IFRULES_IN_ADD:
+	case GTP_BPF_IFRULES_IN_DEL:
+	case GTP_BPF_IFRULES_IN_UPDATE:
+		if (xc->veth_iface_rx == NULL)
+			break;
+		for (found = false, i = 0;
+		     i < ARRAY_SIZE(xc->c.prc_action_filter) &&
+			     xc->c.prc_action_filter[i]; i++) {
+			if (xc->c.prc_action_filter[i] == r->action) {
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			break;
+
+		/* copy rule and add it under xsk_veth_rx iface */
+		struct gtp_if_rule cr = *r;
+		cr.from = xc->veth_iface_rx;
+		cr.xsk_base_idx = 0;
+		cr.table_id = r->table_id ?: r->from ? r->from->table_id : 0;
+		struct if_rule_key_base *bk = cr.key;
+		bk->ifindex = xc->veth_iface_rx->ifindex;
+		gtp_bpf_ifrules_set(&cr, type != GTP_BPF_IFRULES_IN_DEL);
+		break;
+	}
 }
 
 /* process all notifs from thread, in main context */
@@ -932,7 +1096,7 @@ gtp_xsk_send_notif(struct gtp_xsk_ctx *xc, gtp_xsk_notif_t cb, void *cb_ud,
 
 	pthread_mutex_lock(&xc->notif_m_lock);
 	wake_up = list_empty(&xc->notif_m_list);
-	list_add(&n->list, &xc->notif_m_list);
+	list_add_tail(&n->list, &xc->notif_m_list);
 	pthread_mutex_unlock(&xc->notif_m_lock);
 
 	if (wake_up) {
@@ -975,18 +1139,16 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	xc->m_r_fd = -1;
 	INIT_LIST_HEAD(&xc->iface_list);
 
-	/* create veth pair if packet re-circulation is enabled */
-	if (cfg->egress_xdp_hook && _xsk_create_veth_socket(xc))
-		goto err;
-
 	/* communication channels */
-	ret = pipe2(fds, O_CLOEXEC | O_DIRECT | O_NONBLOCK);
+	ret = pipe2(fds, O_CLOEXEC | O_NONBLOCK);
 	if (ret < 0) {
 		printf("pipe2: %m\n");
 		goto err;
 	}
 	xc->th_r_fd = fds[0];
 	xc->m_w_fd = fds[1];
+	INIT_LIST_HEAD(&xc->notif_th_list);
+	pthread_mutex_init(&xc->notif_th_lock, NULL);
 
 	ret = pipe2(fds, O_CLOEXEC | O_NONBLOCK);
 	if (ret < 0) {
@@ -1000,23 +1162,21 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	xc->notif_m_th = thread_add_read(master, _notif_m_read_cb, xc,
 					 xc->m_r_fd, TIMER_NEVER, 0);
 
-	/* start worker thread */
-	ret = pthread_create(&xc->task, NULL, gtp_xsk_main_loop, xc);
-	if (ret < 0) {
-		log_message(LOG_INFO, "pthread_create: %m");
-		goto err;
-	}
-	xc->task_running = true;
-
 	/* create AF_XDP for already bound sockets */
 	list_for_each_entry(iface, &p->iface_bind_list, bpf_prog_list) {
-		if (__test_bit(GTP_INTERFACE_FL_RUNNING_BIT, &iface->flags) &&
-		    iface->ifindex != xc->veth_ifindex_rx) {
-			printf("xsk create: adding iface %s\n", iface->ifname);
-			if (_xsk_iface_add(xc, iface))
+		if (!__test_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags)) {
+			if (_xsk_iface_add(xc, iface, false))
 				goto err;
 		}
 	}
+
+	/* create veth pair if packet re-circulation is enabled */
+	if (cfg->egress_xdp_hook && _xsk_create_veth_socket(xc))
+		goto err;
+
+	if (xc->c.bpf_ifrules != NULL)
+		gtp_bpf_ifrules_register_event(xc->c.bpf_ifrules,
+					       _xsk_ifrules_event, xc);
 
 	/* register ourself in bpf_xsk */
 	x->xc[x->xc_n++] = xc;
@@ -1028,11 +1188,28 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	return NULL;
 }
 
+int
+gtp_xsk_run(struct gtp_xsk_ctx *xc)
+{
+	int ret;
+
+	if (xc->task_running)
+		return 0;
+
+	ret = pthread_create(&xc->task, NULL, gtp_xsk_main_loop, xc);
+	if (ret < 0) {
+		log_message(LOG_INFO, "pthread_create: %m");
+		return -1;
+	}
+	xc->task_running = true;
+	return 0;
+}
+
+
 static void
 _xsk_stop(struct gtp_xsk_ctx *xc)
 {
 	struct gtp_xsk_notif *n, *n_tmp;
-	uint32_t type = GTP_XSK_NOTIF_SHUTDOWN;
 	int ret, i;
 
 	for (i = 0; i < xc->x->xc_n; i++)
@@ -1041,29 +1218,31 @@ _xsk_stop(struct gtp_xsk_ctx *xc)
 			break;
 		}
 
-	printf("stopping xsk context, veth_ifindex: %d\n", xc->veth_ifindex_rx);
-	if (xc->veth_ifindex_rx) {
-		ret = gtp_netlink_link_delete(xc->veth_ifindex_rx);
+	if (xc->c.bpf_ifrules != NULL)
+		gtp_bpf_ifrules_unregister_event(xc->c.bpf_ifrules,
+						 _xsk_ifrules_event, xc);
+
+	if (xc->veth_iface_rx != NULL) {
+		gtp_interface_unregister_event(xc->veth_iface_rx,
+					       _xsk_veth_iface_event_cb, xc);
+		ret = gtp_netlink_link_delete(xc->veth_iface_rx->ifindex);
 		if (ret < 0)
 			printf("xsk_stop: link_delete: %m\n");
-		xc->veth_ifindex_rx = 0;
+		xc->veth_iface_rx = NULL;
 	}
 
 	while (!list_empty(&xc->iface_list))
 		_xsk_iface_del(xc, NULL);
 
 	if (xc->task_running) {
-		ret = write(xc->m_w_fd, &type, sizeof (type));
-		if (ret < 0)
-			printf("write{shutdown}: %m\n");
-
 		xc->task_running = false;
+		gtp_xsk_send_thread_notif(xc, _notif_th_shutdown, xc, NULL, 0);
 		pthread_join(xc->task, NULL);
 	}
+	thread_del(xc->notif_m_th);
 	pthread_mutex_destroy(&xc->notif_m_lock);
 	list_for_each_entry_safe(n, n_tmp, &xc->notif_m_list, list)
 		free(n);
-	thread_del(xc->notif_m_th);
 	if (xc->th_r_fd >= 0)
 		close(xc->th_r_fd);
 	if (xc->m_w_fd >= 0)
@@ -1108,6 +1287,7 @@ gtp_xsk_release(struct gtp_xsk_ctx *xc)
 static int
 _umem_setup(struct gtp_bpf_xsk *x)
 {
+	size_t buffer_size;
 	uint32_t i;
 
 	/* enough descriptors to fit all fill+completion rings, plus
@@ -1116,8 +1296,8 @@ _umem_setup(struct gtp_bpf_xsk *x)
 
 	/* create the 'big buffer' that will hold packets data. */
 	/*   20k packets of 4k size each => 80 MB  (for one rx queue) */
-	x->buffer_size = x->desc_n * XSK_UMEM__DEFAULT_FRAME_SIZE;
-	x->buffer = mmap(NULL, x->buffer_size,
+	buffer_size = x->desc_n * XSK_UMEM__DEFAULT_FRAME_SIZE;
+	x->buffer = mmap(NULL, buffer_size,
 			 PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (x->buffer == MAP_FAILED) {
 		printf("ERROR: mmap failed: %m\n");
@@ -1125,7 +1305,7 @@ _umem_setup(struct gtp_bpf_xsk *x)
 	}
 
 	LIBBPF_OPTS(xsk_umem_opts, umem_cfg,
-		    .size = x->buffer_size,
+		    .size = buffer_size,
 		    .fill_size = XSK_RING_PROD__DEFAULT_NUM_DESCS,
 		    .comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS,
 		    .frame_size = XSK_UMEM__DEFAULT_FRAME_SIZE,
@@ -1144,7 +1324,7 @@ _umem_setup(struct gtp_bpf_xsk *x)
 		goto out;
 	}
 
-	// add all descriptors into free array
+	/* add all descriptor addresses into free array */
 	x->desc_free = calloc(x->desc_n, sizeof (*x->desc_free));
 	for (i = 0; i < x->desc_n; i++)
 		x->desc_free[x->desc_free_n++] = i * XSK_UMEM__DEFAULT_FRAME_SIZE;
@@ -1161,7 +1341,7 @@ _umem_setup(struct gtp_bpf_xsk *x)
 	if (x->umem != NULL)
 		(void)xsk_umem__delete(x->umem);
 	if (x->buffer != MAP_FAILED)
-		munmap(x->buffer, x->buffer_size);
+		munmap(x->buffer, buffer_size);
 	x->buffer = NULL;
 	return -1;
 }
@@ -1172,7 +1352,7 @@ _umem_cleanup(struct gtp_bpf_xsk *x)
 	if (x->umem != NULL)
 		(void)xsk_umem__delete(x->umem);
 	if (x->buffer != NULL)
-		munmap(x->buffer, x->buffer_size);
+		munmap(x->buffer, x->desc_n * XSK_UMEM__DEFAULT_FRAME_SIZE);
 	free(x->desc_free);
 }
 
@@ -1186,6 +1366,7 @@ gtp_bpf_xsk_alloc(struct gtp_bpf_prog *p)
 	if (x == NULL)
 		return NULL;
 	x->p = p;
+	x->bpf_next_base_index = 1;	/* keep 0 as unused index */
 	return x;
 }
 
@@ -1229,7 +1410,7 @@ gtp_bpf_xsk_bind_itf(struct gtp_bpf_prog *p, void *udata, struct gtp_interface *
 	int i;
 
 	for (i = 0; i < x->xc_n; i++)
-		if (_xsk_iface_add(x->xc[i], iface))
+		if (_xsk_iface_add(x->xc[i], iface, false))
 			return -1;
 
 	return 0;
@@ -1250,8 +1431,16 @@ gtp_bpf_xsk_vty(struct gtp_bpf_prog *p, void *udata, struct vty *vty,
 		int argc, const char **argv)
 {
 	struct gtp_bpf_xsk *x = udata;
+	char buf[60000];
+	int i;
 
-	vty_out(vty, "xsk contexts: %d\n", x->xc_n);
+	vty_out(vty, "===\n");
+	vty_out(vty, "xsk on bpf-program '%s', %d attached context:\n",
+		p->name, x->xc_n);
+	for (i = 0; i < x->xc_n; i++) {
+		_xsk_ctx_dump(x->xc[i], buf, sizeof (buf));
+		vty_out(vty, "%s", buf);
+	}
 }
 
 

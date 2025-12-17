@@ -470,6 +470,8 @@ interface pub
     gtpg_show "
 show carrier-grade-nat config
 show carrier-grade-nat flows 10.0.0.1
+show interface-rule all
+show bpf xsk
 "
 }
 
@@ -603,7 +605,7 @@ bpf-program cgn-ng-1
  no shutdown
 
 carrier-grade-nat cgn-ng-1
- description doit_avoir_le_meme_nom_que_le_prog_bpf
+ bpf-program cgn-ng-1
  ipv4-pool 37.141.0.0/24
 ! interface gre-priv side ingress
 ! interface virt-eth0 side egress
