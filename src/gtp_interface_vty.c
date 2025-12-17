@@ -112,7 +112,6 @@ DEFUN(interface,
 
 	vty->node = INTERFACE_NODE;
 	vty->index = new;
-	gtp_interface_put(new);
 	return CMD_SUCCESS;
 }
 
@@ -130,8 +129,8 @@ DEFUN(no_interface,
 		return CMD_WARNING;
 	}
 
-	gtp_interface_put(iface);
 	gtp_interface_destroy(iface);
+
 	return CMD_SUCCESS;
 }
 
@@ -185,7 +184,6 @@ DEFUN(interface_bpf_prog,
 		vty_out(vty, "%% bpf-program:'%s' already loaded on this interface%s"
 			   , iface->bpf_prog->name
 			   , VTY_NEWLINE);
-		gtp_bpf_prog_put(p);
 		return CMD_WARNING;
 	}
 
@@ -408,7 +406,6 @@ DEFUN(show_interface,
 		}
 
 		gtp_interface_show(iface, vty);
-		gtp_interface_put(iface);
 		return CMD_SUCCESS;
 	}
 
