@@ -72,18 +72,6 @@ struct gtp_bpf_xsk;
 struct gtp_xsk_socket;
 
 
-enum {
-	GTP_XSK_NOTIF_SHUTDOWN = 1,
-	GTP_XSK_NOTIF_ADD_XS,
-	GTP_XSK_NOTIF_DEL_XS,
-};
-
-struct gtp_xsk_notif_xs
-{
-	uint32_t		type;	/* GTP_XSK_NOTIF_ADD/DEL_XS */
-	struct gtp_xsk_socket	*xs;
-};
-
 typedef void (*gtp_xsk_notif_t)(void *, void *, size_t);
 
 struct gtp_xsk_notif
@@ -145,7 +133,9 @@ struct gtp_xsk_ctx
 	/* main -> thead notification channel */
 	int			th_r_fd;
 	int			m_w_fd;
-	struct thread		*notif_th;
+	struct thread		*notif_th_th;
+	struct list_head	notif_th_list;
+	pthread_mutex_t		notif_th_lock;
 
 	/* thread -> main notification channel */
 	int			th_w_fd;
@@ -506,53 +496,97 @@ _socket_cb(struct thread *t)
 
 
 static void
-_notif_read_cb(struct thread *th)
+_notif_th_shutdown(void *ctx, void *ud, size_t size)
 {
-	struct gtp_xsk_ctx *xc = THREAD_ARG(th);
-	struct gtp_xsk_notif_xs *n_xs;
-	struct gtp_xsk_socket *xs;
-	int fd = THREAD_FD(th);
+	struct gtp_xsk_ctx *xc = ctx;
+
+	thread_add_terminate_event(xc->master);
+}
+
+static void
+_notif_th_add_xs(void *ctx, void *ud, size_t size)
+{
+	struct gtp_xsk_ctx *xc = ctx;
+	struct gtp_xsk_socket *xs = *(struct gtp_xsk_socket **)ud;
+	int fd;
+
+	fd = xsk_socket__fd(xs->xsk);
+	xs->read_th = thread_add_read(xc->master, _socket_cb,
+				      xs, fd, TIMER_NEVER, 0);
+}
+
+static void
+_notif_th_del_xs(void *ctx, void *ud, size_t size)
+{
+	struct gtp_xsk_socket *xs = *(struct gtp_xsk_socket **)ud;
+
+	thread_del(xs->read_th);
+	xsk_socket__delete(xs->xsk);
+	free(xs);
+}
+
+/* process all notifs from main context, in thread */
+static void
+_notif_th_read_cb(struct thread *t)
+{
+	struct gtp_xsk_ctx *xc = THREAD_ARG(t);
+	struct gtp_xsk_notif *n, *n_tmp;
+	struct list_head tmp_list = LIST_HEAD_INIT(tmp_list);
+	int fd = THREAD_FD(t);
 	char buf[PIPE_BUF];
-	uint32_t *type;
 	int ret;
 
 	ret = read(fd, buf, sizeof (buf));
 	if (ret < 0) {
-		printf("read pipe: %m\n");
+		log_message(LOG_ERR, "notif_th_read pipe: %m");
 		return;
 	}
 
-	/* process notifications */
-	type = (uint32_t *)(buf);
-	switch (*type) {
-	case GTP_XSK_NOTIF_SHUTDOWN:
-		printf("receive shutdown notif\n");
-		thread_add_terminate_event(xc->master);
-		xc->notif_th = NULL;
-		return;
+	pthread_mutex_lock(&xc->notif_th_lock);
+	list_splice_init(&xc->notif_th_list, &tmp_list);
+	pthread_mutex_unlock(&xc->notif_th_lock);
 
-	case GTP_XSK_NOTIF_ADD_XS:
-		n_xs = (struct gtp_xsk_notif_xs *)buf;
-		fd = xsk_socket__fd(n_xs->xs->xsk);
-		n_xs->xs->read_th = thread_add_read(xc->master, _socket_cb,
-						    n_xs->xs, fd, TIMER_NEVER, 0);
-		break;
-
-	case GTP_XSK_NOTIF_DEL_XS:
-		n_xs = (struct gtp_xsk_notif_xs *)buf;
-		xs = n_xs->xs;
-		thread_del(xs->read_th);
-		xsk_socket__delete(xs->xsk);
-		free(xs);
-		break;
-
-	default:
-		break;
+	list_for_each_entry_safe(n, n_tmp, &tmp_list, list) {
+		n->cb(n->cb_ud, n->data, n->size);
+		free(n);
 	}
 
-	xc->notif_th = thread_add_read(xc->master, _notif_read_cb, xc,
-				       xc->th_r_fd, TIMER_NEVER, 0);
+	xc->notif_th_th = thread_add_read(xc->master, _notif_th_read_cb, xc,
+					  xc->th_r_fd, TIMER_NEVER, 0);
 }
+
+
+/* should be called from main context.
+ * it will call 'cb' in thread context. */
+static void
+gtp_xsk_send_thread_notif(struct gtp_xsk_ctx *xc, gtp_xsk_notif_t cb, void *cb_ud,
+			  const void *data, size_t size)
+{
+	struct gtp_xsk_notif *n;
+	bool wake_up;
+
+	n = malloc(sizeof(*n) + size);
+	if (n == NULL)
+		return;
+	n->cb = cb;
+	n->cb_ud = cb_ud;
+	n->size = size;
+	if (size && data)
+		memcpy(n->data, data, size);
+
+	pthread_mutex_lock(&xc->notif_th_lock);
+	wake_up = list_empty(&xc->notif_th_list);
+	list_add(&n->list, &xc->notif_th_list);
+	pthread_mutex_unlock(&xc->notif_th_lock);
+
+	if (wake_up) {
+		uint8_t c = 77;
+		int ret = write(xc->m_w_fd, &c, 1);
+		if (ret < 0)
+			log_message(LOG_ERR, "notif_th_write pipe: %m");
+	}
+}
+
 
 static void *
 gtp_xsk_main_loop(void *arg)
@@ -569,8 +603,8 @@ gtp_xsk_main_loop(void *arg)
 	if (xc->master == NULL)
 		return NULL;
 
-	xc->notif_th = thread_add_read(xc->master, _notif_read_cb, xc,
-				       xc->th_r_fd, TIMER_NEVER, 0);
+	xc->notif_th_th = thread_add_read(xc->master, _notif_th_read_cb, xc,
+					  xc->th_r_fd, TIMER_NEVER, 0);
 
 	if (xc->c.thread_init != NULL)
 		xc->c.thread_init(xc->c.priv);
@@ -663,10 +697,8 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 	}
 	printf("fq cons: %p prod: %p\n", xs->fq.consumer, xs->fq.producer);
 
-	if (!w_rx) {
-		printf("done creating TX xsk\n");
+	if (!w_rx)
 		return xs;
-	}
 
 	/* insert this fd into bpf's map BPF_MAP_TYPE_XSKMAP */
 	fd = xsk_socket__fd(xs->xsk);
@@ -674,13 +706,7 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 			     &fd, sizeof (fd), 0);
 
 	/* add socket into thread's iomux */
-	struct gtp_xsk_notif_xs n = {
-		.type = GTP_XSK_NOTIF_ADD_XS,
-		.xs = xs,
-	};
-	ret = write(xc->m_w_fd, &n, sizeof (n));
-	if (ret < 0)
-		printf("write pipe: %m\n");
+	gtp_xsk_send_thread_notif(xc, _notif_th_add_xs, xc, &xs, sizeof (xs));
 
 	/* give kernel some descriptors for RX, by writting into fill ring */
 	ret = xsk_ring_prod__reserve(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS, &idx);
@@ -696,21 +722,13 @@ static void
 _socket_cleanup(struct gtp_xsk_socket *xs)
 {
 	struct gtp_xsk_ctx *xc = xs->xc;
-	int ret;
 
 	if (--xs->refcnt)
 		return;
 
 	bpf_map__delete_elem(xc->x->xsks_map, &xs->xsk_map_idx,
 			     sizeof (uint32_t), 0);
-
-	struct gtp_xsk_notif_xs n = {
-		.type = GTP_XSK_NOTIF_DEL_XS,
-		.xs = xs,
-	};
-	ret = write(xc->m_w_fd, &n, sizeof (n));
-	if (ret < 0)
-		printf("write pipe: %m\n");
+	gtp_xsk_send_thread_notif(xc, _notif_th_del_xs, xc, &xs, sizeof (xs));
 }
 
 
@@ -975,10 +993,6 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	xc->m_r_fd = -1;
 	INIT_LIST_HEAD(&xc->iface_list);
 
-	/* create veth pair if packet re-circulation is enabled */
-	if (cfg->egress_xdp_hook && _xsk_create_veth_socket(xc))
-		goto err;
-
 	/* communication channels */
 	ret = pipe2(fds, O_CLOEXEC | O_DIRECT | O_NONBLOCK);
 	if (ret < 0) {
@@ -987,6 +1001,8 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	}
 	xc->th_r_fd = fds[0];
 	xc->m_w_fd = fds[1];
+	INIT_LIST_HEAD(&xc->notif_th_list);
+	pthread_mutex_init(&xc->notif_th_lock, NULL);
 
 	ret = pipe2(fds, O_CLOEXEC | O_NONBLOCK);
 	if (ret < 0) {
@@ -1000,23 +1016,18 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	xc->notif_m_th = thread_add_read(master, _notif_m_read_cb, xc,
 					 xc->m_r_fd, TIMER_NEVER, 0);
 
-	/* start worker thread */
-	ret = pthread_create(&xc->task, NULL, gtp_xsk_main_loop, xc);
-	if (ret < 0) {
-		log_message(LOG_INFO, "pthread_create: %m");
-		goto err;
-	}
-	xc->task_running = true;
-
 	/* create AF_XDP for already bound sockets */
 	list_for_each_entry(iface, &p->iface_bind_list, bpf_prog_list) {
-		if (__test_bit(GTP_INTERFACE_FL_RUNNING_BIT, &iface->flags) &&
-		    iface->ifindex != xc->veth_ifindex_rx) {
+		if (!__test_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags)) {
 			printf("xsk create: adding iface %s\n", iface->ifname);
 			if (_xsk_iface_add(xc, iface))
 				goto err;
 		}
 	}
+
+	/* create veth pair if packet re-circulation is enabled */
+	if (cfg->egress_xdp_hook && _xsk_create_veth_socket(xc))
+		goto err;
 
 	/* register ourself in bpf_xsk */
 	x->xc[x->xc_n++] = xc;
@@ -1028,11 +1039,28 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	return NULL;
 }
 
+int
+gtp_xsk_run(struct gtp_xsk_ctx *xc)
+{
+	int ret;
+
+	if (xc->task_running)
+		return 0;
+
+	ret = pthread_create(&xc->task, NULL, gtp_xsk_main_loop, xc);
+	if (ret < 0) {
+		log_message(LOG_INFO, "pthread_create: %m");
+		return -1;
+	}
+	xc->task_running = true;
+	return 0;
+}
+
+
 static void
 _xsk_stop(struct gtp_xsk_ctx *xc)
 {
 	struct gtp_xsk_notif *n, *n_tmp;
-	uint32_t type = GTP_XSK_NOTIF_SHUTDOWN;
 	int ret, i;
 
 	for (i = 0; i < xc->x->xc_n; i++)
@@ -1053,17 +1081,14 @@ _xsk_stop(struct gtp_xsk_ctx *xc)
 		_xsk_iface_del(xc, NULL);
 
 	if (xc->task_running) {
-		ret = write(xc->m_w_fd, &type, sizeof (type));
-		if (ret < 0)
-			printf("write{shutdown}: %m\n");
-
 		xc->task_running = false;
+		gtp_xsk_send_thread_notif(xc, _notif_th_shutdown, xc, NULL, 0);
 		pthread_join(xc->task, NULL);
 	}
+	thread_del(xc->notif_m_th);
 	pthread_mutex_destroy(&xc->notif_m_lock);
 	list_for_each_entry_safe(n, n_tmp, &xc->notif_m_list, list)
 		free(n);
-	thread_del(xc->notif_m_th);
 	if (xc->th_r_fd >= 0)
 		close(xc->th_r_fd);
 	if (xc->m_w_fd >= 0)

@@ -239,6 +239,14 @@ cgn_ctx_start(struct cgn_ctx *c)
 		return 0;
 	c->initialized = true;
 
+	/* fill ippub pool addr (for traffic selector) */
+	for (i = 0; i < c->cgn_addr_n; i++) {
+		k = c->cgn_addr[i];
+		bpf_map__update_elem(x->v4_pool_addr, &k, sizeof (k),
+				     &uu, sizeof (uu), 0);
+
+	}
+
 	/* init af_xdp library
 	 * cgn_flow will be initialized from af_xdp thread */
 	struct gtp_xsk_cfg xcfg = {
@@ -255,15 +263,7 @@ cgn_ctx_start(struct cgn_ctx *c)
 		return -1;
 	}
 
-	/* fill ippub pool addr (for traffic selector) */
-	for (i = 0; i < c->cgn_addr_n; i++) {
-		k = c->cgn_addr[i];
-		bpf_map__update_elem(x->v4_pool_addr, &k, sizeof (k),
-				     &uu, sizeof (uu), 0);
-
-	}
-
-	return 0;
+	return gtp_xsk_run(x->xc);
 }
 
 

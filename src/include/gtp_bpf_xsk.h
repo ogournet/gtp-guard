@@ -70,4 +70,5 @@ struct thread_master *gtp_xsk_thread_master(struct gtp_xsk_ctx *xc);
 void gtp_xsk_send_notif(struct gtp_xsk_ctx *xc, gtp_xsk_notif_t cb, void *cb_ud,
 			const void *data, size_t size);
 struct gtp_xsk_ctx *gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg);
+int gtp_xsk_run(struct gtp_xsk_ctx *xc);
 void gtp_xsk_release(struct gtp_xsk_ctx *xc);
