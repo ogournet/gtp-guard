@@ -616,7 +616,6 @@ netlink_if_link_del(struct nlmsghdr *h)
 	if (!iface)
 		return 0;
 
-	gtp_interface_put(iface);
 	gtp_interface_destroy(iface);
 
 	return 0;
@@ -818,7 +817,6 @@ netlink_if_link_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct n
 	if (__test_bit(GTP_INTERFACE_FL_METRICS_LINK_BIT, &iface->flags))
 		get_rtnl_link_stats_rta(iface->link_metrics, tb);
 
-	gtp_interface_put(iface);
 	return 0;
 }
 
