@@ -319,6 +319,16 @@ DEFUN(show_bpf_interface_rule,
 	return CMD_SUCCESS;
 }
 
+DEFUN(show_bpf_xsk,
+      show_bpf_xsk_cmd,
+      "show bpf xsk",
+      SHOW_STR
+      "bpf\n"
+      "Show AF_XDP modules\n")
+{
+	gtp_bpf_prog_foreach_vty("xsks", vty, argc, argv);
+	return CMD_SUCCESS;
+}
 
 DEFUN(bpf_prog_shutdown,
       bpf_prog_shutdown_cmd,
@@ -404,6 +414,8 @@ cmd_ext_bpf_prog_install(void)
 	install_element(ENABLE_NODE, &show_bpf_prog_cmd);
 	install_element(VIEW_NODE, &show_bpf_interface_rule_cmd);
 	install_element(ENABLE_NODE, &show_bpf_interface_rule_cmd);
+	install_element(VIEW_NODE, &show_bpf_xsk_cmd);
+	install_element(ENABLE_NODE, &show_bpf_xsk_cmd);
 
 	return 0;
 }
