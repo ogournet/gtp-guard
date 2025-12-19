@@ -252,10 +252,13 @@ cgn_ctx_start(struct cgn_ctx *c)
 	struct gtp_xsk_cfg xcfg = {
 		.name = "cgn",
 		.priv = c,
+		.bpf_ifrules = c->bpf_ifrules,
 		.thread_init = cgn_flow_init,
 		.thread_release = cgn_flow_release,
 		.pkt_read = cgn_flow_read_pkt,
 		.egress_xdp_hook = true,
+		.prc_action_filter[0] = XDP_IFR_DEFAULT_ROUTE,
+		.prc_action_filter[1] = XDP_CGN_FROM_PRIV,
 	};
 	x->xc = gtp_xsk_create(x->p, &xcfg);
 	if (x->xc == NULL) {

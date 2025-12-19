@@ -50,7 +50,9 @@
 #include "gtp_netlink.h"
 #include "gtp_interface.h"
 #include "gtp_bpf_prog.h"
+#include "gtp_bpf_ifrules.h"
 #include "gtp_bpf_xsk.h"
+#include "bpf/lib/if_rule-def.h"
 
 /*
  * userland packet handling using AF_XDP.
@@ -149,6 +151,7 @@ struct gtp_xsk_ctx
 
 	/* egress xdp hook */
 	int			veth_ifindex_rx;
+	struct gtp_interface	*veth_iface_rx;
 	struct gtp_interface	*veth_iface_tx;
 	struct gtp_xsk_socket	*veth_xs;
 };
@@ -428,11 +431,12 @@ _socket_cb(struct thread *t)
 	uint32_t idx_rx = 0, idx_fq = 0;
 	int ret;
 
+	printf("socket_cb: %d from %s\n", rcvd, xs->xi->iface->ifname);
+
 	/* how many descriptors to read ? */
 	rcvd = xsk_ring_cons__peek(&xs->rx, 64, &idx_rx);
 	if (!rcvd)
 		goto end;
-	printf("socket_cb: %d\n", rcvd);
 
 	/* read packets */
 	for (i = 0; i < rcvd; i++) {
@@ -576,7 +580,7 @@ gtp_xsk_send_thread_notif(struct gtp_xsk_ctx *xc, gtp_xsk_notif_t cb, void *cb_u
 
 	pthread_mutex_lock(&xc->notif_th_lock);
 	wake_up = list_empty(&xc->notif_th_list);
-	list_add(&n->list, &xc->notif_th_list);
+	list_add_tail(&n->list, &xc->notif_th_list);
 	pthread_mutex_unlock(&xc->notif_th_lock);
 
 	if (wake_up) {
@@ -609,6 +613,7 @@ gtp_xsk_main_loop(void *arg)
 	if (xc->c.thread_init != NULL)
 		xc->c.thread_init(xc->c.priv);
 
+	printf("%s: start\n", __func__);
 	launch_thread_scheduler(xc->master);
 
 	if (xc->c.thread_release != NULL)
@@ -788,6 +793,8 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
 		xc->veth_xs = xi->tx_sock[0];
 
 	if (xi->rx_sock_n) {
+		printf("adding iface=%d base=%d\n", iface->ifindex,
+		       xi->bpf_base_index);
 		ret = bpf_map__update_elem(x->xsks_base_map,
 					   &iface->ifindex, sizeof (uint32_t),
 					   &xi->bpf_base_index, sizeof (uint32_t),
@@ -795,8 +802,6 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface)
 		if (ret < 0) {
 			printf("map_insert{xsks_base} failed: %m\n");
 		}
-
-		// xxx also set this index in ifrule input, as an optimization
 	}
 
 	x->bpf_next_base_index += xi->rx_sock_n;
@@ -881,6 +886,7 @@ _xsk_create_veth_socket(struct gtp_xsk_ctx *xc)
 		 "%s_xsk", xc->c.name);
 	list_add(&iface->bpf_prog_list, &p->iface_bind_list);
 	__clear_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags);
+	xc->veth_iface_rx = iface;
 	xc->veth_ifindex_rx = iface->ifindex;
 	if (gtp_interface_start(iface) < 0) {
 		gtp_netlink_link_delete(iface->ifindex);
@@ -898,6 +904,65 @@ _xsk_create_veth_socket(struct gtp_xsk_ctx *xc)
 	gtp_interface_start(iface);
 
 	return _xsk_iface_add(xc, xc->veth_iface_tx);
+}
+
+static void
+_xsk_ifrules_event(void *user_data, enum gtp_bpf_ifrules_event type, void *arg)
+{
+	struct gtp_xsk_ctx *xc = user_data;
+	struct gtp_xsk_iface *xi;
+	struct gtp_if_rule *r = arg;
+	bool found = false;
+	int i;
+
+	/* not interested by rules that are not binded to an interface */
+	if (r->from == NULL || r->from == xc->veth_iface_rx)
+		return;
+
+	/* map to xsk_iface */
+	list_for_each_entry(xi, &xc->iface_list, list) {
+		if (r->from == xi->iface || r->from->link_iface == xi->iface) {
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return;
+
+	switch (type) {
+	case GTP_BPF_IFRULES_IN_ADDING:
+		/* before installing input_rule: set xsk base index if source
+		 * interface has some af_xdp socket created */
+		if (!xc->c.egress_xdp_hook && xi->rx_sock_n)
+			r->xsk_base_idx = xi->bpf_base_index;
+		break;
+
+	case GTP_BPF_IFRULES_IN_ADD:
+	case GTP_BPF_IFRULES_IN_DEL:
+	case GTP_BPF_IFRULES_IN_UPDATE:
+		if (xc->veth_iface_rx == NULL)
+			break;
+		for (found = false, i = 0;
+		     i < ARRAY_SIZE(xc->c.prc_action_filter) &&
+			     xc->c.prc_action_filter[i]; i++) {
+			if (xc->c.prc_action_filter[i] == r->action) {
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			break;
+
+		/* copy rule and add it under xsk_veth_rx iface */
+		struct gtp_if_rule cr = *r;
+		cr.from = xc->veth_iface_rx;
+		cr.xsk_base_idx = 0;
+		cr.table_id = r->table_id ?: r->from ? r->from->table_id : 0;
+		struct if_rule_key_base *bk = cr.key;
+		bk->ifindex = xc->veth_ifindex_rx;
+		gtp_bpf_ifrules_set(&cr, type != GTP_BPF_IFRULES_IN_DEL);
+		break;
+	}
 }
 
 /* process all notifs from thread, in main context */
@@ -950,7 +1015,7 @@ gtp_xsk_send_notif(struct gtp_xsk_ctx *xc, gtp_xsk_notif_t cb, void *cb_ud,
 
 	pthread_mutex_lock(&xc->notif_m_lock);
 	wake_up = list_empty(&xc->notif_m_list);
-	list_add(&n->list, &xc->notif_m_list);
+	list_add_tail(&n->list, &xc->notif_m_list);
 	pthread_mutex_unlock(&xc->notif_m_lock);
 
 	if (wake_up) {
@@ -994,7 +1059,7 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	INIT_LIST_HEAD(&xc->iface_list);
 
 	/* communication channels */
-	ret = pipe2(fds, O_CLOEXEC | O_DIRECT | O_NONBLOCK);
+	ret = pipe2(fds, O_CLOEXEC | O_NONBLOCK);
 	if (ret < 0) {
 		printf("pipe2: %m\n");
 		goto err;
@@ -1028,6 +1093,10 @@ gtp_xsk_create(struct gtp_bpf_prog *p, struct gtp_xsk_cfg *cfg)
 	/* create veth pair if packet re-circulation is enabled */
 	if (cfg->egress_xdp_hook && _xsk_create_veth_socket(xc))
 		goto err;
+
+	if (xc->c.bpf_ifrules != NULL)
+		gtp_bpf_ifrules_register_event(xc->c.bpf_ifrules,
+					       _xsk_ifrules_event, xc);
 
 	/* register ourself in bpf_xsk */
 	x->xc[x->xc_n++] = xc;
@@ -1068,6 +1137,10 @@ _xsk_stop(struct gtp_xsk_ctx *xc)
 			xc->x->xc[i] = xc->x->xc[--xc->x->xc_n];
 			break;
 		}
+
+	if (xc->c.bpf_ifrules != NULL)
+		gtp_bpf_ifrules_unregister_event(xc->c.bpf_ifrules,
+						 _xsk_ifrules_event, xc);
 
 	printf("stopping xsk context, veth_ifindex: %d\n", xc->veth_ifindex_rx);
 	if (xc->veth_ifindex_rx) {
@@ -1211,6 +1284,7 @@ gtp_bpf_xsk_alloc(struct gtp_bpf_prog *p)
 	if (x == NULL)
 		return NULL;
 	x->p = p;
+	x->bpf_next_base_index = 1;	/* keep 0 as unused index */
 	return x;
 }
 
