@@ -93,7 +93,7 @@ struct gtp_xsk_socket
 	struct xsk_socket	*xsk;
 
 	/* rx */
-	bool			have_rx;
+	bool			has_rx;
 	uint32_t		xsk_map_idx;
 	struct xsk_ring_cons	rx;
 	struct xsk_ring_prod	fq;
@@ -101,7 +101,7 @@ struct gtp_xsk_socket
 	uint64_t		st_rx;
 
 	/* tx */
-	bool			have_tx;
+	bool			has_tx;
 	struct xsk_ring_prod	tx;
 	struct xsk_ring_cons	cq;
 	uint32_t		outstanding_tx;
@@ -409,7 +409,7 @@ _sock_tx(struct gtp_xsk_socket *xs, struct gtp_xsk_desc *pkt)
 static void
 _sock_tx_select(struct gtp_xsk_socket *xs, struct gtp_xsk_desc *pkt)
 {
-	if (xs->have_tx) {
+	if (xs->has_tx) {
 		_sock_tx(xs, pkt);
 		return;
 	}
@@ -648,7 +648,6 @@ gtp_xsk_main_loop(void *arg)
 	if (xc->c.thread_init != NULL)
 		xc->c.thread_init(xc->c.priv);
 
-	printf("%s: start\n", __func__);
 	launch_thread_scheduler(xc->master);
 
 	if (xc->c.thread_release != NULL)
@@ -770,8 +769,8 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 		return NULL;
 	xs->queue_id = queue_id;
 	xs->xsk_map_idx = xi->bpf_base_index + queue_id;
-	xs->have_rx = w_rx;
-	xs->have_tx = w_tx;
+	xs->has_rx = w_rx;
+	xs->has_tx = w_tx;
 	xs->xi = xi;
 	xs->xc = xc;
 	LIBBPF_OPTS(xsk_socket_opts, xsd_cfg,
@@ -828,16 +827,16 @@ _socket_cleanup(struct gtp_xsk_socket *xs, bool rx)
 {
 	struct gtp_xsk_ctx *xc = xs->xc;
 
-	/* TX only socket */
-	if (!xs->have_rx) {
+	/* TX only socket, destroy now */
+	if (!xs->has_rx) {
 		assert(!rx);
 		xsk_socket__delete(xs->xsk);
 		free(xs);
 		return;
 	}
 
-	/* RX socket: will destroy in thread */
-	if (rx && xs->have_rx) {
+	/* socket has RX: will destroy in thread */
+	if (rx && xs->has_rx) {
 		bpf_map__delete_elem(xc->x->xsks_map, &xs->xsk_map_idx,
 				     sizeof (uint32_t), 0);
 		gtp_xsk_send_thread_notif(xc, _notif_th_del_xs, xc, &xs, sizeof (xs));
@@ -851,7 +850,7 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface, bool is_veth
 	struct gtp_bpf_xsk *x = xc->x;
 	struct gtp_xsk_iface *xi;
 	struct gtp_xsk_socket *xs;
-	int i, ret, sock_n;
+	int i, ret, sock_n = 0;
 
 	xi = calloc(1, sizeof (*xi));
 	if (xi == NULL)
@@ -861,8 +860,11 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface, bool is_veth
 	xi->bpf_base_index = x->bpf_next_base_index;
 
 	ret = xsk_get_cur_queues(iface->ifname, &xi->rx_sock_n, &xi->tx_sock_n);
-	if (ret < 0)
+	if (ret < 0) {
+		log_message(LOG_ERR, "xsk: %s: cannot get queues count",
+			    iface->ifname);
 		goto err;
+	}
 
 	if (is_veth) {
 		xi->rx_sock_n = 0;
@@ -904,8 +906,10 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface, bool is_veth
 					   &iface->ifindex, sizeof (uint32_t),
 					   &xi->bpf_base_index, sizeof (uint32_t),
 					   0);
-		if (ret < 0)
-			printf("map_insert{xsks_base} failed: %m\n");
+		if (ret < 0) {
+			log_message(LOG_ERR, "xsk: map_insert{xsks_base} failed: %m");
+			goto err;
+		}
 	}
 
 	x->bpf_next_base_index += xi->rx_sock_n;
@@ -913,14 +917,23 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface, bool is_veth
 		list_add(&xi->list, &xc->iface_list);
 	else
 		list_add_tail(&xi->list, &xc->iface_list);
+
 	return 0;
 
  err:
-	// XXX delete created sockets
+	for (i = 0; i < sock_n; i++) {
+		if ((xs = xi->rx_sock[i]) != NULL ||
+		    (xs = xi->tx_sock[i]) != NULL) {
+			if (xs->has_rx)
+				bpf_map__delete_elem(xc->x->xsks_map, &xs->xsk_map_idx,
+						     sizeof (uint32_t), 0);
+			xsk_socket__delete(xs->xsk);
+			free(xs);
+		}
+	}
 	free(xi->rx_sock);
 	free(xi->tx_sock);
 	free(xi);
-	printf("CANNOT add interface\n");
 	return -1;
 }
 
