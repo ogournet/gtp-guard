@@ -98,12 +98,15 @@ struct gtp_xsk_socket
 	struct xsk_ring_cons	rx;
 	struct xsk_ring_prod	fq;
 	struct thread		*read_th;
+	uint64_t		st_rx;
 
 	/* tx */
 	bool			have_tx;
 	struct xsk_ring_prod	tx;
 	struct xsk_ring_cons	cq;
 	uint32_t		outstanding_tx;
+	uint64_t		st_tx;
+	uint64_t		st_tx_drop;
 };
 
 struct gtp_xsk_iface
@@ -269,6 +272,40 @@ xsk_get_cur_queues(const char *ifname, uint32_t *rx, uint32_t *tx)
 	return *rx > 0 && *tx > 0 ? 0 : -1;
 }
 
+static int
+xsk_set_iface_forwarding(const char *ifname, bool ipv4, bool ipv6)
+{
+	char path[256];
+	const char on[3] = "1\n";
+	int fd;
+
+	if (ipv4) {
+		snprintf(path, sizeof(path), "/proc/sys/net/ipv4/conf/%s/forwarding",
+			 ifname);
+		fd = open(path, O_WRONLY);
+		if (fd < 0) {
+			log_message(LOG_ERR, "%s: %m", path);
+			return -1;
+		}
+		write(fd, on, sizeof (on));
+		close(fd);
+	}
+
+	if (ipv6) {
+		snprintf(path, sizeof(path), "/proc/sys/net/ipv6/conf/%s/forwarding",
+			 ifname);
+		fd = open(path, O_WRONLY);
+		if (fd < 0) {
+			log_message(LOG_ERR, "%s: %m", path);
+			return -1;
+		}
+		write(fd, on, sizeof (on));
+		close(fd);
+	}
+
+	return 0;
+}
+
 
 /*************************************************************************/
 /*
@@ -351,10 +388,12 @@ _sock_tx(struct gtp_xsk_socket *xs, struct gtp_xsk_desc *pkt)
 	if (!xsk_ring_prod__reserve(&xs->tx, 1, &idx)) {
 		_tx_complete(xs);
 		if (!xsk_ring_prod__reserve(&xs->tx, 1, &idx)) {
-			printf("TX ring buffer is full\n");
+			++xs->st_tx_drop;
 			return;
 		}
 	}
+
+	++xs->st_tx;
 
 	struct xdp_desc *tx_desc = xsk_ring_prod__tx_desc(&xs->tx, idx);
 	tx_desc->addr = pkt->data - xs->xc->x->buffer;
@@ -428,6 +467,8 @@ _socket_cb(struct thread *t)
 	rcvd = xsk_ring_cons__peek(&xs->rx, 64, &idx_rx);
 	if (!rcvd)
 		goto end;
+
+	xs->st_rx += rcvd;
 
 	/* read packets */
 	for (i = 0; i < rcvd; i++) {
@@ -631,15 +672,16 @@ _xsk_sock_dump(struct gtp_xsk_socket *xs, char *buf, int size, bool rx)
 {
 	int k = 0;
 
-	k += scnprintf(buf + k, size - k, "   - queue_id         : %d\n",
+	k += scnprintf(buf + k, size - k, "   - [%d] ",
 		       xs->queue_id);
 	if (rx) {
-		k += scnprintf(buf + k, size - k, "     xsk_map_idx     : %d\n",
-			       xs->xsk_map_idx);
+		k += scnprintf(buf + k, size - k, "xsk_idx: %-7d rx:%ld",
+			       xs->xsk_map_idx, xs->st_rx);
 	} else {
-		k += scnprintf(buf + k, size - k, "     outstanding_tx  : %d\n",
-			       xs->outstanding_tx);
+		k += scnprintf(buf + k, size - k, "pending_tx: %-4d tx:%ld drop:%ld",
+			       xs->outstanding_tx, xs->st_tx, xs->st_tx_drop);
 	}
+	k += scnprintf(buf + k, size - k, "\n");
 
 	return k;
 }
@@ -677,19 +719,13 @@ _xsk_ctx_dump(struct gtp_xsk_ctx *xc, char *buf, int size)
 	list_for_each_entry(xi, &xc->iface_list, list) {
 		k += scnprintf(buf + k, size - k, " interface '%s'\n",
 			       xi->iface->ifname);
-		if (xi->rx_sock_n) {
-			k += scnprintf(buf + k, size - k,
-				       "  bpf_base_index      : %d\n",
-				       xi->bpf_base_index);
-			k += scnprintf(buf + k, size - k,
-				       "  rx sockets          : %d\n",
+		if (xi->rx_sock_n)
+			k += scnprintf(buf + k, size - k, "  rx sockets (%d)\n",
 				       xi->rx_sock_n);
-		}
 		for (i = 0; i < xi->rx_sock_n; i++)
 			k += _xsk_sock_dump(xi->rx_sock[i], buf + k, size - k, true);
 		if (xi->tx_sock_n > 0)
-			k += scnprintf(buf + k, size - k,
-				       "  tx sockets          : %d\n",
+			k += scnprintf(buf + k, size - k, "  tx sockets (%d)\n",
 				       xi->tx_sock_n);
 		for (i = 0; i < xi->tx_sock_n; i++)
 			k += _xsk_sock_dump(xi->tx_sock[i], buf + k, size - k, false);
@@ -873,7 +909,10 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface, bool is_veth
 	}
 
 	x->bpf_next_base_index += xi->rx_sock_n;
-	list_add_tail(&xi->list, &xc->iface_list);
+	if (is_veth)
+		list_add(&xi->list, &xc->iface_list);
+	else
+		list_add_tail(&xi->list, &xc->iface_list);
 	return 0;
 
  err:
@@ -959,6 +998,11 @@ _xsk_create_veth_socket(struct gtp_xsk_ctx *xc)
 			    "(maybe it was not cleaned from previous run)",
 			    xc->c.name, xc->instance_id);
 	}
+	xc->veth_iface_rx = iface;
+
+	/* veth will need to forward packets back to physical interface */
+	if (xsk_set_iface_forwarding(veth_in, 1, 1))
+		goto err;
 
 	/* retrieve interface on the 'rx' side of the veth, and attach
 	 * bpf-program. use custom bpf-program function name. */
@@ -967,24 +1011,31 @@ _xsk_create_veth_socket(struct gtp_xsk_ctx *xc)
 		 "%s_xsk", xc->c.name);
 	list_add(&iface->bpf_prog_list, &p->iface_bind_list);
 	__clear_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags);
-	xc->veth_iface_rx = iface;
-	if (gtp_interface_start(iface) < 0) {
-		gtp_netlink_link_delete(iface->ifindex);
-		gtp_interface_destroy(iface);
-		xc->veth_iface_rx = NULL;
-		return -1;
-	}
+	if (gtp_interface_start(iface) < 0)
+		goto err;
 	gtp_interface_register_event(xc->veth_iface_rx, _xsk_veth_iface_event_cb, xc);
 
 	/* start tx side (packet entry in veth from userspace) */
 	iface = gtp_interface_get(veth_out, true);
 	if (iface == NULL)
-		return -1;
+		goto err;
 	__set_bit(GTP_INTERFACE_FL_BPF_NO_DEFAULT_ROUTE_BIT, &iface->flags);
 	__clear_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags);
-	gtp_interface_start(iface);
+	if (gtp_interface_start(iface) < 0 ||
+	    _xsk_iface_add(xc, iface, true) < 0) {
+		gtp_interface_destroy(iface);
+		goto err;
+	}
 
-	return _xsk_iface_add(xc, iface, true);
+	return 0;
+
+ err:
+	if (xc->veth_iface_rx != NULL) {
+		gtp_netlink_link_delete(xc->veth_iface_rx->ifindex);
+		gtp_interface_destroy(xc->veth_iface_rx);
+		xc->veth_iface_rx = NULL;
+	}
+	return -1;
 }
 
 static void
