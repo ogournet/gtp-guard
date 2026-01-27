@@ -25,6 +25,10 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <arpa/inet.h>
+#include <linux/if_ether.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <netinet/udp.h>
 #include <errno.h>
 #include <bpf.h>
 #include <libbpf.h>
@@ -32,6 +36,7 @@
 #include "gtp_data.h"
 #include "logger.h"
 #include "jhash.h"
+#include "inet_utils.h"
 #include "cgn-priv.h"
 #include "gtp_bpf_xsk.h"
 #include "bpf/lib/cgn-def.h"
@@ -43,6 +48,7 @@ struct thread_master *master = NULL;
 
 static int test_id;
 static const char *bpf_prog_name = "cgn_test";
+static int iface_idx;
 
 
 /*
@@ -70,10 +76,11 @@ parse_cmdline(int argc, char **argv)
 		{"help",                no_argument,		NULL, 'h'},
 		{"test-id",             required_argument,	NULL, 't'},
 		{"bpf-prog",            required_argument,	NULL, 'p'},
+		{"iface",               required_argument,	NULL, 'i'},
 		{NULL,                  0,			NULL,  0 }
 	};
 
-	while (longindex = -1, (c = getopt_long(argc, argv, "ht:p:"
+	while (longindex = -1, (c = getopt_long(argc, argv, "ht:p:i:"
 						, long_options, &longindex)) != -1) {
 
 		switch (c) {
@@ -86,6 +93,11 @@ parse_cmdline(int argc, char **argv)
 			break;
 		case 'p':
 			bpf_prog_name = optarg;
+			break;
+		case 'i':
+			iface_idx = if_nametoindex(optarg);
+			if (iface_idx <= 0)
+				printf("cannot find iface %s\n", optarg);
 			break;
 		default:
 			exit(1);
@@ -161,6 +173,80 @@ run_block_log_event_test(void)
 	close(prg_fd);
 }
 
+
+/*
+ * run bpf function src/bpf/test_cgn.c:xdp_tx_pkt_gen()
+ *
+ * this test is not used anymore
+ */
+static void
+run_xdp_pkt_gen_test(void)
+{
+	int i;
+
+	int prg_fd = retrieve_prog_fd("xdp_tx_pkt_gen", BPF_PROG_TYPE_XDP);
+	if (prg_fd < 0) {
+		printf("did not find %s. maybe you forgot to launch it\n",
+		       bpf_prog_name);
+		return;
+	}
+
+	uint8_t buf[1000];
+	struct xdp_md ctx_in = {
+		.data_end = sizeof (buf),
+		.ingress_ifindex = iface_idx
+	};
+
+	struct ethhdr *ethh = (struct ethhdr *)buf;
+	struct iphdr *iph = (struct iphdr *)(ethh + 1);
+	struct udphdr *udph = (struct udphdr *)(iph + 1);
+
+	memset(ethh, 0x00, sizeof (*ethh));
+	ethh->h_proto = htons(ETH_P_IP);
+
+	iph->ihl = sizeof(struct iphdr) >> 2;
+	iph->version = 4;
+	iph->tos = 0;
+	iph->tot_len = (uint16_t)(sizeof(struct iphdr) + sizeof(struct udphdr));
+	iph->tot_len = htons(iph->tot_len);
+	iph->id = 0;
+	iph->frag_off = 0;
+	iph->ttl = 64;
+	iph->protocol = IPPROTO_UDP;
+	iph->saddr = htonl(0x0a000001);
+	iph->daddr = htonl(0x08080404);
+	iph->check = 0;
+	iph->check = in_csum((uint16_t *)iph, sizeof(struct iphdr), 0);
+
+	udph->source = 0;
+	udph->dest = htons(53);
+	udph->len = htons(sizeof(struct udphdr));
+	udph->check = 0;
+
+	LIBBPF_OPTS(bpf_test_run_opts, rcfg,
+		    .data_in = buf,
+		    .data_size_in = sizeof (buf),
+		    .ctx_in = &ctx_in,
+		    .ctx_size_in = sizeof (ctx_in),
+		    .repeat = 16000,
+		    .flags = BPF_F_TEST_XDP_LIVE_FRAMES,
+		    .cpu = 1,
+		    );
+
+	for (i = 0; i < 625; i++) {
+		iph->saddr = htonl(0x0a000001 + i);
+
+		errno = 0;
+		int ret = bpf_prog_test_run_opts(prg_fd, &rcfg);
+		printf("test 3 run[%d] ret=%d %m\n", i, ret);
+	}
+
+	close(prg_fd);
+}
+
+
+/*************************************************************************/
+/* test cgn flow */
 
 static int
 update_priv_last_use(struct cgn_ctx *c, const struct cgn_v4_flow_priv_key *pk,
@@ -460,6 +546,9 @@ main(int argc, char **argv)
 		break;
 	case 2:
 		setup_cgn_flow();
+		break;
+	case 3:
+		run_xdp_pkt_gen_test();
 		break;
 	}
 

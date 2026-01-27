@@ -72,6 +72,8 @@ setup_iface() {
     ip route add 10.0.0.0/8 via 192.168.61.1 dev priv table 1290
     ip route add 37.141.0.0/24 via 192.168.61.1 dev priv table 1290
 
+    ethtool -L priv rx 8 tx 8
+    
     # bpf_fib_lookup doesn't start arp'ing if there is no neigh entry,
     # so add static entries
     ip neigh add 192.168.61.1 lladdr d2:ad:ca:fe:b4:01 dev priv
@@ -439,14 +441,17 @@ cdr-fwd cgn
 
 bpf-program cgn
  path bin/cgn.bpf
+ xsk desc-count 128
  no shutdown
 
 carrier-grade-nat cgn-ng-1
  description trop_bien
  bpf-program cgn
- ipv4-pool 37.141.0.0/24
- protocol timeout icmp 2
- protocol timeout udp 2
+ ipv4-pool 37.141.0.0/20
+ block-port start 1024 end 65535 size 2000
+ user max 1000000 block 8 flow 15000
+! protocol timeout icmp 2
+! protocol timeout udp 2
  interface ingress priv
  interface egress pub
 ! cdr-fwd cgn

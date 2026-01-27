@@ -461,12 +461,12 @@ _socket_cb(struct thread *t)
 	uint32_t idx_rx, idx_fq = 0;
 	int ret;
 
-	printf("socket_cb: %d from %s\n", rcvd, xs->xi->iface->ifname);
-
 	/* how many descriptors to read ? */
 	rcvd = xsk_ring_cons__peek(&xs->rx, 64, &idx_rx);
 	if (!rcvd)
 		goto end;
+
+	/* printf("socket_cb: %d from %s\n", rcvd, xs->xi->iface->ifname); */
 
 	xs->st_rx += rcvd;
 
@@ -486,7 +486,7 @@ _socket_cb(struct thread *t)
 			break;
 
 		case GTP_XSK_TX:
-			printf("%s tx\n", __func__);
+			/* printf("%s tx\n", __func__); */
 			if (xc->veth_xs != NULL)
 				_sock_tx(xc->veth_xs, &pkt);
 			else
@@ -782,7 +782,7 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 	);
 	if (w_rx) {
 		xsd_cfg.rx = &xs->rx;
-		xsd_cfg.rx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
+		xsd_cfg.rx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS * 8;
 	}
 	if (w_tx) {
 		xsd_cfg.tx = &xs->tx;
@@ -814,7 +814,7 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 
 	/* give kernel some descriptors for RX, by writting into fill ring */
 	ret = xsk_ring_prod__reserve(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS, &idx);
-	assert(ret == XSK_RING_PROD__DEFAULT_NUM_DESCS);
+	assert(ret == XSK_RING_PROD__DEFAULT_NUM_DESCS );
 	for (i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS; i++)
 		*xsk_ring_prod__fill_addr(&xs->fq, idx++) = x->desc_free[--x->desc_free_n];
 	xsk_ring_prod__submit(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS);
@@ -922,8 +922,8 @@ _xsk_iface_add(struct gtp_xsk_ctx *xc, struct gtp_interface *iface, bool is_veth
 
  err:
 	for (i = 0; i < sock_n; i++) {
-		if ((xs = xi->rx_sock[i]) != NULL ||
-		    (xs = xi->tx_sock[i]) != NULL) {
+		if ((xi->rx_sock && (xs = xi->rx_sock[i]) != NULL) ||
+		    (xi->tx_sock && (xs = xi->tx_sock[i]) != NULL)) {
 			if (xs->has_rx)
 				bpf_map__delete_elem(xc->x->xsks_map, &xs->xsk_map_idx,
 						     sizeof (uint32_t), 0);
@@ -1256,6 +1256,7 @@ int
 gtp_xsk_run(struct gtp_xsk_ctx *xc)
 {
 	int ret;
+	cpu_set_t set;
 
 	if (xc->task_running)
 		return 0;
@@ -1266,6 +1267,11 @@ gtp_xsk_run(struct gtp_xsk_ctx *xc)
 		return -1;
 	}
 	xc->task_running = true;
+
+	CPU_ZERO(&set);
+	CPU_SET(2, &set);
+	pthread_setaffinity_np(xc->task, sizeof(set), &set);
+
 	return 0;
 }
 
@@ -1355,16 +1361,21 @@ _umem_setup(struct gtp_bpf_xsk *x)
 	uint32_t i;
 
 	/* enough descriptors to fit all fill+completion rings, plus
-	 * 'buffered' packets. default_num_desc is 2048 */
-	x->desc_n = 32 * XSK_RING_PROD__DEFAULT_NUM_DESCS;
+	 * 'buffered' packets */
+	if (x->p->xsk_desc_n < 32)
+		x->p->xsk_desc_n = 32;
+	if (x->p->xsk_desc_n > 100000)
+		x->p->xsk_desc_n = 100000;
+	x->desc_n = x->p->xsk_desc_n * 1024;
 
-	/* create the 'big buffer' that will hold packets data. */
-	/*   20k packets of 4k size each => 80 MB  (for one rx queue) */
+	/* create the 'big buffer' that will hold ALL packets data. */
+	/*   32k packets of 4k size each => 128 MB */
 	buffer_size = x->desc_n * XSK_UMEM__DEFAULT_FRAME_SIZE;
 	x->buffer = mmap(NULL, buffer_size,
 			 PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (x->buffer == MAP_FAILED) {
-		printf("ERROR: mmap failed: %m\n");
+		log_message(LOG_ERR, "xsk: mmap of %ldMB failed: %m",
+			    buffer_size / (1024 * 1024));
 		goto out;
 	}
 
@@ -1384,7 +1395,7 @@ _umem_setup(struct gtp_bpf_xsk *x)
 	x->umem = xsk_umem__create_opts(x->buffer, &x->unused_fq, &x->unused_cq,
 					&umem_cfg);
 	if (x->umem == NULL) {
-		printf("cannot create xsk umem\n");
+		log_message(LOG_ERR, "cannot create xsk umem: %m");
 		goto out;
 	}
 
