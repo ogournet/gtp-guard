@@ -44,7 +44,7 @@ xsk_to_userspace(struct xdp_md *ctx, struct if_rule_data *d,
 	if (bpf_xdp_adjust_meta(ctx, -xlen))
 		return -1;
 
-	bpf_printk("xsk_to_userspace index %u xlen:%d", index, xlen);
+	/* bpf_printk("xsk_to_userspace index %u xlen:%d", index, xlen); */
 
 	/* verify meta area is accessible */
 	data = (void *)(unsigned long)ctx->data;
@@ -59,7 +59,7 @@ xsk_to_userspace(struct xdp_md *ctx, struct if_rule_data *d,
 	__builtin_memcpy(xmd->data, udata, size);
 
 	if (bpf_map_lookup_elem(&xsks, &index)) {
-		bpf_printk("redirect to xsks index %d", index);
+		/* bpf_printk("redirect to xsks index %d", index); */
 		if (bpf_redirect_map(&xsks, index, 0) == XDP_REDIRECT)
 			return 0;
 	} else {

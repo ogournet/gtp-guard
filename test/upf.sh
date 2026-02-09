@@ -264,7 +264,8 @@ with_cgn=${3:-no}
 
 case $action in
     clean)
-	clean ;;
+	clean
+	exit 0 ;;
     setup)
 	clean
 	sleep 0.5

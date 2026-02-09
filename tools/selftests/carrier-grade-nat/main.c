@@ -176,22 +176,21 @@ run_block_log_event_test(void)
 
 /*
  * run bpf function src/bpf/test_cgn.c:xdp_tx_pkt_gen()
- *
- * this test is not used anymore
  */
 static void
 run_xdp_pkt_gen_test(void)
 {
-	int i;
+	struct timespec ts;
+	int i, ret;
 
 	int prg_fd = retrieve_prog_fd("xdp_tx_pkt_gen", BPF_PROG_TYPE_XDP);
 	if (prg_fd < 0) {
 		printf("did not find %s. maybe you forgot to launch it\n",
-		       bpf_prog_name);
+		       "xdp_tx_pkt_gen");
 		return;
 	}
 
-	uint8_t buf[1000];
+	uint8_t buf[600];
 	struct xdp_md ctx_in = {
 		.data_end = sizeof (buf),
 		.ingress_ifindex = iface_idx
@@ -218,7 +217,7 @@ run_xdp_pkt_gen_test(void)
 	iph->check = 0;
 	iph->check = in_csum((uint16_t *)iph, sizeof(struct iphdr), 0);
 
-	udph->source = 0;
+	udph->source = htons(2000);
 	udph->dest = htons(53);
 	udph->len = htons(sizeof(struct udphdr));
 	udph->check = 0;
@@ -228,17 +227,21 @@ run_xdp_pkt_gen_test(void)
 		    .data_size_in = sizeof (buf),
 		    .ctx_in = &ctx_in,
 		    .ctx_size_in = sizeof (ctx_in),
-		    .repeat = 16000,
+		    .repeat = 2000,
 		    .flags = BPF_F_TEST_XDP_LIVE_FRAMES,
-		    .cpu = 1,
+		    /* .cpu = 1, */
 		    );
 
-	for (i = 0; i < 625; i++) {
-		iph->saddr = htonl(0x0a000001 + i);
+	for (i = 0; i < 625 * 8; i++) { /* 10M packets */
+		iph->saddr = htonl(0x0a000001 + i / 10);
 
 		errno = 0;
-		int ret = bpf_prog_test_run_opts(prg_fd, &rcfg);
-		printf("test 3 run[%d] ret=%d %m\n", i, ret);
+		ret = bpf_prog_test_run_opts(prg_fd, &rcfg);
+
+		clock_gettime(CLOCK_MONOTONIC, &ts);
+		printf("%ld.%.3ld test 3 run[%d] pkt=%d/%d ret=%d %m\n",
+		       ts.tv_sec % 1000, ts.tv_nsec / 1000000,
+		       i, i * rcfg.repeat, 625 * 8 * rcfg.repeat, ret);
 	}
 
 	close(prg_fd);
@@ -550,6 +553,9 @@ main(int argc, char **argv)
 	case 3:
 		run_xdp_pkt_gen_test();
 		break;
+
+	default:
+		return 10;
 	}
 
 	free(daemon_data);

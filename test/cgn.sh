@@ -72,8 +72,6 @@ setup_iface() {
     ip route add 10.0.0.0/8 via 192.168.61.1 dev priv table 1290
     ip route add 37.141.0.0/24 via 192.168.61.1 dev priv table 1290
 
-    ethtool -L priv rx 8 tx 8
-    
     # bpf_fib_lookup doesn't start arp'ing if there is no neigh entry,
     # so add static entries
     ip neigh add 192.168.61.1 lladdr d2:ad:ca:fe:b4:01 dev priv
@@ -97,6 +95,11 @@ setup_iface() {
     # enabling gro does it too
     ip netns exec cgn-pub ethtool -K pub gro on
     ip netns exec cgn-priv ethtool -K priv gro on
+
+    ethtool -K pub gro off gso off tso off
+    ethtool -K priv gro off gso off tso off
+
+    #ethtool -L priv rx 4 tx 4
 }
 
 
@@ -662,7 +665,8 @@ type=${2:-iface}
 
 case $action in
     clean)
-	clean ;;
+	clean
+	exit 0 ;;
     setup)
 	clean
 	sleep 0.5

@@ -16,7 +16,7 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2025 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2025, 2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <fcntl.h>
@@ -362,10 +362,17 @@ _tx_complete(struct gtp_xsk_socket *xs)
 	if (!xs->outstanding_tx)
 		return;
 
+	/* if (xs->outstanding_tx < 32) */
+	/* 	return; */
+
 	/* kick tx */
-	ret = sendto(xsk_socket__fd(xs->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
-	if (ret < 0 && (errno != EAGAIN && errno != EBUSY && errno != ENETDOWN))
-		printf("kick_tx sento: %m\n");
+	if (xsk_ring_prod__needs_wakeup(&xs->tx)) {
+		ret = sendto(xsk_socket__fd(xs->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
+		if (ret < 0 && (errno != EAGAIN && errno != EBUSY && errno != ENETDOWN))
+			printf("kick_tx sento: %m\n");
+	} else {
+		printf("tx no need wakeup\n");
+	}
 
 	/* reclaim descriptors for finished TX operations, add them to our
 	 * free list */
@@ -453,21 +460,24 @@ gtp_xsk_tx(struct gtp_xsk_ctx *xc, int queue_id, struct gtp_xsk_desc *pkt)
 static void
 _socket_cb(struct thread *t)
 {
+	const uint32_t read_pkt_max = 64;
 	struct gtp_xsk_socket *xs = THREAD_ARG(t);
 	struct gtp_xsk_ctx *xc = xs->xc;
 	struct gtp_bpf_xsk *x = xs->xc->x;
 	struct gtp_xsk_desc pkt;
 	uint32_t rcvd, i;
-	uint32_t idx_rx, idx_fq = 0;
+	uint32_t idx_rx, idx_fq = 0, cum_read = 0;
 	int ret;
 
+ do_it_again:
 	/* how many descriptors to read ? */
-	rcvd = xsk_ring_cons__peek(&xs->rx, 64, &idx_rx);
+	rcvd = xsk_ring_cons__peek(&xs->rx, read_pkt_max, &idx_rx);
 	if (!rcvd)
 		goto end;
 
 	/* printf("socket_cb: %d from %s\n", rcvd, xs->xi->iface->ifname); */
 
+	cum_read += rcvd;
 	xs->st_rx += rcvd;
 
 	/* read packets */
@@ -527,9 +537,15 @@ _socket_cb(struct thread *t)
 			x->desc_free[--x->desc_free_n];
 	xsk_ring_prod__submit(&xs->fq, rcvd);
 
+	if (rcvd == read_pkt_max)
+		goto do_it_again;
+
  end:
+	/* if (cum_read) */
+	/* 	printf("read %d frames\n", cum_read); */
 	xs->read_th = thread_add_read(xc->master, _socket_cb, xs,
 				      xsk_socket__fd(xs->xsk), TIMER_NEVER, 0);
+	/* xs->read_th = thread_add_event(xc->master, _socket_cb, xs, 0); */
 }
 
 
@@ -552,6 +568,7 @@ _notif_th_add_xs(void *ctx, void *ud, size_t size)
 	fd = xsk_socket__fd(xs->xsk);
 	xs->read_th = thread_add_read(xc->master, _socket_cb,
 				      xs, fd, TIMER_NEVER, 0);
+	/* xs->read_th = thread_add_event(xc->master, _socket_cb, xs, 0); */
 }
 
 static void
@@ -666,19 +683,35 @@ gtp_xsk_main_loop(void *arg)
  *	context / sockets management (run in main context)
  */
 
+
 static int
 _xsk_sock_dump(struct gtp_xsk_socket *xs, char *buf, int size, bool rx)
 {
+	struct xdp_statistics stats = {};
+	socklen_t optlen;
 	int k = 0;
 
 	k += scnprintf(buf + k, size - k, "   - [%d] ",
 		       xs->queue_id);
+
+	optlen = sizeof (stats);
+	if (getsockopt(xsk_socket__fd(xs->xsk), SOL_XDP, XDP_STATISTICS, &stats, &optlen)) {
+		k += scnprintf(buf + k, size - k, "{err getsockopt: %m}\n");
+		return k;
+	}
+
 	if (rx) {
-		k += scnprintf(buf + k, size - k, "xsk_idx: %-7d rx:%ld",
-			       xs->xsk_map_idx, xs->st_rx);
+		k += scnprintf(buf + k, size - k, "xsk_idx: %-7d rx:%ld drop:%lld "
+			       "rx_full:%lld no_desc:%lld",
+			       xs->xsk_map_idx, xs->st_rx,
+			       stats.rx_dropped + stats.rx_invalid_descs,
+			       stats.rx_ring_full, stats.rx_fill_ring_empty_descs);
 	} else {
-		k += scnprintf(buf + k, size - k, "pending_tx: %-4d tx:%ld drop:%ld",
-			       xs->outstanding_tx, xs->st_tx, xs->st_tx_drop);
+		k += scnprintf(buf + k, size - k, "pending_tx: %-4d tx:%ld drop:%lld "
+			       "no_desc:%lld",
+			       xs->outstanding_tx, xs->st_tx,
+			       xs->st_tx_drop + stats.tx_invalid_descs,
+			       stats.tx_ring_empty_descs);
 	}
 	k += scnprintf(buf + k, size - k, "\n");
 
@@ -733,6 +766,30 @@ _xsk_ctx_dump(struct gtp_xsk_ctx *xc, char *buf, int size)
 	return k;
 }
 
+static int
+_xsk_sock_set_busypoll(int xsk_fd, int opt_batch_size)
+{
+	int sock_opt;
+
+	sock_opt = 1;
+	if (setsockopt(xsk_fd, SOL_SOCKET, SO_PREFER_BUSY_POLL,
+		       (void *)&sock_opt, sizeof(sock_opt)) < 0)
+		return -1;
+
+	sock_opt = 20;
+	if (setsockopt(xsk_fd, SOL_SOCKET, SO_BUSY_POLL,
+		       (void *)&sock_opt, sizeof(sock_opt)) < 0)
+		return -1;
+
+	sock_opt = opt_batch_size;
+	if (setsockopt(xsk_fd, SOL_SOCKET, SO_BUSY_POLL_BUDGET,
+		       (void *)&sock_opt, sizeof(sock_opt)) < 0)
+		return -1;
+
+	return 0;
+}
+
+
 /*
  * setup AF_XDP sockets (xsk), one per rx queue.
  * socket is bind() on a specific queue_id and will only receive from it,
@@ -782,7 +839,7 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 	);
 	if (w_rx) {
 		xsd_cfg.rx = &xs->rx;
-		xsd_cfg.rx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS * 8;
+		xsd_cfg.rx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
 	}
 	if (w_tx) {
 		xsd_cfg.tx = &xs->tx;
@@ -809,15 +866,18 @@ _socket_setup(struct gtp_xsk_iface *xi, const char *ifname, int queue_id,
 	bpf_map__update_elem(x->xsks_map, &xs->xsk_map_idx, sizeof (uint32_t),
 			     &fd, sizeof (fd), 0);
 
+	if (_xsk_sock_set_busypoll(fd, 64))
+		log_message(LOG_ERR, "xsk: %s: setbusypoll: %m", ifname);
+
 	/* add socket into thread's iomux */
 	gtp_xsk_send_thread_notif(xc, _notif_th_add_xs, xc, &xs, sizeof (xs));
 
 	/* give kernel some descriptors for RX, by writting into fill ring */
-	ret = xsk_ring_prod__reserve(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS, &idx);
-	assert(ret == XSK_RING_PROD__DEFAULT_NUM_DESCS );
-	for (i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS; i++)
+	ret = xsk_ring_prod__reserve(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS * 2, &idx);
+	assert(ret == XSK_RING_PROD__DEFAULT_NUM_DESCS * 2);
+	for (i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS * 2; i++)
 		*xsk_ring_prod__fill_addr(&xs->fq, idx++) = x->desc_free[--x->desc_free_n];
-	xsk_ring_prod__submit(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS);
+	xsk_ring_prod__submit(&xs->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS * 2);
 
 	return xs;
 }
@@ -1381,7 +1441,7 @@ _umem_setup(struct gtp_bpf_xsk *x)
 
 	LIBBPF_OPTS(xsk_umem_opts, umem_cfg,
 		    .size = buffer_size,
-		    .fill_size = XSK_RING_PROD__DEFAULT_NUM_DESCS,
+		    .fill_size = XSK_RING_PROD__DEFAULT_NUM_DESCS * 2,
 		    .comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS,
 		    .frame_size = XSK_UMEM__DEFAULT_FRAME_SIZE,
 		    /* leave space before packet data on rx, if we wanna add encap. */
