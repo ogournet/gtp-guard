@@ -388,6 +388,29 @@ DEFUN(interface_no_shutdown,
 }
 
 
+/* Capture */
+DEFUN(capture_interface,
+      capture_interface_cmd,
+      "capture (add|del) interface IFACE [TIME PKTCOUNT FILE]",
+      "Capture packets in pcap\n"
+      "Add a new capture\n"
+      "Delete existing capture\n"
+      "Interface\n"
+      "Interface name\n"
+      "Time in second before stopping capture (default: 0, unlimited)\n"
+      "Packets to write before stopping capture (default: 0, unlimited)\n"
+      "Pcap filename to write into\n")
+{
+	struct gtp_interface *iface = NULL;
+
+	iface = gtp_interface_get(argv[1], false);
+	if (!iface) {
+		vty_out(vty, "%% Unknown interface:'%s'%s", argv[0], VTY_NEWLINE);
+		return CMD_WARNING;
+	}
+
+	return CMD_SUCCESS;
+}
 
 /* Show */
 DEFUN(show_interface,
