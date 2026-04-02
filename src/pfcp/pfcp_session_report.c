@@ -121,6 +121,7 @@ end:
 }
 
 
+#if 0
 static void
 pfcp_session_report_delayed_cb(struct thread *t)
 {
@@ -140,7 +141,7 @@ pfcp_session_report_send_delayed(struct pfcp_report *r)
 	*ar = *r;
 	thread_add_event(master, pfcp_session_report_delayed_cb, ar, 0);
 }
-
+#endif
 
 void
 pfcp_session_report_triggered(struct pfcp_session *s,
@@ -227,61 +228,41 @@ pfcp_session_report_triggered(struct pfcp_session *s,
  * if pbuff is NULL, then send a separate session report request */
 int
 pfcp_session_report_put_modification(struct pkt_buffer *pbuff,
-				     struct pfcp_session *s,
-				     struct pfcp_session_modification_request *req)
+				     struct pfcp_session *s)
 {
-	struct pfcp_ie_query_urr_reference *ie_urr_ref = req->query_urr_reference;
 	union pfcp_usage_report_trigger rtrig = { .immer = 1 };
-	struct urr *u;
+	struct urr *lu, *u;
 	int i, err;
 
-	struct pfcp_report r = {
-		.s = s,
-		.query_urr_ref = ie_urr_ref ? ie_urr_ref->value : 0,
-	};
+	list_for_each_entry(u, &s->urr_list, next) {
+		err = _put_usage_report(pbuff, u,
+					PFCP_IE_USAGE_REPORT_MODIFICATION,
+					rtrig,
+					s->urr_query_ref);
+		if (err)
+			return -1;
 
-	if (req->pfcpsmreq_flags && req->pfcpsmreq_flags->qaurr) {
-		/* Report for all URRs */
-		list_for_each_entry(u, &s->urr_list, next) {
-			if (pbuff == NULL) {
-				if (r.urr_n >= PFCP_MAX_NR_ELEM)
-					break;
-				r.rtrig[r.urr_n] = rtrig;
-				r.urr[r.urr_n++] = u;
-			} else {
-				err = _put_usage_report(pbuff, u,
+		/* add linked urrs */
+		rtrig.liusa = 1;
+		list_for_each_entry(lu, &s->urr_list, next) {
+			for (i = 0; i < PFCP_MAX_NR_ELEM && lu->linked_urr_id[i]; i++) {
+				if (lu->queried || lu->linked_urr_id[i] != u->id)
+					continue;
+
+				/* XXX: do NOT include if measurements are empty */
+				err = _put_usage_report(pbuff, lu,
 							PFCP_IE_USAGE_REPORT_MODIFICATION,
 							rtrig,
-							r.query_urr_ref);
+							s->urr_query_ref);
 				if (err)
 					return -1;
 			}
 		}
-
-	} else {
-		/* Report for queried and their linked URRs */
-		for (i = 0; i < PFCP_MAX_NR_ELEM && req->query_urr[i]; i++) {
-			if (pbuff == NULL) {
-				list_for_each_entry(u, &s->urr_list, next) {
-					if (u->id == req->query_urr[i]->urr_id->value) {
-						r.rtrig[r.urr_n] = rtrig;
-						r.urr[r.urr_n++] = u;
-						break;
-					}
-				}
-			} else {
-				err = _put_usage_report(pbuff, u,
-							PFCP_IE_USAGE_REPORT_MODIFICATION,
-							rtrig,
-							r.query_urr_ref);
-				if (err)
-					return -1;
-			}
-		}
+		rtrig.liusa = 0;
 	}
 
-	if (pbuff == NULL)
-		pfcp_session_report_send_delayed(&r);
+	list_for_each_entry(u, &s->urr_list, next)
+		u->queried = false;
 
 	return 0;
 }

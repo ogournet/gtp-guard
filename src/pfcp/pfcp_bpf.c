@@ -515,11 +515,14 @@ pfcp_bpf_urr_alloc_cmd(struct pfcp_session *s)
 {
 	struct pfcp_urr_cmd *puc;
 
+	if (!++s->urr_cmd_cur_id)
+		s->urr_cmd_cur_id = 1;
+
 	puc = calloc(1, sizeof (*puc));
 	if (puc == NULL)
 		return NULL;
 	puc->uc.seid = s->seid;
-	puc->uc.request_id = ++s->urr_cmd_next_id;
+	puc->uc.request_id = s->urr_cmd_cur_id;
 
 	return &puc->uc;
 }
@@ -642,8 +645,23 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 	if (s->pending_pbuff != NULL && list_empty(&s->urr_cmd_pending_list)) {
 		struct pkt_buffer *pbuff = s->pending_pbuff;
 		struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
-		if (pfcph->type == PFCP_SESSION_DELETION_RESPONSE)
+		switch (pfcph->type) {
+		case PFCP_SESSION_MODIFICATION_REQUEST:
+			pfcp_msg_reset_hlen(pbuff);
+			pfcph->type = PFCP_SESSION_MODIFICATION_RESPONSE;
+			pfcph->seid = s->remote_seid.id;
+			pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_ACCEPTED);
+			pfcp_session_report_put_modification(pbuff, s);
+			break;
+		case PFCP_SESSION_DELETION_REQUEST:
+			pfcp_msg_reset_hlen(pbuff);
+			pfcph->type = PFCP_SESSION_DELETION_RESPONSE;
+			pfcph->seid = s->remote_seid.id;
+			pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_ACCEPTED);
 			pfcp_session_report_put_deletion(pbuff, s);
+			break;
+		}
+
 		inet_server_snd(&s->router->s.s, s->router->s.s.fd, pbuff,
 				&s->pending_addr.sin);
 		pkt_buffer_free(pbuff);

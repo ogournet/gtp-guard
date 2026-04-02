@@ -112,8 +112,9 @@ struct qer {
 struct urr {
 	uint32_t		id;		/* ie.urr_id */
 	uint32_t		urr_idx;	/* index in bpf map */
+	uint8_t			action;
+	bool			queried;
 
-	uint8_t				action;
 	union pfcp_measurement_method	measurement_method;
 	union pfcp_measurement_information measurement_info;
 	union pfcp_reporting_triggers	triggers;
@@ -220,8 +221,9 @@ struct pfcp_session {
 	struct gtp_capture_entry capture;
 
 	/* urr handling */
+	uint8_t			urr_cmd_cur_id;
 	uint32_t		bpf_urr_idx;
-	uint32_t		urr_cmd_next_id;
+	uint32_t		urr_query_ref;
 	struct list_head	urr_cmd_pending_list;
 	struct pkt_buffer	*pending_pbuff;
 	union addr		pending_addr;
