@@ -637,6 +637,65 @@ pfcp_session_merge_urr(struct pfcp_session *s, struct upf_urr_cmd_req *uc)
 	return 0;
 }
 
+static int
+pfcp_session_urr_on_modify(struct pfcp_session *s,
+			   struct pfcp_session_modification_request *req)
+{
+	struct pfcp_ie_query_urr_reference *ie_urr_ref = req->query_urr_reference;
+	struct upf_urr_cmd_req *uc;
+	struct urr *u;
+	bool query_all;
+	int bpf_action = 0;
+	int i, nrq;
+
+	/* Mark all existing urr for which a report is needed */
+	query_all = req->pfcpsmreq_flags && req->pfcpsmreq_flags->qaurr;
+	nrq = min(req->nr_query_urr, PFCP_MAX_NR_ELEM);
+	list_for_each_entry(u, &s->urr_list, next) {
+		if (u->queried)
+			printf("%s: WARN: urr.queried still true\n", __func__);
+		u->queried = query_all;
+		for (i = 0; !u->queried && i < nrq && req->query_urr[i]; i++)
+			if (u->id == req->query_urr[i]->urr_id->value)
+				u->queried = true;
+		bpf_action |= UPF_FL_CTL_REPORT;
+	}
+	s->urr_query_ref = ie_urr_ref ? ie_urr_ref->value : 0;
+
+
+	/* Create URR */
+	for (i = 0; i < req->nr_create_urr; i++) {
+		/* XXX */
+	}
+
+	/* Update URR */
+	for (i = 0; i < req->nr_update_urr; i++) {
+		/* XXX */
+	}
+
+	/* Delete URR */
+	for (i = 0; i < req->nr_remove_urr; i++) {
+		/* XXX */
+	}
+
+	/* XXX: upgrade bpf_action to UPF_FL_CTL_UPDATE if there is
+	 * any modification to be done.
+	 * XXX add a flag for each field that needs a modification */
+
+	if (bpf_action) {
+		uc = pfcp_bpf_urr_alloc_cmd(s);
+		uc->urr_idx = s->bpf_urr_idx;
+		uc->ctl_fl = bpf_action;
+		if (bpf_action == UPF_FL_CTL_UPDATE)
+			pfcp_session_merge_urr(s, uc);
+		pfcp_bpf_urr_ctl(s, uc);
+	}
+
+	return 0;
+}
+
+
+
 /* got new metrics from bpf. save them */
 int
 pfcp_session_urr_report(struct pfcp_session *s, struct upf_urr_report_data *rd)
@@ -988,7 +1047,7 @@ pfcp_session_update_fwd_rules(struct pfcp_session *s)
 			continue;
 
 		/* Update needed ? */
-		if (!p->action && (f && !f->action) && (q && !q->action) &&
+		if (!p->action && (!f || !f->action) && (!q || !q->action) &&
 		    !(s->capture.flags & GTP_CAPTURE_FL_NEED_BPF_UPDATE))
 			continue;
 
@@ -1012,7 +1071,8 @@ pfcp_session_modify(struct pfcp_session *s, struct pfcp_session_modification_req
 			return -1;
 	}
 
-	/* XXX Update URR */
+	/* Handle URR */
+	pfcp_session_urr_on_modify(s, req);
 
 	/* Update data-path forwarding rules */
 	pfcp_session_update_fwd_rules(s);
