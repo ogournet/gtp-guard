@@ -22,15 +22,15 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <syslog.h>
-#define PCAP_DONT_INCLUDE_PCAP_BPF_H
-#include <pcap/pcap.h>
-#include <pcap/dlt.h>
 #include <linux/perf_event.h>
 #include <libbpf.h>
 
+#include "xpcapng.h"
 #include "utils.h"
 #include "command.h"
 #include "table.h"
+#include "config.h"
+#include "gtp_interface.h"
 #include "gtp_bpf_prog.h"
 #include "gtp_bpf_capture.h"
 #include "bpf/lib/capture-def.h"
@@ -64,6 +64,7 @@ struct gtp_bpf_capture_ctx
 	struct perf_buffer		*pb;
 	struct capture_perf_buf_cpu	*apbc;
 	uint64_t			missed_events;
+	uint32_t			last_missed_events;
 
 	/* trace program */
 	struct capture_bpf_entry	prg_entry;
@@ -79,16 +80,19 @@ struct gtp_capture_file
 {
 	char				name[32];
 	char				filename[64];
-	pcap_t				*pcap;
-	pcap_dumper_t			*pdump;
+	struct gtp_bpf_prog		*p;
+	struct xpcapng_dumper		*pcapng;
 	int				refcnt;
 	bool				running;
 	bool				persist;
+	uint16_t			snaplen;
 
 	uint32_t			pkt_max;
 	uint32_t			duration;	/* in seconds */
 	uint32_t			pkt_count;
 	time_t				until;
+	uint64_t			*cpu_packet_id;
+	int				cpu_packet_id_n;
 
 	struct list_head		list;
 };
@@ -100,6 +104,7 @@ extern struct thread_master *master;
 /* config and local data */
 static char cfg_pcap_path[256];
 static int cfg_wakeup_events;
+static uint16_t cfg_capture_snaplen = GTP_CAPTURE_DEFAULT_SNAPLEN;
 static uint64_t epoch_delta;
 static struct thread *flush_ev;
 static LIST_HEAD(cfile_list);		/* opened pcap files */
@@ -114,7 +119,7 @@ struct perf_sample_raw
 	struct perf_event_header header;
 	uint64_t time;
 	uint32_t size;
-	struct capture_metadata metadata;
+	struct capture_metadata md;
 	unsigned char packet[];
 };
 
@@ -133,12 +138,12 @@ capture_handle_perf_event(void *ctx, int cpu, struct perf_event_header *event)
 	struct gtp_capture_file *cf;
 	struct perf_sample_lost *lost;
 	struct perf_sample_raw *e;
-	struct pcap_pkthdr h;
 	uint64_t ts;
 
 	if (event->type == PERF_RECORD_LOST) {
 		lost = container_of(event, struct perf_sample_lost, header);
 		bcc->missed_events += lost->lost;
+		bcc->last_missed_events += lost->lost;
 		return LIBBPF_PERF_EVENT_CONT;
 	}
 
@@ -147,29 +152,41 @@ capture_handle_perf_event(void *ctx, int cpu, struct perf_event_header *event)
 
 	e = container_of(event, struct perf_sample_raw, header);
 	if (e->header.size < sizeof(struct perf_sample_raw) ||
-	    e->size < (sizeof (struct capture_metadata) + e->metadata.cap_len))
+	    e->size < (sizeof (struct capture_metadata) + e->md.cap_len))
 		return LIBBPF_PERF_EVENT_CONT;
 
-	ce = bcc->ae[e->metadata.entry_id - 1];
+	ce = bcc->ae[e->md.entry_id - 1];
 	if (ce == NULL || ce->cf == NULL || !ce->cf->running)
 		return LIBBPF_PERF_EVENT_CONT;
 	cf = ce->cf;
 
 	ts = e->time + epoch_delta;
-	memset(&h, 0x00, sizeof (h));
-	h.ts.tv_sec = ts / 1000000000ULL;
-	h.ts.tv_usec = ts % 1000000000ULL / 1000;
-	h.caplen = e->metadata.cap_len;
-	h.len = e->metadata.pkt_len;
 
-	pcap_dump((u_char *)cf->pdump, &h, e->packet);
+	struct xpcapng_epb_options_s options = {};
+	int64_t  action = e->md.action;
+	uint32_t queue = e->md.rx_queue;
+
+	options.flags = e->md.flags & BPF_CAPTURE_EFL_INPUT ?
+		PCAPNG_EPB_FLAG_INBOUND : PCAPNG_EPB_FLAG_OUTBOUND;
+	options.dropcount = bcc->last_missed_events;
+	options.packetid = &cf->cpu_packet_id[cpu];
+	options.queue = &queue;
+	options.xdp_verdict = action == -1 ? NULL : &action;
+
+	int if_idx = 0;
+	/* XXX: set if_idx to xpcapng_add_interface index */
+
+	xpcapng_dump_enhanced_pkt(cf->pcapng, if_idx, e->packet,
+				  min(cf->snaplen, e->md.pkt_len),
+				  e->md.cap_len, ts, &options);
+	bcc->last_missed_events = 0;
 
 	cf->pkt_count++;
 	if ((cf->pkt_max && cf->pkt_count >= cf->pkt_max) ||
-	    (cf->until && h.ts.tv_sec > cf->until)) {
+	    (cf->until && ts / NSEC_PER_SEC > cf->until)) {
 		printf("stopping capture, pkt: %d/%d, expired:%s (ref:%d)\n",
 		       cf->pkt_count, cf->pkt_max,
-		       cf->until && h.ts.tv_sec > cf->until ? "yes" : "no",
+		       cf->until && ts / NSEC_PER_SEC > cf->until ? "yes" : "no",
 		       cf->refcnt);
 		cf->running = false;
 	}
@@ -204,12 +221,18 @@ capture_perf_io_read(struct thread *t)
 /* capture_file */
 
 static int
-capture_file_start(struct gtp_capture_file *cf)
+capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 {
+	struct gtp_interface *iface;
 	char pathname[400];
+	char ifname[200];
 
 	if (cf->running)
 		return 0;
+	if (cf->p != NULL && cf->p != p)
+		return -1;
+	cf->p = p;
+	cf->snaplen = cfg_capture_snaplen;
 
 	/* set filename from name, if not set */
 	if (!*cf->filename)
@@ -218,16 +241,27 @@ capture_file_start(struct gtp_capture_file *cf)
 		 cfg_pcap_path, cf->filename);
 
 	/* open pcap */
-	cf->pcap = pcap_open_dead(DLT_EN10MB, 65535);
-	if (cf->pcap == NULL) {
-		printf("could not open dead\n");
+	cf->pcapng = xpcapng_dump_open(pathname, NULL, NULL, NULL,
+				       VERSION_STRING);
+	if (cf->pcapng == NULL) {
+		syslog(LOG_ERR, "Can't open PcapNG file for writing!");
 		return -1;
 	}
-	cf->pdump = pcap_dump_open(cf->pcap, pathname);
-	if (cf->pdump == NULL) {
-		printf("%s\n", pcap_geterr(cf->pcap));
-		pcap_close(cf->pcap);
-		return -1;
+
+	/* XXX: dynamically register to bpf prog's ifaces */
+	list_for_each_entry(iface, &p->iface_bind_list, bpf_prog_list) {
+		snprintf(ifname, sizeof (ifname), "%s:%s",
+			 p->name, iface->ifname);
+		if (xpcapng_dump_add_interface(cf->pcapng,
+					       cfg_capture_snaplen,
+					       ifname, NULL, NULL,
+					       0, 9, NULL) < 0) {
+			syslog(LOG_ERR, "Can't add %s interface to PcapNG file!",
+				ifname);
+			xpcapng_dump_close(cf->pcapng);
+			cf->pcapng = NULL;
+			return -1;
+		}
 	}
 
 	cf->pkt_count = 0;
@@ -250,8 +284,7 @@ capture_file_stop(struct gtp_capture_file *cf)
 	if (!cf->running)
 		return;
 
-	pcap_dump_close(cf->pdump);
-	pcap_close(cf->pcap);
+	xpcapng_dump_close(cf->pcapng);
 	printf("%s.pcap: capture file closed, wrote %d packets\n",
 	       cf->filename, cf->pkt_count);
 	cf->running = false;
@@ -264,6 +297,7 @@ capture_file_stop(struct gtp_capture_file *cf)
 
 		}
 	}
+	cf->p = NULL;
 }
 
 static struct gtp_capture_file *
@@ -284,8 +318,15 @@ capture_file_get(const char *name, bool alloc)
 	if (cf == NULL)
 		return NULL;
 	snprintf(cf->name, sizeof (cf->name), "%s", name);
-	list_add_tail(&cf->list, &cfile_list);
 	cf->refcnt = 1;
+	cf->cpu_packet_id_n = libbpf_num_possible_cpus();
+	cf->cpu_packet_id = calloc(cf->cpu_packet_id_n + 1,
+				   sizeof (*cf->cpu_packet_id));
+	if (cf->cpu_packet_id == NULL) {
+		free(cf);
+		return NULL;
+	}
+	list_add_tail(&cf->list, &cfile_list);
 
 	return cf;
 }
@@ -298,6 +339,7 @@ capture_file_put(struct gtp_capture_file *cf)
 	capture_file_stop(cf);
 	if (!cf->persist) {
 		list_del(&cf->list);
+		free(cf->cpu_packet_id);
 		free(cf);
 	}
 }
@@ -314,7 +356,7 @@ capture_timer_flush(struct thread *thread)
 		if (cf->until && time(NULL) > cf->until)
 			capture_file_stop(cf);
 		if (cf->running)
-			pcap_dump_flush(cf->pdump);
+			xpcapng_dump_flush(cf->pcapng);
 	}
 
 	list_for_each_entry(bcc, &bcc_list, list) {
@@ -450,7 +492,7 @@ gtp_capture_start_all(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 	bcc = e->bcc;
 	bcc->prg_entry.flags |= e->flags & GTP_CAPTURE_FL_DIRECTION_MASK;
 	bcc->prg_entry.entry_id = e->entry_id;
-	bcc->prg_entry.cap_len = e->cap_len ?: GTP_CAPTURE_DEFAULT_CAPLEN;
+	bcc->prg_entry.cap_len = e->cap_len;
 	_trace_map_prg_entry_update(bcc);
 
 	return 0;
@@ -471,7 +513,7 @@ gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 	bcc = e->bcc;
 	be.flags = e->flags & GTP_CAPTURE_FL_DIRECTION_MASK;
 	be.entry_id = e->entry_id;
-	be.cap_len = e->cap_len ?: GTP_CAPTURE_DEFAULT_CAPLEN;
+	be.cap_len = e->cap_len;
 	ret = bpf_map__update_elem(bcc->iface_map, &iface, sizeof (iface),
 				   &be, sizeof (be), 0);
 	if (ret)
@@ -492,6 +534,47 @@ gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 /********************************************************************/
 /* capture api */
 
+/* capture packet from userspace */
+void
+gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
+		uint16_t flags)
+{
+	struct gtp_capture_file *cf = e->cf;
+	struct xpcapng_epb_options_s options = {};
+	struct timespec ts;
+	uint64_t ns;
+	uint32_t caplen;
+
+	if (!cf->running)
+		return;
+
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ns = ts.tv_sec + ts.tv_nsec * NSEC_PER_SEC ;
+	caplen = min(e->cap_len, cf->snaplen);
+	++cf->cpu_packet_id[cf->cpu_packet_id_n];
+
+	options.flags = flags & GTP_CAPTURE_FL_INPUT ?
+		PCAPNG_EPB_FLAG_INBOUND : PCAPNG_EPB_FLAG_OUTBOUND;
+	options.dropcount = 0;
+	options.packetid = &cf->cpu_packet_id[cf->cpu_packet_id_n];
+
+	int if_idx = 0;
+	/* XXX: set if_idx to xpcapng_add_interface index */
+
+	xpcapng_dump_enhanced_pkt(cf->pcapng, if_idx, data,
+				  len, caplen, ns, &options);
+
+	cf->pkt_count++;
+	if ((cf->pkt_max && cf->pkt_count >= cf->pkt_max) ||
+	    (cf->until && ns / NSEC_PER_SEC > cf->until)) {
+		printf("stopping capture, pkt: %d/%d, expired:%s (ref:%d)\n",
+		       cf->pkt_count, cf->pkt_max,
+		       cf->until && ns / NSEC_PER_SEC > cf->until ? "yes" : "no",
+		       cf->refcnt);
+		cf->running = false;
+	}
+}
+
 int
 gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 		  const char *name)
@@ -506,7 +589,7 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 		return 0;
 	e->entry_id = 0;
 	e->cf = NULL;
-	e->cap_len = e->cap_len ?: GTP_CAPTURE_DEFAULT_CAPLEN;
+	e->cap_len = e->cap_len ?: cfg_capture_snaplen;
 
 	/* no specified direction */
 	if (!(e->flags & 0x000f)) {
@@ -544,7 +627,7 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 
 	/* link entry and capture file */
 	cf = capture_file_get(name, true);
-	if (cf == NULL || capture_file_start(cf) < 0)
+	if (cf == NULL || capture_file_start(cf, p) < 0)
 		goto err;
 	e->cf = cf;
 
@@ -695,6 +778,7 @@ gtp_capture_release(void)
 
 	list_for_each_entry_safe(cf, cf_tmp, &cfile_list, list) {
 		capture_file_stop(cf);
+		free(cf->cpu_packet_id);
 		free(cf);
 	}
 }
@@ -826,6 +910,16 @@ DEFUN(capture_set_record_path,
 	return CMD_SUCCESS;
 }
 
+DEFUN(capture_set_snaplen,
+      capture_set_snaplen_cmd,
+      "capture set snaplen <32-65535>",
+      "Capture menu\n")
+{
+	VTY_GET_INTEGER_RANGE("Capture length", cfg_capture_snaplen, argv[0], 32, 65535);
+
+	return CMD_SUCCESS;
+}
+
 DEFUN(capture_set_wakeup_events,
       capture_set_wakeup_events_cmd,
       "capture set wakeup-events <1-128>",
@@ -899,6 +993,7 @@ cmd_ext_capture_install(void)
 	install_element(ENABLE_NODE, &capture_file_del_cmd);
 	install_element(ENABLE_NODE, &capture_file_show_cmd);
 	install_element(ENABLE_NODE, &capture_set_record_path_cmd);
+	install_element(ENABLE_NODE, &capture_set_snaplen_cmd);
 	install_element(ENABLE_NODE, &capture_set_wakeup_events_cmd);
 	install_element(ENABLE_NODE, &capture_show_cmd);
 	install_element(ENABLE_NODE, &capture_show_file_cmd);

@@ -175,8 +175,9 @@ struct upf_urr_cmd_req {
 struct upf_urr_report {
 	__u64		seid;
 	__u32		urr_idx;
-	__u16		request_id;		/* if trigged by syscall */
 	__u16		report_flags;		/* UPF_TRIG_FL_* */
+	__u8		request_id;		/* if trigged by syscall */
+	__u8		_pad;
 };
 
 struct upf_urr_report_data {
