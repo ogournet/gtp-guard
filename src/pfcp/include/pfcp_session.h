@@ -191,6 +191,7 @@ struct pfcp_ue {
 	struct gtp_conn		c;
 	struct list_head	pfcp_sessions;	/* pdn sessions */
 	struct gtp_capture_entry capture;
+	bool			persistent_capture;
 };
 
 /* PFCP session */

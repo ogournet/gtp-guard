@@ -185,46 +185,55 @@ shoot_again:
 struct pfcp_session *
 pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *r)
 {
-	struct pfcp_session *new;
+	struct pfcp_session *s;
 	uint64_t seid;
 
-	new = calloc(1, sizeof (*new));
-	if (!new) {
+	s = calloc(1, sizeof (*s));
+	if (!s) {
 		errno = ENOMEM;
 		return NULL;
 	}
-	INIT_LIST_HEAD(&new->next);
-	INIT_LIST_HEAD(&new->pdr_list);
-	INIT_LIST_HEAD(&new->far_list);
-	INIT_LIST_HEAD(&new->qer_list);
-	INIT_LIST_HEAD(&new->urr_list);
-	INIT_LIST_HEAD(&new->te_list);
-	INIT_LIST_HEAD(&new->urr_cmd_pending_list);
-	new->apn = apn;
-	new->ue = ue;
-	new->router = r;
-	time_now_to_calendar(&new->creation_time);
+	INIT_LIST_HEAD(&s->next);
+	INIT_LIST_HEAD(&s->pdr_list);
+	INIT_LIST_HEAD(&s->far_list);
+	INIT_LIST_HEAD(&s->qer_list);
+	INIT_LIST_HEAD(&s->urr_list);
+	INIT_LIST_HEAD(&s->te_list);
+	INIT_LIST_HEAD(&s->urr_cmd_pending_list);
+	s->apn = apn;
+	s->ue = ue;
+	s->router = r;
+	time_now_to_calendar(&s->creation_time);
 	seid = pfcp_session_seid_alloc(r);
 	if (!seid) {
 		log_message(LOG_INFO, "%s(): Something weird while allocating seid !!!"
 				    , __FUNCTION__);
-		free(new);
+		free(s);
 		return NULL;
 	}
-	new->seid = seid;
+	s->seid = seid;
 
 	/* CDR context */
 	if (apn->cdr_spool)
-		new->cdr = gtp_cdr_alloc();
+		s->cdr = gtp_cdr_alloc();
 
-	list_add_tail(&new->next, &ue->pfcp_sessions);
+	list_add_tail(&s->next, &ue->pfcp_sessions);
 	gtp_conn_refinc(&ue->c);
 	__sync_add_and_fetch(&pfcp_sessions_count, 1);
 
-	pfcp_session_hash(new);
-	pfcp_session_add_timer(new);
+	pfcp_session_hash(s);
+	pfcp_session_add_timer(s);
 	__sync_add_and_fetch(&apn->session_count, 1);
-	return new;
+
+	/* Automatically start capture */
+	if (ue->capture.flags) {
+		char capname[200];
+		s->capture = ue->capture;
+		snprintf(capname, sizeof (capname), "%ld", ue->c.imsi);
+		gtp_capture_start(&s->capture, r->bpf_prog, capname);
+	}
+
+	return s;
 }
 
 int

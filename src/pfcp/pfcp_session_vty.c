@@ -315,17 +315,14 @@ DEFUN(capture_start_pfcp,
 			ue = pfcp_ue_alloc(v, 0, 0);
 			if (ue == NULL)
 				return CMD_WARNING;
+			ue->persistent_capture = true;
+			gtp_conn_refinc(&ue->c);
 		} else {
 			vty_out(vty, "%% Cannot find user '%s' by %s\n", argv[1], argv[0]);
 			return CMD_WARNING;
 		}
 	} else {
 		ue = (struct pfcp_ue *)c;
-	}
-
-	if (list_empty(&ue->pfcp_sessions)) {
-		vty_out(vty, "%% No established pfcp session for user %s\n", argv[0]);
-		return CMD_WARNING;
 	}
 
 	if (argc > 2)
@@ -352,6 +349,7 @@ DEFUN(capture_start_pfcp,
 		VTY_GET_INTEGER_RANGE("caplen", caplen, argv[6], 32, 10000);
 	cap.cap_len = caplen;
 
+	ue->capture = cap;
 	list_for_each_entry(s, &ue->pfcp_sessions, next) {
 		s->capture = cap;
 		if (gtp_capture_start(&s->capture, s->router->bpf_prog, capname))
@@ -388,6 +386,11 @@ DEFUN(capture_stop_pfcp,
 	}
 
 	ue = (struct pfcp_ue *)c;
+	memset(&ue->capture, 0x00, sizeof (ue->capture));
+	if (ue->persistent_capture) {
+		gtp_conn_refdec(&ue->c);
+		ue->persistent_capture = false;
+	}
 	list_for_each_entry(s, &ue->pfcp_sessions, next) {
 		gtp_capture_stop(&s->capture);
 		pfcp_session_update_fwd_rules(s);
