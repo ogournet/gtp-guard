@@ -338,10 +338,18 @@ DEFUN(bpf_prog_no_shutdown,
 /* Capture */
 DEFUN(capture_start_bpf_prog,
       capture_start_bpf_prog_cmd,
-      "capture prog BPFNAME start [CAPENTRY side (ingress|egress|all) caplen <32-10000>]",
+      "capture start prog BPFPROG [CAPENTRY side (input|output|both) caplen <32-10000>]",
       "Capture menu\n"
-      "start\n"
-      "BPF Program\n")
+      "Start capture\n"
+      "Capture bpf-program submenu\n"
+      "BPF program name\n"
+      "Capture file entry name\n"
+      "Capture side (default: input)\n"
+      "Capture on interface input (xdp rx)\n"
+      "Capture on interface output (xdp tx/pass/redirect)\n"
+      "Capture on interface input and output\n"
+      "Capture packet max length\n"
+      "Value\n")
 {
 	struct gtp_bpf_prog *p = NULL;
 
@@ -352,9 +360,9 @@ DEFUN(capture_start_bpf_prog,
 	}
 
 	if (argc >= 4) {
-		if (!strcmp(argv[3], "ingress") || !strcmp(argv[3], "all"))
+		if (!strcmp(argv[3], "input") || !strcmp(argv[3], "both"))
 			p->capture_entry.flags |= GTP_CAPTURE_FL_INPUT;
-		if (!strcmp(argv[3], "egress") || !strcmp(argv[3], "all"))
+		if (!strcmp(argv[3], "output") || !strcmp(argv[3], "both"))
 			p->capture_entry.flags |= GTP_CAPTURE_FL_OUTPUT;
 	} else {
 		p->capture_entry.flags |= GTP_CAPTURE_FL_INPUT;
@@ -366,7 +374,7 @@ DEFUN(capture_start_bpf_prog,
 
 	if (gtp_capture_start_all(&p->capture_entry, p,
 				  argc > 1 ? argv[1] : argv[0]) < 0) {
-		vty_out(vty, "%% Error starting trace\n");
+		vty_out(vty, "%% Error starting bpf-prog trace\n");
 		return CMD_WARNING;
 	}
 
@@ -375,10 +383,11 @@ DEFUN(capture_start_bpf_prog,
 
 DEFUN(capture_stop_bpf_prog,
       capture_stop_bpf_prog_cmd,
-      "capture prog BPFNAME stop",
-      "capture\n"
-      "stop\n"
-      "BPF Program\n")
+      "capture stop prog BPFNAME",
+      "Capture menu\n"
+      "Stop capture\n"
+      "Capture bpf-program submenu\n"
+      "BPF program name\n")
 {
 	struct gtp_bpf_prog *p = NULL;
 
@@ -441,6 +450,17 @@ DEFUN(show_bpf_xsk,
 	return CMD_SUCCESS;
 }
 
+DEFUN(show_bpf_capture,
+      show_bpf_capture_cmd,
+      "show bpf capture",
+      SHOW_STR
+      "bpf\n"
+      "Show capture modules\n")
+{
+	gtp_bpf_prog_foreach_vty("capture", vty, argc, argv);
+	return CMD_SUCCESS;
+}
+
 
 /* Configuration writer */
 static int
@@ -497,6 +517,8 @@ cmd_ext_bpf_prog_install(void)
 	install_element(ENABLE_NODE, &show_bpf_interface_rule_cmd);
 	install_element(VIEW_NODE, &show_bpf_xsk_cmd);
 	install_element(ENABLE_NODE, &show_bpf_xsk_cmd);
+	install_element(VIEW_NODE, &show_bpf_capture_cmd);
+	install_element(ENABLE_NODE, &show_bpf_capture_cmd);
 
 	return 0;
 }

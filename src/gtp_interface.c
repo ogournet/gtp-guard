@@ -440,6 +440,7 @@ gtp_interface_destroy(struct gtp_interface *iface)
 
 	if (iface->bpf_prog)
 		list_del(&iface->bpf_prog_list);
+	gtp_capture_stop(&iface->capture_entry);
 	FREE_PTR(iface->link_metrics);
 	free(iface->queue_stats);
 	ethtool_gstats_cache_destroy(iface->ethtool_cache);

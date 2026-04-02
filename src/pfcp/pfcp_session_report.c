@@ -28,6 +28,7 @@
 #include "pfcp_router.h"
 #include "pfcp_bpf.h"
 #include "inet_utils.h"
+#include "gtp_bpf_capture.h"
 #include "logger.h"
 
 struct pfcp_report {
@@ -113,6 +114,11 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 				    , ntohs(inet_sockaddrport(&srv->s.addr)));
 		goto end;
 	}
+
+	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+			 &s->remote_seid.addr,
+			 (const union addr *)&s->router->s.s.addr,
+			 GTP_CAPTURE_FL_OUTPUT);
 
 	/* Run, Baby, Run */
 	inet_server_snd(&srv->s, srv->s.fd, pbuff, &s->remote_seid.addr.sin);

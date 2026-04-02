@@ -396,7 +396,7 @@ session modify 1 qaurr
 pause 1
 session delete 1
 EOF
-    
+
     # volume quota
     smf_basic_urr testset volqu1			\
     "triggers volqu measure volume volquota total 120"	\

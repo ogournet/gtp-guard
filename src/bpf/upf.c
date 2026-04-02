@@ -30,6 +30,6 @@ int upf_entry(struct xdp_md *ctx)
 	return action;
 }
 
-const char _mode[] = "if_rules,upf";
+const char _mode[] = "if_rules,capture,upf";
 
 char _license[] SEC("license") = "GPL";
