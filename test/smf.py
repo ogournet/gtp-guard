@@ -5,21 +5,23 @@ Requires Python 3.13+.
 
 Commands (stdin):
   urr set id <n> [triggers <t,...>] [measure <m,...>]
-                 [volth total <bytes>] [volth ul <bytes>] [volth dl <bytes>]
-                 [timth <seconds>]
+                 [volth total <b>] [volth ul <b>] [volth dl <b>]
+                 [timth <s>]
+                 [volquota total <b>] [volquota ul <b>] [volquota dl <b>]
+                 [timquota <s>] [qht <s>] [inactivity <s>] [period <s>]
+                 [linked <id,...>]
   urr show [<id>]
   urr clear [<id>]
 
   session add [imsi <d>] [msisdn <d>] [imei <d>]
               [dnn <n>] [pool <n>]
               [enb-ip <ip>] [enb-teid <teid>]
-              [urr <id1,id2,...>]
+              [urr <id,...>]
+  session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
+                           [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
   session delete <cp_seid>
   session ping   <cp_seid> [<dst_ip>] [count <n>]
   sessions
-
-  expect no report [timeout <s>]
-      Wait <s> seconds (default 5) and fail if any session report arrives.
 
   expect report [timeout <s>] [cp_seid <n>] [urr_id <n>]
                 [trigger <name,...>]
@@ -27,21 +29,14 @@ Commands (stdin):
                 [ul <b>]    [ul_min <b>]    [ul_max <b>]
                 [dl <b>]    [dl_min <b>]    [dl_max <b>]
                 [duration_min <s>] [duration_max <s>] [idt <s>]
-      idt: inactivity_detection_time — loosens duration_min by up to idt seconds,
-           since the UPF pauses the duration timer during inactive periods.
+  expect no report [timeout <s>]
 
   pause <seconds>
   help / quit / exit
 
-  Byte suffixes: GB MiB MB KiB KB (or plain integer).
-  Trigger names: perio volth timth quhti start stopt droth liusa
-                 termr monit envcl timqu volqu
-  Measure names: volume duration event
-
 Usage:
   python smf_pfcp.py --smf-ip 10.0.0.1 --upf-ip 10.0.0.2
-  python smf_pfcp.py --smf-ip 10.0.0.1 --upf-ip 10.0.0.2 --hb-interval 10
-  python smf_pfcp.py --smf-ip 10.0.0.1 --upf-ip 10.0.0.2 --gtpu-ip 192.168.1.1
+  python smf_pfcp.py --smf-ip 10.0.0.1 --gtpu-ip 192.168.1.1 --upf-ip 10.0.0.2
 """
 
 import argparse
@@ -77,6 +72,8 @@ class MT:
     ASSOC_RSP     = 6
     SESS_EST_REQ  = 50
     SESS_EST_RSP  = 51
+    SESS_MOD_REQ  = 52
+    SESS_MOD_RSP  = 53
     SESS_DEL_REQ  = 54
     SESS_DEL_RSP  = 55
     SESS_RPT_REQ  = 56
@@ -89,6 +86,8 @@ MSG_NAME = {
     MT.ASSOC_RSP:    "Association Setup Response",
     MT.SESS_EST_REQ: "Session Establishment Request",
     MT.SESS_EST_RSP: "Session Establishment Response",
+    MT.SESS_MOD_REQ: "Session Modification Request",
+    MT.SESS_MOD_RSP: "Session Modification Response",
     MT.SESS_DEL_REQ: "Session Deletion Request",
     MT.SESS_DEL_RSP: "Session Deletion Response",
     MT.SESS_RPT_REQ: "Session Report Request",
@@ -97,7 +96,7 @@ MSG_NAME = {
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  IE types  (TS 29.244 Table 8.1-1)
+#  IE types  (TS 29.244 Rel-15 Table 8.1-1)
 # ══════════════════════════════════════════════════════════════════════════
 class IET:
     CREATE_PDR                     = 1
@@ -105,14 +104,16 @@ class IET:
     CREATE_FAR                     = 3
     FORWARDING_PARAMS              = 4
     CREATE_URR                     = 6
+    UPDATE_URR                     = 13
+    REMOVE_URR                     = 17
     CREATED_PDR                    = 8
     CAUSE                          = 19
     SOURCE_INTERFACE               = 20
     FTEID                          = 21
     NETWORK_INSTANCE               = 22
+    INACTIVITY_DETECTION_TIME      = 36
     REPORT_TYPE                    = 39
     PRECEDENCE                     = 29
-    VOLUME_MEASUREMENT             = 66
     VOLUME_THRESHOLD               = 31
     TIME_THRESHOLD                 = 32
     MONITORING_TIME                = 33
@@ -120,18 +121,10 @@ class IET:
     DEST_INTERFACE                 = 42
     UP_FUNC_FEATURES               = 43
     APPLY_ACTION                   = 44
-    DURATION_MEASUREMENT           = 67
-    INACTIVITY_DETECTION_TIME      = 36
-    MEASUREMENT_PERIOD             = 64
-    TIME_QUOTA                     = 74
-    QUOTA_HOLDING_TIME             = 71
+    VOLUME_MEASUREMENT             = 66
     VOLUME_QUOTA                   = 73
-    FSEID                          = 57
-    PDR_ID                         = 56
-    NODE_ID                        = 60
-    MEASUREMENT_METHOD             = 62
-    USAGE_REPORT_TRIGGER           = 63
     UR_SEQN                        = 104
+    TIME_QUOTA                     = 74
     START_TIME                     = 75
     END_TIME                       = 76
     URR_ID                         = 81
@@ -141,39 +134,99 @@ class IET:
     CP_FUNC_FEATURES               = 89
     UE_IP_ADDRESS                  = 93
     RECOVERY_TIMESTAMP             = 96
+    QUERY_URR                      = 77
     FAR_ID                         = 108
     USER_ID                        = 141
+    PFCPSMREQ_FLAGS                = 49
     APN_DNN                        = 159
     UE_IP_ADDRESS_POOL_IDENTITY    = 177
+    FSEID                          = 57
+    PDR_ID                         = 56
+    NODE_ID                        = 60
+    MEASUREMENT_METHOD             = 62
+    USAGE_REPORT_TRIGGER           = 63
+    MEASUREMENT_PERIOD             = 64
+    TIME_QUOTA                     = 74
+    QUOTA_HOLDING_TIME             = 71
+    DURATION_MEASUREMENT           = 67
     UE_IP_ADDRESS_POOL_INFORMATION = 233
 
 
-# ── Apply Action
+# ══════════════════════════════════════════════════════════════════════════
+#  Flag constants
+# ══════════════════════════════════════════════════════════════════════════
+
+# Cause
+CAUSE_ACCEPTED = 1
+CAUSE_NAME     = {CAUSE_ACCEPTED: "Request Accepted"}
+
+# Apply Action
 AA_DROP    = 0x01
 AA_FORW    = 0x02
 
-# ── Measurement Method
+# Measurement Method
 MM_DURAT   = 0x01
 MM_VOLUM   = 0x02
 MM_EVENT   = 0x04
 
-# ── §8.2.19 Reporting Triggers (used in Create/Modify URR)
-#    2-byte big-endian; octet 5 = high byte, octet 6 = low byte
-RT_PERIO   = 0x0100   # octet 5, bit 1 — Periodic Reporting
-RT_VOLTH   = 0x0200   # octet 5, bit 2 — Volume Threshold
-RT_TIMTH   = 0x0400   # octet 5, bit 3 — Time Threshold
-RT_QUHTI   = 0x0800   # octet 5, bit 4 — Quota Holding Time
-RT_START   = 0x1000   # octet 5, bit 5 — Start of Traffic
-RT_STOPT   = 0x2000   # octet 5, bit 6 — Stop of Traffic
-RT_DROTH   = 0x4000   # octet 5, bit 7 — Dropped DL Traffic Threshold
-RT_LIUSA   = 0x8000   # octet 5, bit 8 — Linked Usage Reporting
-RT_VOLQU   = 0x0001   # octet 6, bit 1 — Volume Quota
-RT_TIMQU   = 0x0002   # octet 6, bit 2 — Time Quota
-RT_ENVCL   = 0x0004   # octet 6, bit 3 — Envelope Closure
-RT_MACAR   = 0x0008   # octet 6, bit 4 — MAC Addresses Reporting
-RT_EVETH   = 0x0010   # octet 6, bit 5 — Event Threshold
-RT_EVEQU   = 0x0020   # octet 6, bit 6 — Event Quota
-RT_IPMJL   = 0x0040   # octet 6, bit 7 — IP Multicast Join/Leave
+# Volume Threshold / Quota / Measurement flags
+VT_TOVOL   = 0x01
+VT_ULVOL   = 0x02
+VT_DLVOL   = 0x04
+
+# Report Type  (§8.2.21)
+RPT_USAR   = 0x02
+RPT_UPIR   = 0x01
+
+# Interfaces
+IF_ACCESS  = 0
+IF_CORE    = 1
+
+# UE IP Address  (§8.2.62)
+UEIP_V6    = 0x01
+UEIP_V4    = 0x02
+UEIP_SD    = 0x04
+UEIP_CHV4  = 0x10
+
+# F-TEID  (§8.2.3)
+FTEID_V4   = 0x01
+FTEID_V6   = 0x02
+FTEID_CH   = 0x04
+
+# F-SEID  (§8.2.82)
+FSEID_V4   = 0x02
+
+# Outer Header Creation
+OHC_GTP_U_UDP_IPV4 = 0x0100
+
+# User ID  (§8.2.189)
+USERID_IMSI   = 0x01
+USERID_IMEI   = 0x02
+USERID_MSISDN = 0x04
+
+# PFCPSMREQ-Flags  (§8.2.94)
+SMREQ_DROBU  = 0x01
+SMREQ_SNDEM  = 0x02
+SMREQ_QAURR  = 0x04
+
+# §8.2.19 Reporting Triggers (used in Create/Modify URR) — 2-byte big-endian
+# Octet 5 (high byte)
+RT_PERIO   = 0x0100   # Periodic Reporting
+RT_VOLTH   = 0x0200   # Volume Threshold
+RT_TIMTH   = 0x0400   # Time Threshold
+RT_QUHTI   = 0x0800   # Quota Holding Time
+RT_START   = 0x1000   # Start of Traffic
+RT_STOPT   = 0x2000   # Stop of Traffic
+RT_DROTH   = 0x4000   # Dropped DL Traffic Threshold
+RT_LIUSA   = 0x8000   # Linked Usage Reporting
+# Octet 6 (low byte)
+RT_VOLQU   = 0x0001   # Volume Quota
+RT_TIMQU   = 0x0002   # Time Quota
+RT_ENVCL   = 0x0004   # Envelope Closure
+RT_MACAR   = 0x0008   # MAC Addresses Reporting
+RT_EVETH   = 0x0010   # Event Threshold
+RT_EVEQU   = 0x0020   # Event Quota
+RT_IPMJL   = 0x0040   # IP Multicast Join/Leave
 
 REPORTING_TRIGGER_NAMES: dict[str, int] = {
     "perio": RT_PERIO, "volth": RT_VOLTH, "timth": RT_TIMTH,
@@ -184,24 +237,25 @@ REPORTING_TRIGGER_NAMES: dict[str, int] = {
 }
 REPORTING_TRIGGER_NAMES_INV = {v: k.upper() for k, v in REPORTING_TRIGGER_NAMES.items()}
 
-# ── §8.2.41 Usage Report Trigger (received in Session Report Request)
-#    2-byte big-endian; octet 5 = high byte, octet 6 = low byte
-URT_PERIO  = 0x0100   # octet 5, bit 1 — Periodic Reporting
-URT_VOLTH  = 0x0200   # octet 5, bit 2 — Volume Threshold
-URT_TIMTH  = 0x0400   # octet 5, bit 3 — Time Threshold
-URT_QUHTI  = 0x0800   # octet 5, bit 4 — Quota Holding Time
-URT_START  = 0x1000   # octet 5, bit 5 — Start of Traffic
-URT_STOPT  = 0x2000   # octet 5, bit 6 — Stop of Traffic
-URT_DROTH  = 0x4000   # octet 5, bit 7 — Dropped DL Traffic Threshold
-URT_IMMER  = 0x8000   # octet 5, bit 8 — Immediate Report
-URT_VOLQU  = 0x0001   # octet 6, bit 1 — Volume Quota exhausted
-URT_TIMQU  = 0x0002   # octet 6, bit 2 — Time Quota exhausted
-URT_LIUSA  = 0x0004   # octet 6, bit 3 — Linked Usage Reporting
-URT_TERMR  = 0x0008   # octet 6, bit 4 — Termination Report
-URT_MONIT  = 0x0010   # octet 6, bit 5 — Monitoring Time
-URT_ENVCL  = 0x0020   # octet 6, bit 6 — Envelope Closure
-URT_MACAR  = 0x0040   # octet 6, bit 7 — MAC Addresses Reporting
-URT_EVETH  = 0x0080   # octet 6, bit 8 — Event Threshold
+# §8.2.41 Usage Report Trigger (received in Session Report Request) — 2-byte big-endian
+# Octet 5 (high byte)
+URT_PERIO  = 0x0100   # Periodic Reporting
+URT_VOLTH  = 0x0200   # Volume Threshold
+URT_TIMTH  = 0x0400   # Time Threshold
+URT_QUHTI  = 0x0800   # Quota Holding Time
+URT_START  = 0x1000   # Start of Traffic
+URT_STOPT  = 0x2000   # Stop of Traffic
+URT_DROTH  = 0x4000   # Dropped DL Traffic Threshold
+URT_IMMER  = 0x8000   # Immediate Report
+# Octet 6 (low byte)
+URT_VOLQU  = 0x0001   # Volume Quota exhausted
+URT_TIMQU  = 0x0002   # Time Quota exhausted
+URT_LIUSA  = 0x0004   # Linked Usage Reporting
+URT_TERMR  = 0x0008   # Termination Report
+URT_MONIT  = 0x0010   # Monitoring Time
+URT_ENVCL  = 0x0020   # Envelope Closure
+URT_MACAR  = 0x0040   # MAC Addresses Reporting
+URT_EVETH  = 0x0080   # Event Threshold
 
 USAGE_REPORT_TRIGGER_NAMES: dict[str, int] = {
     "perio": URT_PERIO, "volth": URT_VOLTH, "timth": URT_TIMTH,
@@ -217,44 +271,8 @@ MEASURE_NAMES: dict[str, int] = {
     "duration": MM_DURAT, "volume": MM_VOLUM, "event": MM_EVENT,
 }
 MEASURE_NAMES_INV = {v: k.upper() for k, v in MEASURE_NAMES.items()}
-VT_TOVOL   = 0x01
-VT_ULVOL   = 0x02
-VT_DLVOL   = 0x04
 
-# ── Report Type
-RPT_USAR   = 0x02
-RPT_UPIR   = 0x01
-
-# ── Interfaces
-IF_ACCESS  = 0
-IF_CORE    = 1
-
-# ── UE IP Address  (§8.2.62)  bit1=V6, bit2=V4, bit3=SD, bit5=CHV4
-UEIP_V6    = 0x01
-UEIP_V4    = 0x02
-UEIP_SD    = 0x04
-UEIP_CHV4  = 0x10
-
-# ── F-TEID  (§8.2.3)  bit1=V4, bit2=V6, bit3=CH
-FTEID_V4   = 0x01
-FTEID_V6   = 0x02
-FTEID_CH   = 0x04
-
-# ── F-SEID  (§8.2.82)  bit2=V4
-FSEID_V4   = 0x02
-
-# ── Outer Header Creation
-OHC_GTP_U_UDP_IPV4 = 0x0100
-
-# ── User ID
-USERID_IMSI   = 0x01
-USERID_IMEI   = 0x02
-USERID_MSISDN = 0x04
-
-CAUSE_ACCEPTED = 1
-CAUSE_NAME     = {CAUSE_ACCEPTED: "Request Accepted"}
-
-# ── GTP-U
+# GTP-U
 GTPU_FLAGS    = 0x30
 GTPU_GPDU     = 0xFF
 IP_PROTO_ICMP = 1
@@ -268,26 +286,25 @@ ICMP_ECHO_REP = 0
 @dataclass
 class URRConfig:
     urr_id:                  int
-    triggers:                int       = 0
-    measure:                 int       = 0
+    triggers:                int        = 0
+    measure:                 int        = 0
     volth_total:             int | None = None
     volth_ul:                int | None = None
     volth_dl:                int | None = None
-    timth:                   int | None = None   # seconds
-    # Quota
+    timth:                   int | None = None
     vol_quota_total:         int | None = None
     vol_quota_ul:            int | None = None
     vol_quota_dl:            int | None = None
-    time_quota:              int | None = None   # seconds
-    quota_holding_time:      int | None = None   # seconds
-    inactivity_detection:    int | None = None   # seconds
-    measurement_period:      int | None = None   # seconds (periodic timer)
-    linked_urr_ids:          list[int] = field(default_factory=list)
+    time_quota:              int | None = None
+    quota_holding_time:      int | None = None
+    inactivity_detection:    int | None = None
+    measurement_period:      int | None = None
+    linked_urr_ids:          list[int]  = field(default_factory=list)
 
     def summary(self) -> str:
-        trig_names = ",".join(n for f, n in REPORTING_TRIGGER_NAMES_INV.items() if self.triggers & f) or "none"
-        meas_names = ",".join(n for f, n in MEASURE_NAMES_INV.items() if self.measure  & f) or "none"
-        parts = [f"id={self.urr_id}", f"triggers={trig_names}", f"measure={meas_names}"]
+        trig = ",".join(n for f, n in REPORTING_TRIGGER_NAMES_INV.items() if self.triggers & f) or "none"
+        meas = ",".join(n for f, n in MEASURE_NAMES_INV.items()           if self.measure  & f) or "none"
+        parts = [f"id={self.urr_id}", f"triggers={trig}", f"measure={meas}"]
         if self.volth_total          is not None: parts.append(f"volth_total={fmt_bytes(self.volth_total)}")
         if self.volth_ul             is not None: parts.append(f"volth_ul={fmt_bytes(self.volth_ul)}")
         if self.volth_dl             is not None: parts.append(f"volth_dl={fmt_bytes(self.volth_dl)}")
@@ -296,7 +313,7 @@ class URRConfig:
         if self.vol_quota_ul         is not None: parts.append(f"vol_quota_ul={fmt_bytes(self.vol_quota_ul)}")
         if self.vol_quota_dl         is not None: parts.append(f"vol_quota_dl={fmt_bytes(self.vol_quota_dl)}")
         if self.time_quota           is not None: parts.append(f"time_quota={self.time_quota}s")
-        if self.quota_holding_time   is not None: parts.append(f"quota_holding={self.quota_holding_time}s")
+        if self.quota_holding_time   is not None: parts.append(f"qht={self.quota_holding_time}s")
         if self.inactivity_detection is not None: parts.append(f"inactivity={self.inactivity_detection}s")
         if self.measurement_period   is not None: parts.append(f"period={self.measurement_period}s")
         if self.linked_urr_ids:                   parts.append(f"linked={self.linked_urr_ids}")
@@ -305,20 +322,20 @@ class URRConfig:
 
 @dataclass
 class UsageReport:
-    urr_id:    int  = 0
-    seqn:      int  = 0
-    trigger:   int  = 0
-    total:     int | None = None
-    ul:        int | None = None
-    dl:        int | None = None
-    duration:  int | None = None
-    start:     str  = ""
-    end:       str  = ""
+    urr_id:   int       = 0
+    seqn:     int       = 0
+    trigger:  int       = 0
+    total:    int | None = None
+    ul:       int | None = None
+    dl:       int | None = None
+    duration: int | None = None
+    start:    str       = ""
+    end:      str       = ""
 
     def summary(self) -> str:
-        trig_names = ",".join(n for f, n in USAGE_REPORT_TRIGGER_NAMES_INV.items() if self.trigger & f) or "?"
+        trig  = ",".join(n for f, n in USAGE_REPORT_TRIGGER_NAMES_INV.items() if self.trigger & f) or "?"
         parts = [f"urr_id={self.urr_id}", f"seqn={self.seqn}",
-                 f"trigger=0x{self.trigger:04X}({trig_names})"]
+                 f"trigger=0x{self.trigger:04X}({trig})"]
         if self.total    is not None: parts.append(f"total={fmt_bytes(self.total)}")
         if self.ul       is not None: parts.append(f"ul={fmt_bytes(self.ul)}")
         if self.dl       is not None: parts.append(f"dl={fmt_bytes(self.dl)}")
@@ -330,22 +347,22 @@ class UsageReport:
 
 @dataclass
 class SessionReport:
-    cp_seid:      int
-    report_type:  int
+    cp_seid:       int
+    report_type:   int
     usage_reports: list[UsageReport] = field(default_factory=list)
 
 
 @dataclass
 class Session:
     cp_seid:     int
-    up_seid:     int = 0
-    ue_ip:       str = ""
-    upf_teid:    int = 0
-    upf_gtpu_ip: str = ""
+    up_seid:     int       = 0
+    ue_ip:       str       = ""
+    upf_teid:    int       = 0
+    upf_gtpu_ip: str       = ""
     urr_ids:     list[int] = field(default_factory=list)
-    imsi:        str = ""
-    msisdn:      str = ""
-    imei:        str = ""
+    imsi:        str       = ""
+    msisdn:      str       = ""
+    imei:        str       = ""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -363,7 +380,7 @@ def fmt_bytes(n: int) -> str:
 def parse_bytes(s: str) -> int:
     u = s.upper()
     for suffix, mul in (("GIB", 1<<30), ("MIB", 1<<20), ("KIB", 1<<10),
-                        ("GB",  10**9), ("MB",  10**6), ("KB",  10**3)):
+                        ("GB",  10**9),  ("MB",  10**6),  ("KB",  10**3)):
         if u.endswith(suffix):
             return int(u[:-len(suffix)]) * mul
     return int(s)
@@ -390,19 +407,12 @@ def _ntp_to_str(raw: bytes) -> str:
 def parse_usage_report_ie(raw: bytes) -> UsageReport:
     ies = decode_ies(raw)
     ur  = UsageReport()
-
     r = ies.get(IET.URR_ID, [None])[0]
-    if r and len(r) >= 4:
-        ur.urr_id = struct.unpack("!I", r)[0]
-
+    if r and len(r) >= 4:    ur.urr_id   = struct.unpack("!I", r)[0]
     r = ies.get(IET.UR_SEQN, [None])[0]
-    if r and len(r) >= 4:
-        ur.seqn = struct.unpack("!I", r)[0]
-
+    if r and len(r) >= 4:    ur.seqn     = struct.unpack("!I", r)[0]
     r = ies.get(IET.USAGE_REPORT_TRIGGER, [None])[0]
-    if r and len(r) >= 2:
-        ur.trigger = struct.unpack("!H", r[:2])[0]
-
+    if r and len(r) >= 2:    ur.trigger  = struct.unpack("!H", r[:2])[0]
     r = ies.get(IET.VOLUME_MEASUREMENT, [None])[0]
     if r and len(r) >= 1:
         flags, off = r[0], 1
@@ -410,17 +420,12 @@ def parse_usage_report_ie(raw: bytes) -> UsageReport:
             if flags & flag and len(r) >= off + 8:
                 setattr(ur, attr, struct.unpack("!Q", r[off:off+8])[0])
                 off += 8
-
     r = ies.get(IET.DURATION_MEASUREMENT, [None])[0]
-    if r and len(r) >= 4:
-        ur.duration = struct.unpack("!I", r)[0]
-
+    if r and len(r) >= 4:    ur.duration = struct.unpack("!I", r)[0]
     r = ies.get(IET.START_TIME, [None])[0]
-    if r: ur.start = _ntp_to_str(r)
-
+    if r:                    ur.start    = _ntp_to_str(r)
     r = ies.get(IET.END_TIME, [None])[0]
-    if r: ur.end = _ntp_to_str(r)
-
+    if r:                    ur.end      = _ntp_to_str(r)
     return ur
 
 
@@ -442,12 +447,12 @@ def build_icmp_echo_request(icmp_id: int, seq: int,
     return struct.pack("!BBHHH", ICMP_ECHO_REQ, 0, csum, icmp_id, seq) + payload
 
 def build_ipv4(src: str, dst: str, proto: int, payload: bytes) -> bytes:
-    tlen = 20 + len(payload)
+    tlen  = 20 + len(payload)
     ip_id = random.randint(0, 0xFFFF)
-    hdr = struct.pack("!BBHHHBBH4s4s",
-                      0x45, 0, tlen, ip_id, 0x4000, 64, proto, 0,
-                      socket.inet_aton(src), socket.inet_aton(dst))
-    csum = _checksum(hdr)
+    hdr   = struct.pack("!BBHHHBBH4s4s",
+                        0x45, 0, tlen, ip_id, 0x4000, 64, proto, 0,
+                        socket.inet_aton(src), socket.inet_aton(dst))
+    csum  = _checksum(hdr)
     return struct.pack("!BBHHHBBH4s4s",
                        0x45, 0, tlen, ip_id, 0x4000, 64, proto, csum,
                        socket.inet_aton(src), socket.inet_aton(dst)) + payload
@@ -464,13 +469,12 @@ def parse_gtpu_icmp_reply(data: bytes) -> dict | None:
     inner = data[8:]
     if len(inner) < 20:
         return None
-    ihl  = (inner[0] & 0x0F) * 4
+    ihl   = (inner[0] & 0x0F) * 4
     proto = inner[9]
     src   = socket.inet_ntoa(inner[12:16])
     if proto != IP_PROTO_ICMP or len(inner) < ihl + 8:
         return None
-    icmp = inner[ihl:]
-    t, _, _, icmp_id, seq = struct.unpack("!BBHHH", icmp[:8])
+    t, _, _, icmp_id, seq = struct.unpack("!BBHHH", inner[ihl:ihl+8])
     if t != ICMP_ECHO_REP:
         return None
     return {"icmp_id": icmp_id, "seq": seq, "src_ip": src}
@@ -482,7 +486,7 @@ def parse_gtpu_icmp_reply(data: bytes) -> dict | None:
 class GTPUProtocol(asyncio.DatagramProtocol):
     def __init__(self):
         self.transport: asyncio.DatagramTransport | None = None
-        self._pending: dict[int, tuple[asyncio.Future, float]] = {}
+        self._pending:  dict[int, tuple[asyncio.Future, float]] = {}
 
     def connection_made(self, transport):
         self.transport = transport
@@ -624,7 +628,6 @@ def ie_urr_id(v: int) -> bytes:
     return _ie(IET.URR_ID, struct.pack("!I", v))
 
 def ie_linked_urr_id(v: int) -> bytes:
-    """Linked URR ID IE (82) — uint32. May appear multiple times in Create URR."""
     return _ie(IET.LINKED_URR_ID, struct.pack("!I", v))
 
 def ie_apply_action(v: int) -> bytes:
@@ -637,41 +640,36 @@ def ie_reporting_triggers(v: int) -> bytes:
     return _ie(IET.REPORTING_TRIGGERS, struct.pack("!H", v))
 
 def ie_volume_threshold(total: int | None = None,
-                        ul: int | None = None,
-                        dl: int | None = None) -> bytes:
+                        ul:    int | None = None,
+                        dl:    int | None = None) -> bytes:
     flags, body = 0, b""
     if total is not None: flags |= VT_TOVOL; body += struct.pack("!Q", total)
     if ul    is not None: flags |= VT_ULVOL; body += struct.pack("!Q", ul)
     if dl    is not None: flags |= VT_DLVOL; body += struct.pack("!Q", dl)
     return _ie(IET.VOLUME_THRESHOLD, bytes([flags]) + body) if flags else b""
 
-def ie_time_threshold(seconds: int) -> bytes:
-    return _ie(IET.TIME_THRESHOLD, struct.pack("!I", seconds))
-
 def ie_volume_quota(total: int | None = None,
                     ul:    int | None = None,
                     dl:    int | None = None) -> bytes:
-    """Volume Quota IE (73) — same layout as Volume Threshold."""
     flags, body = 0, b""
     if total is not None: flags |= VT_TOVOL; body += struct.pack("!Q", total)
     if ul    is not None: flags |= VT_ULVOL; body += struct.pack("!Q", ul)
     if dl    is not None: flags |= VT_DLVOL; body += struct.pack("!Q", dl)
     return _ie(IET.VOLUME_QUOTA, bytes([flags]) + body) if flags else b""
 
+def ie_time_threshold(seconds: int) -> bytes:
+    return _ie(IET.TIME_THRESHOLD, struct.pack("!I", seconds))
+
 def ie_time_quota(seconds: int) -> bytes:
-    """Time Quota IE (65) — uint32 seconds."""
     return _ie(IET.TIME_QUOTA, struct.pack("!I", seconds))
 
 def ie_quota_holding_time(seconds: int) -> bytes:
-    """Quota Holding Time IE (71) — uint32 seconds."""
     return _ie(IET.QUOTA_HOLDING_TIME, struct.pack("!I", seconds))
 
 def ie_inactivity_detection_time(seconds: int) -> bytes:
-    """Inactivity Detection Time IE (36) — uint32 seconds."""
     return _ie(IET.INACTIVITY_DETECTION_TIME, struct.pack("!I", seconds))
 
 def ie_measurement_period(seconds: int) -> bytes:
-    """Measurement Period IE (64) — uint32 seconds, used with PERIO trigger."""
     return _ie(IET.MEASUREMENT_PERIOD, struct.pack("!I", seconds))
 
 def ie_outer_header_creation(teid: int, ip: str) -> bytes:
@@ -686,6 +684,9 @@ def ie_apn_dnn(apn: str) -> bytes:
 def ie_ue_ip_address_pool_identity(pool_name: str) -> bytes:
     enc = pool_name.encode()
     return _ie(IET.UE_IP_ADDRESS_POOL_IDENTITY, struct.pack("!H", len(enc)) + enc)
+
+def ie_pfcpsmreq_flags(flags: int) -> bytes:
+    return _ie(IET.PFCPSMREQ_FLAGS, bytes([flags]))
 
 def _bcd_encode(digits: str) -> bytes:
     """TBCD: first digit in low nibble, second in high nibble."""
@@ -724,14 +725,16 @@ def ie_pdi_dl(network_instance: str) -> bytes:
                ie_ue_ip_address_dl())
 
 def ie_create_pdr_ul(network_instance: str, urr_ids: list[int]) -> bytes:
-    body = (ie_pdr_id(1) + ie_precedence(100) + ie_pdi_ul(network_instance) +
-            ie_far_id(1) + b"".join(ie_urr_id(u) for u in urr_ids))
-    return _ie(IET.CREATE_PDR, body)
+    return _ie(IET.CREATE_PDR,
+               ie_pdr_id(1) + ie_precedence(100) +
+               ie_pdi_ul(network_instance) + ie_far_id(1) +
+               b"".join(ie_urr_id(u) for u in urr_ids))
 
 def ie_create_pdr_dl(network_instance: str, urr_ids: list[int]) -> bytes:
-    body = (ie_pdr_id(2) + ie_precedence(200) + ie_pdi_dl(network_instance) +
-            ie_far_id(2) + b"".join(ie_urr_id(u) for u in urr_ids))
-    return _ie(IET.CREATE_PDR, body)
+    return _ie(IET.CREATE_PDR,
+               ie_pdr_id(2) + ie_precedence(200) +
+               ie_pdi_dl(network_instance) + ie_far_id(2) +
+               b"".join(ie_urr_id(u) for u in urr_ids))
 
 def ie_create_far_ul() -> bytes:
     return _ie(IET.CREATE_FAR,
@@ -745,15 +748,13 @@ def ie_create_far_dl(enb_teid: int, enb_ip: str) -> bytes:
                    ie_dest_interface(IF_ACCESS) +
                    ie_outer_header_creation(enb_teid, enb_ip)))
 
-def ie_create_urr_from_config(urr: URRConfig) -> bytes:
+def _build_urr_ie(ie_type: int, urr: URRConfig) -> bytes:
     body = (ie_urr_id(urr.urr_id) +
             ie_measurement_method(urr.measure) +
             ie_reporting_triggers(urr.triggers))
-    # Thresholds
     vt = ie_volume_threshold(urr.volth_total, urr.volth_ul, urr.volth_dl)
     if vt:                               body += vt
-    if urr.timth is not None:            body += ie_time_threshold(urr.timth)
-    # Quotas
+    if urr.timth                is not None: body += ie_time_threshold(urr.timth)
     vq = ie_volume_quota(urr.vol_quota_total, urr.vol_quota_ul, urr.vol_quota_dl)
     if vq:                               body += vq
     if urr.time_quota           is not None: body += ie_time_quota(urr.time_quota)
@@ -761,7 +762,19 @@ def ie_create_urr_from_config(urr: URRConfig) -> bytes:
     if urr.inactivity_detection is not None: body += ie_inactivity_detection_time(urr.inactivity_detection)
     if urr.measurement_period   is not None: body += ie_measurement_period(urr.measurement_period)
     body += b"".join(ie_linked_urr_id(uid) for uid in urr.linked_urr_ids)
-    return _ie(IET.CREATE_URR, body)
+    return _ie(ie_type, body)
+
+def ie_create_urr_from_config(urr: URRConfig) -> bytes:
+    return _build_urr_ie(IET.CREATE_URR, urr)
+
+def ie_update_urr_from_config(urr: URRConfig) -> bytes:
+    return _build_urr_ie(IET.UPDATE_URR, urr)
+
+def ie_remove_urr(urr_id: int) -> bytes:
+    return _ie(IET.REMOVE_URR, ie_urr_id(urr_id))
+
+def ie_query_urr(urr_id: int) -> bytes:
+    return _ie(IET.QUERY_URR, ie_urr_id(urr_id))
 
 def ie_ue_ip_address_pool_information(ni: str, pool: str) -> bytes:
     return _ie(IET.UE_IP_ADDRESS_POOL_INFORMATION,
@@ -773,6 +786,9 @@ def ie_ue_ip_address_pool_information(ni: str, pool: str) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════
 def encode_header(msg_type: int, seq: int, body: bytes,
                   seid: int | None = None) -> bytes:
+    # seid=None → S-flag clear  (node-level messages)
+    # seid=0    → S-flag set, SEID=0  (session establishment)
+    # seid=N    → S-flag set, SEID=N  (session modification/deletion/report)
     flags = 0x20
     if seid is not None:
         flags |= 0x01
@@ -791,7 +807,8 @@ def decode_header(data: bytes) -> dict:
     flags, msg_type, _ = struct.unpack("!BBH", data[:4])
     off, seid = 4, 0
     if flags & 0x01:
-        seid = struct.unpack("!Q", data[off:off+8])[0]; off += 8
+        seid = struct.unpack("!Q", data[off:off+8])[0]
+        off += 8
     seq = (data[off] << 16) | (data[off+1] << 8) | data[off+2]
     return {"msg_type": msg_type,
             "name":     MSG_NAME.get(msg_type, f"Unknown(0x{msg_type:02X})"),
@@ -813,7 +830,8 @@ def decode_ies(raw: bytes) -> dict[int, list[bytes]]:
 #  PFCP UDP protocol
 # ══════════════════════════════════════════════════════════════════════════
 class PFCPProtocol(asyncio.DatagramProtocol):
-    _RESPONSE_TYPES = {MT.HB_RESP, MT.ASSOC_RSP, MT.SESS_EST_RSP, MT.SESS_DEL_RSP}
+    _RESPONSE_TYPES = {MT.HB_RESP, MT.ASSOC_RSP, MT.SESS_EST_RSP,
+                       MT.SESS_MOD_RSP, MT.SESS_DEL_RSP}
 
     def __init__(self, local_ip: str, on_session_report=None):
         self.local_ip           = local_ip
@@ -864,16 +882,14 @@ class PFCPProtocol(asyncio.DatagramProtocol):
 
     def _handle_session_report(self, req: dict, addr: tuple):
         ies = decode_ies(req["ies_raw"])
-
         rt_raw = ies.get(IET.REPORT_TYPE, [None])[0]
         rt_str = ""
         if rt_raw:
-            rt = rt_raw[0]
+            rt    = rt_raw[0]
             flags = []
             if rt & RPT_USAR: flags.append("USAR")
             if rt & RPT_UPIR: flags.append("UPIR")
             rt_str = f"  report_type=0x{rt:02X}({','.join(flags)})"
-
         log.info(f"←  {req['name']}  "
                  f"(seq={req['seq']}, seid=0x{req['seid']:016X}){rt_str}")
 
@@ -883,7 +899,6 @@ class PFCPProtocol(asyncio.DatagramProtocol):
             log.info(f"   Usage Report: {ur.summary()}")
             usage_reports.append(ur)
 
-        # callback into SMF — returns the UP SEID for the response header
         up_seid = 0
         if self._on_session_report:
             sr = SessionReport(cp_seid=req["seid"],
@@ -924,7 +939,6 @@ class SMF:
         self.urr_configs: dict[int, URRConfig] = {}
         # (cp_seid, urr_id) → end_time string of last received report
         self._last_report_end: dict[tuple[int,int], str] = {}
-        # Queue of SessionReport objects for `expect report` command
         self.report_queue: asyncio.Queue[SessionReport] = asyncio.Queue()
 
     async def start(self):
@@ -935,7 +949,6 @@ class SMF:
         self._proto = proto
 
     def _on_session_report(self, sr: SessionReport) -> int:
-        """Called from PFCPProtocol. Returns UP SEID for the response header."""
         sess = self.sessions.get(sr.cp_seid)
         if sess is None:
             log.warning(f"Session Report for unknown cp_seid=0x{sr.cp_seid:016X}")
@@ -959,6 +972,7 @@ class SMF:
         fut = self._proto.send_request(msg_type, seq, body, self.upf_addr, seid)
         return await asyncio.wait_for(fut, timeout=self.TIMEOUT)
 
+    # ── Heartbeat ──────────────────────────────────────────────────────
     async def send_heartbeat(self) -> bool:
         try:
             hdr = await self._request(MT.HB_REQ, ie_recovery_timestamp())
@@ -966,12 +980,11 @@ class SMF:
             log.error("Heartbeat timed out"); return False
         ies    = decode_ies(hdr["ies_raw"])
         ts_raw = ies.get(IET.RECOVERY_TIMESTAMP, [None])[0]
-        ts_str = ""
-        if ts_raw and len(ts_raw) >= 4:
-            ts_str = f"  recovery_ts={_ntp_to_str(ts_raw)}"
+        ts_str = f"  recovery_ts={_ntp_to_str(ts_raw)}" if ts_raw else ""
         log.info(f"←  {hdr['name']}  (seq={hdr['seq']}){ts_str}")
         return True
 
+    # ── Association Setup ──────────────────────────────────────────────
     async def association_setup(self) -> bool:
         try:
             hdr = await self._request(
@@ -989,15 +1002,14 @@ class SMF:
             log.error(f"←  {hdr['name']}  cause={cause_str}  (REJECTED)")
             return False
 
-        upf_node = "?"
+        upf_node    = "?"
+        up_feat_str = ""
         nid = ies.get(IET.NODE_ID, [None])[0]
         if nid and len(nid) >= 5 and nid[0] == 0x00:
             upf_node = socket.inet_ntoa(nid[1:5])
-
-        up_feat_str = ""
         up_feat_raw = ies.get(IET.UP_FUNC_FEATURES, [None])[0]
         if up_feat_raw:
-            val = int.from_bytes(up_feat_raw, "big")
+            val         = int.from_bytes(up_feat_raw, "big")
             up_feat_str = f"  up_features=0x{val:0{len(up_feat_raw)*2}X}"
 
         log.info(f"←  {hdr['name']}  "
@@ -1006,6 +1018,7 @@ class SMF:
         self.associated = True
         return True
 
+    # ── Session Establishment ──────────────────────────────────────────
     async def session_establishment(
         self,
         imsi:             str | None = None,
@@ -1017,18 +1030,15 @@ class SMF:
         enb_teid:         int | None = None,
         urr_ids:          list[int] | None = None,
     ) -> Session | None:
-        # Resolve URR IDs: explicit list or all configured
         if urr_ids is None:
             urr_ids = list(self.urr_configs.keys())
         missing = [uid for uid in urr_ids if uid not in self.urr_configs]
         if missing:
-            log.error(f"URR(s) not configured: {missing}")
-            return None
+            log.error(f"URR(s) not configured: {missing}"); return None
 
         cp_seid = self._next_cp_seid
         self._next_cp_seid += 1
 
-        # Downlink FAR
         if enb_ip and enb_teid is not None:
             far_dl = ie_create_far_dl(enb_teid, enb_ip)
         else:
@@ -1089,6 +1099,60 @@ class SMF:
                  f"upf_gtpu={sess.upf_gtpu_ip or '?'}:0x{sess.upf_teid:08X})")
         return sess
 
+    # ── Session Modification ───────────────────────────────────────────
+    async def session_modification(
+        self,
+        cp_seid:     int,
+        add_urrs:    list[int] | None = None,
+        update_urrs: list[int] | None = None,
+        remove_urrs: list[int] | None = None,
+        query_urrs:  list[int] | None = None,
+        qaurr:       bool = False,
+    ) -> bool:
+        sess = self.sessions.get(cp_seid)
+        if sess is None:
+            log.error(f"Unknown cp_seid 0x{cp_seid:016X}"); return False
+
+        add_urrs    = add_urrs    or []
+        update_urrs = update_urrs or []
+        remove_urrs = remove_urrs or []
+        query_urrs  = query_urrs  or []
+
+        missing = [uid for uid in add_urrs + update_urrs
+                   if uid not in self.urr_configs]
+        if missing:
+            log.error(f"URR(s) not configured: {missing}"); return False
+
+        body = b""
+        for uid in add_urrs:    body += ie_create_urr_from_config(self.urr_configs[uid])
+        for uid in update_urrs: body += ie_update_urr_from_config(self.urr_configs[uid])
+        for uid in remove_urrs: body += ie_remove_urr(uid)
+        for uid in query_urrs:  body += ie_query_urr(uid)
+        if qaurr:               body += ie_pfcpsmreq_flags(SMREQ_QAURR)
+
+        try:
+            hdr = await self._request(MT.SESS_MOD_REQ, body, seid=sess.up_seid)
+        except TimeoutError:
+            log.error("Session Modification timed out"); return False
+
+        ies       = decode_ies(hdr["ies_raw"])
+        cause     = ies.get(IET.CAUSE, [b"\xff"])[0][0]
+        cause_str = CAUSE_NAME.get(cause, f"Unknown({cause})")
+        if cause != CAUSE_ACCEPTED:
+            log.error(f"←  {hdr['name']}  cause={cause_str}  (REJECTED)")
+            return False
+
+        for uid in add_urrs:
+            if uid not in sess.urr_ids: sess.urr_ids.append(uid)
+        for uid in remove_urrs:
+            sess.urr_ids = [u for u in sess.urr_ids if u != uid]
+
+        log.info(f"←  {hdr['name']}  "
+                 f"(seq={hdr['seq']}, cause={cause_str}, "
+                 f"cp_seid=0x{cp_seid:016X}, urr_ids={sess.urr_ids})")
+        return True
+
+    # ── Session Deletion ───────────────────────────────────────────────
     async def session_deletion(self, cp_seid: int) -> bool:
         sess = self.sessions.get(cp_seid)
         if sess is None:
@@ -1112,16 +1176,11 @@ class SMF:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Expect Report
+#  Expect Report helpers
 # ══════════════════════════════════════════════════════════════════════════
 async def wait_for_report(queue: asyncio.Queue[SessionReport],
                           cp_seid: int | None,
                           timeout: float) -> SessionReport:
-    """
-    Dequeue reports until one matching cp_seid is found.
-    Skipped reports (wrong session) are re-queued.
-    Raises TimeoutError if deadline expires.
-    """
     deadline = time.monotonic() + timeout
     skipped  = []
     try:
@@ -1140,15 +1199,21 @@ async def wait_for_report(queue: asyncio.Queue[SessionReport],
 
 def validate_report(report: SessionReport,
                     last_report_end: dict[tuple[int,int], str],
-                    urr_id:                  int | None = None,
-                    trigger:                 int | None = None,
-                    total:                   int | None = None, total_min: int | None = None, total_max: int | None = None,
-                    ul:                      int | None = None, ul_min:    int | None = None, ul_max:    int | None = None,
-                    dl:                      int | None = None, dl_min:    int | None = None, dl_max:    int | None = None,
-                    duration_min:            int | None = None, duration_max: int | None = None,
+                    urr_id:                    int | None = None,
+                    trigger:                   int | None = None,
+                    total:                     int | None = None,
+                    total_min:                 int | None = None,
+                    total_max:                 int | None = None,
+                    ul:                        int | None = None,
+                    ul_min:                    int | None = None,
+                    ul_max:                    int | None = None,
+                    dl:                        int | None = None,
+                    dl_min:                    int | None = None,
+                    dl_max:                    int | None = None,
+                    duration_min:              int | None = None,
+                    duration_max:              int | None = None,
                     inactivity_detection_time: int | None = None,
                     ) -> list[str]:
-    """Returns list of failure strings (empty = PASS)."""
     failures = []
 
     candidates = [ur for ur in report.usage_reports
@@ -1174,10 +1239,7 @@ def validate_report(report: SessionReport,
     check_vol(ur.ul,    ul,    ul_min,    ul_max,    "ul")
     check_vol(ur.dl,    dl,    dl_min,    dl_max,    "dl")
 
-    # Duration checks
-    # If inactivity_detection_time is configured, the UPF pauses the duration
-    # timer during silent periods — so effective duration may be shorter than
-    # wall-clock time by up to inactivity_detection_time seconds.
+    # Duration checks — inactivity_detection_time loosens duration_min
     if duration_min is not None or duration_max is not None:
         if ur.duration is None:
             failures.append("duration: not present in report")
@@ -1186,24 +1248,22 @@ def validate_report(report: SessionReport,
             if duration_min is not None and inactivity_detection_time is not None:
                 effective_min = max(0, duration_min - inactivity_detection_time)
                 log.debug(f"duration_min adjusted {duration_min}s → {effective_min}s "
-                          f"(inactivity_detection_time={inactivity_detection_time}s)")
+                          f"(idt={inactivity_detection_time}s)")
             if effective_min is not None and ur.duration < effective_min:
-                failures.append(f"duration: got={ur.duration}s < min={effective_min}s"
-                                 + (f" (adjusted from {duration_min}s by idt={inactivity_detection_time}s)"
-                                    if inactivity_detection_time else ""))
+                failures.append(
+                    f"duration: got={ur.duration}s < min={effective_min}s" +
+                    (f" (adjusted from {duration_min}s by idt={inactivity_detection_time}s)"
+                     if inactivity_detection_time else ""))
             if duration_max is not None and ur.duration > duration_max:
                 failures.append(f"duration: got={ur.duration}s > max={duration_max}s")
 
-    # Time window continuity: START_TIME of this report must be >= END_TIME of last report
-    key = (report.cp_seid, ur.urr_id)
+    # Time-window continuity: start of this report must be >= end of last report
+    key      = (report.cp_seid, ur.urr_id)
     prev_end = last_report_end.get(key)
-    if prev_end and ur.start:
-        if ur.start < prev_end:
-            failures.append(
-                f"start_time={ur.start} is before previous report end_time={prev_end} "
-                f"(non-contiguous window)")
+    if prev_end and ur.start and ur.start < prev_end:
+        failures.append(f"start_time={ur.start} is before previous "
+                        f"report end_time={prev_end} (non-contiguous window)")
 
-    # Basic sanity: end must not precede start within the same report
     if ur.start and ur.end and ur.end < ur.start:
         failures.append(f"end_time={ur.end} is before start_time={ur.start}")
 
@@ -1216,39 +1276,30 @@ def validate_report(report: SessionReport,
 HELP_TEXT = """\
 ── URR ──────────────────────────────────────────────────────────────────
   urr set id <n> [triggers <t,...>] [measure <m,...>]
-                 [volth total <bytes>] [volth ul <bytes>] [volth dl <bytes>]
-                 [timth <seconds>]
-                 [volquota total <bytes>] [volquota ul <bytes>] [volquota dl <bytes>]
-                 [timquota <seconds>]
-                 [qht <seconds>]
-                 [inactivity <seconds>]
-                 [period <seconds>]
-                 [linked <id1,id2,...>]
-      Configure a URR.  Trigger/measure names (comma-separated, no spaces):
-      Trigger names for urr set (§8.2.19 Reporting Triggers):
-        perio volth timth quhti start stopt droth liusa
-        termr monit envcl timqu volqu eveth macar ipmjl
-      Trigger names for expect report (§8.2.41 Usage Report Trigger):
-        perio volth timth quhti start stopt droth liusa
-        termr monit envcl immer timqu volqu eveth macar
-        volth/volquota sub-options: total ul dl
-        timth     : Time Threshold (seconds)
-        timquota  : Time Quota (seconds)
-        qht       : Quota Holding Time (seconds)
-        inactivity: Inactivity Detection Time (seconds)
-        period    : Measurement Period / Periodic Timer (seconds)
+                 [volth total <b>] [volth ul <b>] [volth dl <b>]
+                 [timth <s>]
+                 [volquota total <b>] [volquota ul <b>] [volquota dl <b>]
+                 [timquota <s>] [qht <s>] [inactivity <s>] [period <s>]
+                 [linked <id,...>]
+      Trigger names (§8.2.19): perio volth timth quhti start stopt droth
+                                liusa volqu timqu envcl macar eveth evequ ipmjl
+      Measure names: volume duration event
       Byte suffixes: GB MiB MB KiB KB (or plain integer).
 
-  urr show [<id>]       Show configured URR(s).
-  urr clear [<id>]      Remove one or all URRs.
+  urr show [<id>]
+  urr clear [<id>]
 
 ── Session ───────────────────────────────────────────────────────────────
   session add [imsi <d>] [msisdn <d>] [imei <d>]
               [dnn <n>] [pool <n>]
               [enb-ip <ip>] [enb-teid <teid>]
-              [urr <id1,id2,...>]
-      Create session.  urr defaults to all configured URRs.
-      enb-ip/enb-teid: eNB GTP-U endpoint for downlink OHC.
+              [urr <id,...>]
+
+  session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
+                           [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
+      add-urr/update-urr: must be configured with 'urr set'.
+      query-urr: request immediate report for specific URR(s).
+      qaurr: set PFCPSMREQ-Flags QAURR bit (query all URRs).
 
   session delete <cp_seid>
   session ping   <cp_seid> [<dst_ip>] [count <n>]
@@ -1260,49 +1311,68 @@ HELP_TEXT = """\
                 [total <b>] [total_min <b>] [total_max <b>]
                 [ul <b>]    [ul_min <b>]    [ul_max <b>]
                 [dl <b>]    [dl_min <b>]    [dl_max <b>]
-      Wait for a Session Report Request and validate it.
-      Prints PASS or FAIL <reason>.
+                [duration_min <s>] [duration_max <s>] [idt <s>]
+      Trigger names (§8.2.41): perio volth timth quhti start stopt droth
+                                immer volqu timqu liusa termr monit envcl macar eveth
+      idt: inactivity_detection_time — loosens duration_min by up to idt seconds.
+
+  expect no report [timeout <s>]
+      Wait <s> seconds (default 5) and fail if any session report arrives.
 
 ── Misc ──────────────────────────────────────────────────────────────────
-  pause <seconds>     Sleep (useful in command files).
-  help                Show this message.
+  pause <seconds>
+  help
   quit / exit\
 """
 
 
 def parse_urr_set(tokens: list[str]) -> URRConfig:
-    urr_id = None; triggers = 0; measure = 0
-    volth_total = volth_ul = volth_dl = timth = None
-    vol_quota_total = vol_quota_ul = vol_quota_dl = None
-    time_quota = quota_holding_time = inactivity_detection = measurement_period = None
+    urr_id               = None
+    triggers             = 0
+    measure              = 0
+    volth_total          = None
+    volth_ul             = None
+    volth_dl             = None
+    timth                = None
+    vol_quota_total      = None
+    vol_quota_ul         = None
+    vol_quota_dl         = None
+    time_quota           = None
+    quota_holding_time   = None
+    inactivity_detection = None
+    measurement_period   = None
     linked_urr_ids: list[int] = []
+
     it = iter(tokens)
     for key in it:
         match key:
-            case "id":       urr_id   = int(next(it))
-            case "triggers": triggers = parse_flags(next(it), REPORTING_TRIGGER_NAMES)
-            case "measure":  measure  = parse_flags(next(it), MEASURE_NAMES)
+            case "id":         urr_id               = int(next(it))
+            case "triggers":   triggers             = parse_flags(next(it), REPORTING_TRIGGER_NAMES)
+            case "measure":    measure              = parse_flags(next(it), MEASURE_NAMES)
+            case "timth":      timth                = int(next(it))
+            case "timquota":   time_quota           = int(next(it))
+            case "qht":        quota_holding_time   = int(next(it))
+            case "inactivity": inactivity_detection = int(next(it))
+            case "period":     measurement_period   = int(next(it))
+            case "linked":     linked_urr_ids       = [int(x) for x in next(it).split(",")]
             case "volth":
                 match next(it):
                     case "total": volth_total = parse_bytes(next(it))
                     case "ul":    volth_ul    = parse_bytes(next(it))
                     case "dl":    volth_dl    = parse_bytes(next(it))
                     case sub:     raise ValueError(f"Unknown volth sub-option: {sub!r}")
-            case "timth":    timth                = int(next(it))
             case "volquota":
                 match next(it):
                     case "total": vol_quota_total = parse_bytes(next(it))
                     case "ul":    vol_quota_ul    = parse_bytes(next(it))
                     case "dl":    vol_quota_dl    = parse_bytes(next(it))
                     case sub:     raise ValueError(f"Unknown volquota sub-option: {sub!r}")
-            case "timquota":    time_quota           = int(next(it))
-            case "qht":         quota_holding_time   = int(next(it))
-            case "inactivity":  inactivity_detection = int(next(it))
-            case "period":      measurement_period   = int(next(it))
-            case "linked":      linked_urr_ids       = [int(x) for x in next(it).split(",")]
-            case _:             raise ValueError(f"Unknown urr option: {key!r}")
+            case _:
+                raise ValueError(f"Unknown urr option: {key!r}")
+
     if urr_id is None:
         raise ValueError("urr id is required")
+
     return URRConfig(
         urr_id=urr_id, triggers=triggers, measure=measure,
         volth_total=volth_total, volth_ul=volth_ul, volth_dl=volth_dl,
@@ -1332,26 +1402,19 @@ def parse_session_add(tokens: list[str]) -> dict:
     return params
 
 
-def parse_expect_report(tokens: list[str]) -> dict:
-    p: dict = {}
+def parse_session_modify(tokens: list[str]) -> dict:
+    params: dict = {"add_urrs": [], "update_urrs": [], "remove_urrs": [],
+                    "query_urrs": [], "qaurr": False}
     it = iter(tokens)
     for key in it:
         match key:
-            case "timeout":   p["timeout"]   = float(next(it))
-            case "cp_seid":   p["cp_seid"]   = int(next(it), 0)
-            case "urr_id":    p["urr_id"]    = int(next(it))
-            case "trigger":   p["trigger"]   = parse_flags(next(it), USAGE_REPORT_TRIGGER_NAMES)
-            case "total":     p["total"]     = parse_bytes(next(it))
-            case "total_min": p["total_min"] = parse_bytes(next(it))
-            case "total_max": p["total_max"] = parse_bytes(next(it))
-            case "ul":        p["ul"]        = parse_bytes(next(it))
-            case "ul_min":    p["ul_min"]    = parse_bytes(next(it))
-            case "ul_max":    p["ul_max"]    = parse_bytes(next(it))
-            case "dl":        p["dl"]        = parse_bytes(next(it))
-            case "dl_min":    p["dl_min"]    = parse_bytes(next(it))
-            case "dl_max":    p["dl_max"]    = parse_bytes(next(it))
-            case _:           raise ValueError(f"Unknown expect option: {key!r}")
-    return p
+            case "add-urr":    params["add_urrs"]    = [int(x) for x in next(it).split(",")]
+            case "update-urr": params["update_urrs"] = [int(x) for x in next(it).split(",")]
+            case "remove-urr": params["remove_urrs"] = [int(x) for x in next(it).split(",")]
+            case "query-urr":  params["query_urrs"]  = [int(x) for x in next(it).split(",")]
+            case "qaurr":      params["qaurr"]       = True
+            case _:            raise ValueError(f"Unknown session modify option: {key!r}")
+    return params
 
 
 def parse_session_ping(tokens: list[str]) -> tuple[str, int]:
@@ -1361,6 +1424,31 @@ def parse_session_ping(tokens: list[str]) -> tuple[str, int]:
         if tok == "count": count = int(next(it))
         else:              dst_ip = tok
     return dst_ip, count
+
+
+def parse_expect_report(tokens: list[str]) -> dict:
+    p: dict = {}
+    it = iter(tokens)
+    for key in it:
+        match key:
+            case "timeout":    p["timeout"]                   = float(next(it))
+            case "cp_seid":    p["cp_seid"]                   = int(next(it), 0)
+            case "urr_id":     p["urr_id"]                    = int(next(it))
+            case "trigger":    p["trigger"]                   = parse_flags(next(it), USAGE_REPORT_TRIGGER_NAMES)
+            case "total":      p["total"]                     = parse_bytes(next(it))
+            case "total_min":  p["total_min"]                 = parse_bytes(next(it))
+            case "total_max":  p["total_max"]                 = parse_bytes(next(it))
+            case "ul":         p["ul"]                        = parse_bytes(next(it))
+            case "ul_min":     p["ul_min"]                    = parse_bytes(next(it))
+            case "ul_max":     p["ul_max"]                    = parse_bytes(next(it))
+            case "dl":         p["dl"]                        = parse_bytes(next(it))
+            case "dl_min":     p["dl_min"]                    = parse_bytes(next(it))
+            case "dl_max":     p["dl_max"]                    = parse_bytes(next(it))
+            case "duration_min": p["duration_min"]            = int(next(it))
+            case "duration_max": p["duration_max"]            = int(next(it))
+            case "idt":          p["inactivity_detection_time"] = int(next(it))
+            case _:            raise ValueError(f"Unknown expect option: {key!r}")
+    return p
 
 
 async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
@@ -1397,9 +1485,8 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                     print(f"urr configured: {urr.summary()}", flush=True)
 
                 case ["urr", "show", *rest]:
-                    filt = int(rest[0]) if rest else None
-                    configs = ({filt: smf.urr_configs[filt]}
-                               if filt else smf.urr_configs)
+                    filt    = int(rest[0]) if rest else None
+                    configs = {filt: smf.urr_configs[filt]} if filt else smf.urr_configs
                     if not configs:
                         print("(no URRs configured)", flush=True)
                     for urr in configs.values():
@@ -1435,6 +1522,13 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                               f" ue_ip={sess.ue_ip or '?'}"
                               f" upf_gtpu={sess.upf_gtpu_ip or '?'}"
                               f":0x{sess.upf_teid:08X}", flush=True)
+
+                case ["session", "modify", seid_str, *rest]:
+                    params  = parse_session_modify(rest)
+                    cp_seid = int(seid_str, 0)
+                    ok      = await smf.session_modification(cp_seid, **params)
+                    if ok:
+                        print(f"session modified cp_seid=0x{cp_seid:016X}", flush=True)
 
                 case ["session", "delete", seid_str]:
                     ok = await smf.session_deletion(int(seid_str, 0))
@@ -1479,8 +1573,8 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                               f"waiting for session report", flush=True)
                     else:
                         failures = validate_report(report, smf._last_report_end, **p)
-                        # Update _last_report_end only after validation so that
-                        # validate_report sees the previous report's end time, not the current one.
+                        # Update _last_report_end after validation so it sees
+                        # the previous report's end time, not the current one.
                         for ur in report.usage_reports:
                             if ur.end:
                                 smf._last_report_end[(report.cp_seid, ur.urr_id)] = ur.end
@@ -1488,7 +1582,7 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                             for f in failures:
                                 print(f"FAIL: {f}", flush=True)
                         else:
-                            urs = report.usage_reports
+                            urs     = report.usage_reports
                             summary = urs[0].summary() if urs else "no usage reports"
                             print(f"PASS: {summary}", flush=True)
 
