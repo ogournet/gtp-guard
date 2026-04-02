@@ -98,7 +98,6 @@ gtp_request_json_parse_cmd(struct inet_cnx *c, struct json_node *json)
 			    , inet_sockaddrtos2(&c->addr, addr_str)
 			    , ntohs(inet_sockaddrport(&c->addr)));
 
-	gtp_conn_put(conn);
   end:
 	jsonw_end_object(jwriter);
 	return 0;

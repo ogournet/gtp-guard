@@ -85,7 +85,7 @@ free_daemon_data(void)
 	gtp_interfaces_destroy();
 	gtp_bpf_progs_destroy();
 	pfcp_destroy();
-	gtp_conn_destroy();
+	gtp_conn_module_destroy();
 	gtp_sessions_destroy();
 	gtp_proxy_destroy();
 	gtp_router_destroy();

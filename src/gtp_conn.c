@@ -21,6 +21,7 @@
 
 #include "gtp_conn.h"
 #include "gtp_session.h"
+#include "logger.h"
 #include "jhash.h"
 #include "bitops.h"
 #include "memory.h"
@@ -30,40 +31,6 @@
 static struct hlist_head *gtp_imsi_tab;
 static struct hlist_head *gtp_imei_tab;
 static struct hlist_head *gtp_msisdn_tab;
-
-
-/*
- *	Connection tracking (IMSI)
- */
-static int gtp_conn_count = 0;
-
-int
-gtp_conn_count_read(void)
-{
-	return gtp_conn_count;
-}
-
-
-/*
- *      Refcounting
- */
-int
-gtp_conn_get(struct gtp_conn *c)
-{
-	if (!c)
-		return 0;
-	__sync_add_and_fetch(&c->refcnt, 1);
-	return 0;
-}
-
-int
-gtp_conn_put(struct gtp_conn *c)
-{
-	if (!c)
-		return 0;
-	__sync_sub_and_fetch(&c->refcnt, 1);
-	return 0;
-}
 
 
 /*
@@ -96,22 +63,16 @@ gtp_conn_get_by_type(int type, uint64_t id)
 	hlist_for_each_entry(c, head, h_imsi) {
 		switch (type) {
 		case GTP_CONN_F_IMSI_HASHED:
-			if (c->imsi == id) {
-				__sync_add_and_fetch(&c->refcnt, 1);
+			if (c->imsi == id)
 				return c;
-			}
 			break;
 		case GTP_CONN_F_IMEI_HASHED:
-			if (c->imei == id) {
-				__sync_add_and_fetch(&c->refcnt, 1);
+			if (c->imei == id)
 				return c;
-			}
 			break;
 		case GTP_CONN_F_MSISDN_HASHED:
-			if (c->msisdn == id) {
-				__sync_add_and_fetch(&c->refcnt, 1);
+			if (c->msisdn == id)
 				return c;
-			}
 			break;
 		}
 	}
@@ -137,13 +98,10 @@ gtp_conn_get_by_msisdn(uint64_t msisdn)
 	return gtp_conn_get_by_type(GTP_CONN_F_MSISDN_HASHED, msisdn);
 }
 
-int
+static void
 gtp_conn_hash(struct gtp_conn *c)
 {
 	struct hlist_head *head;
-
-	if (!c)
-		return -1;
 
 	head = gtp_conn_hashkey(gtp_imsi_tab, c->imsi);
 	hlist_add_head(&c->h_imsi, head);
@@ -160,18 +118,11 @@ gtp_conn_hash(struct gtp_conn *c)
 		hlist_add_head(&c->h_msisdn, head);
 		__set_bit(GTP_CONN_F_MSISDN_HASHED, &c->flags);
 	}
-
-	__sync_add_and_fetch(&gtp_conn_count, 1);
-	__sync_add_and_fetch(&c->refcnt, 1);
-	return 0;
 }
 
-int
+static void
 gtp_conn_unhash(struct gtp_conn *c)
 {
-	if (!c)
-		return -1;
-
 	hlist_del(&c->h_imsi);
 	__clear_bit(GTP_CONN_F_IMSI_HASHED, &c->flags);
 
@@ -180,10 +131,6 @@ gtp_conn_unhash(struct gtp_conn *c)
 
 	if (__test_and_clear_bit(GTP_CONN_F_MSISDN_HASHED, &c->flags))
 		hlist_del(&c->h_msisdn);
-
-	__sync_sub_and_fetch(&gtp_conn_count, 1);
-	__sync_sub_and_fetch(&c->refcnt, 1);
-	return 0;
 }
 
 int
@@ -197,18 +144,14 @@ gtp_conn_vty(struct vty *vty, int (*vty_conn) (struct vty *, struct gtp_conn *, 
 		c = gtp_conn_get_by_imsi(imsi);
 		if (!c)
 			return -1;
-
 		(*vty_conn) (vty, c, arg);
-		gtp_conn_put(c);
 		return 0;
 	}
 
 	/* Iterate */
 	for (i = 0; i < CONN_HASHTAB_SIZE; i++) {
 		hlist_for_each_entry(c, &gtp_imsi_tab[i], h_imsi) {
-			gtp_conn_get(c);
 			(*vty_conn) (vty, c, arg);
-			gtp_conn_put(c);
 		}
 	}
 
@@ -218,23 +161,49 @@ gtp_conn_vty(struct vty *vty, int (*vty_conn) (struct vty *, struct gtp_conn *, 
 /*
  *	Connection related
  */
+void
+gtp_conn_init(struct gtp_conn *c, uint64_t imsi, uint64_t imei, uint64_t msisdn)
+{
+	c->imsi = imsi;
+	c->imei = imei;
+	c->msisdn = msisdn;
+	c->ts = time(NULL);
+	INIT_LIST_HEAD(&c->gtp_sessions);
+	INIT_LIST_HEAD(&c->pppoe_sessions);
+
+	gtp_conn_hash(c);
+}
+
 struct gtp_conn *
 gtp_conn_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn)
 {
 	struct gtp_conn *new;
 
 	PMALLOC(new);
-	new->imsi = imsi;
-	new->imei = imei;
-	new->msisdn = msisdn;
-	new->ts = time(NULL);
-	INIT_LIST_HEAD(&new->gtp_sessions);
-	INIT_LIST_HEAD(&new->pppoe_sessions);
-	INIT_LIST_HEAD(&new->pfcp_sessions);
-
-	gtp_conn_hash(new);
+	gtp_conn_init(new, imsi, imei, msisdn);
 
 	return new;
+}
+
+struct gtp_conn *
+gtp_conn_refinc(struct gtp_conn *c)
+{
+	++c->refcnt;
+	return c;
+}
+
+void
+gtp_conn_refdec(struct gtp_conn *c)
+{
+	if (c == NULL)
+		return;
+
+	if (--c->refcnt == 0) {
+		log_message(LOG_INFO, "IMSI:%ld - no more sessions - Releasing tracking"
+			            , c->imsi);
+		gtp_conn_unhash(c);
+		free(c);
+	}
 }
 
 
@@ -242,7 +211,7 @@ gtp_conn_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn)
  *	Connection tracking init
  */
 int
-gtp_conn_init(void)
+gtp_conn_module_init(void)
 {
 	gtp_imsi_tab = calloc(CONN_HASHTAB_SIZE, sizeof(struct hlist_head));
 	gtp_imei_tab = calloc(CONN_HASHTAB_SIZE, sizeof(struct hlist_head));
@@ -251,7 +220,7 @@ gtp_conn_init(void)
 }
 
 int
-gtp_conn_destroy(void)
+gtp_conn_module_destroy(void)
 {
 	struct hlist_node *n;
 	struct gtp_conn *c;
