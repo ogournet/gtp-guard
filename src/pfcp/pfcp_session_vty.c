@@ -294,6 +294,7 @@ DEFUN(capture_start_pfcp,
       "Capture menu\n"
       "Capture pfcp submenu\n")
 {
+	struct gtp_capture_entry cap = {};
 	struct pfcp_session *s;
 	struct gtp_conn *c = NULL;
 	uint64_t v = atoll(argv[1]);
@@ -317,9 +318,6 @@ DEFUN(capture_start_pfcp,
 		return CMD_WARNING;
 	}
 
-	/* XXX: no support for multiple pfcp session per conn */
-	s = list_first_entry(&c->pfcp_sessions, struct pfcp_session, next);
-
 	if (argc > 2)
 		snprintf(capname, sizeof (capname), "%s", argv[2]);
 	else
@@ -327,28 +325,29 @@ DEFUN(capture_start_pfcp,
 
 	if (argc > 3) {
 		if (!strcmp(argv[3], "input"))
-			s->capture.flags = GTP_CAPTURE_FL_INPUT;
+			cap.flags = GTP_CAPTURE_FL_INPUT;
 		else if (!strcmp(argv[3], "output"))
-			s->capture.flags = GTP_CAPTURE_FL_OUTPUT;
+			cap.flags = GTP_CAPTURE_FL_OUTPUT;
 		else if (!strcmp(argv[3], "core"))
-			s->capture.flags = GTP_CAPTURE_FL_CORE;
+			cap.flags = GTP_CAPTURE_FL_CORE;
 		else if (!strcmp(argv[3], "access"))
-			s->capture.flags = GTP_CAPTURE_FL_ACCESS;
+			cap.flags = GTP_CAPTURE_FL_ACCESS;
 		else if (!strcmp(argv[3], "all"))
-			s->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+			cap.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
 	} else {
-		s->capture.flags = GTP_CAPTURE_FL_INPUT;
+		cap.flags = GTP_CAPTURE_FL_INPUT;
 	}
 
 	if (argc > 6)
 		VTY_GET_INTEGER_RANGE("caplen", caplen, argv[6], 32, 10000);
-	s->capture.cap_len = caplen;
+	cap.cap_len = caplen;
 
-	if (gtp_capture_start(&s->capture, s->router->bpf_prog, capname)) {
-		vty_out(vty, "%% Error starting pfcp trace\n");
-		return CMD_WARNING;
+	list_for_each_entry(s, &c->pfcp_sessions, next) {
+		s->capture = cap;
+		if (gtp_capture_start(&s->capture, s->router->bpf_prog, capname))
+			vty_out(vty, "%% Error starting pfcp trace\n");
+		pfcp_session_update_fwd_rules(s);
 	}
-	pfcp_session_update_fwd_rules(s);
 
 	return CMD_SUCCESS;
 }
