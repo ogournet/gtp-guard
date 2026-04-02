@@ -381,7 +381,6 @@ gtp1_create_pdp_request_hdl(struct gtp_server *srv, struct sockaddr_storage *add
 	}
 
   end:
-	gtp_conn_put(c);
 	return teid;
 }
 

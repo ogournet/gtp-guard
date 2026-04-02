@@ -24,7 +24,6 @@
 #include "pfcp_session.h"
 #include "pfcp_router.h"
 #include "pfcp_bpf.h"
-#include "gtp_conn.h"
 #include "utils.h"
 #include "bitops.h"
 #include "logger.h"
@@ -112,6 +111,22 @@ pfcp_session_hash(struct pfcp_session *s)
 	return _pfcp_session_hash(pfcp_session_tab, s);
 }
 
+/*
+ *	PFCP UE handling
+ */
+struct pfcp_ue *
+pfcp_ue_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn)
+{
+	struct pfcp_ue *ue;
+
+	ue = calloc(1, sizeof (*ue));
+	if (ue == NULL)
+		return NULL;
+	gtp_conn_init(&ue->c, imsi, imei, msisdn);
+	INIT_LIST_HEAD(&ue->pfcp_sessions);
+	return ue;
+}
+
 
 /*
  *	PFCP Sessions handling
@@ -144,15 +159,6 @@ pfcp_session_add_timer(struct pfcp_session *s)
 	pfcp_session_mod_timer(s, apn->session_lifetime);
 }
 
-static int
-pfcp_session_add(struct gtp_conn *c, struct pfcp_session *s)
-{
-	list_add_tail(&s->next, &c->pfcp_sessions);
-	__sync_add_and_fetch(&c->refcnt, 1);
-	__sync_add_and_fetch(&pfcp_sessions_count, 1);
-	return 0;
-}
-
 static uint64_t
 pfcp_session_seid_alloc(struct pfcp_router *r)
 {
@@ -177,7 +183,7 @@ shoot_again:
 }
 
 struct pfcp_session *
-pfcp_session_alloc(struct gtp_conn *c, struct gtp_apn *apn, struct pfcp_router *r)
+pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *r)
 {
 	struct pfcp_session *new;
 	uint64_t seid;
@@ -195,7 +201,7 @@ pfcp_session_alloc(struct gtp_conn *c, struct gtp_apn *apn, struct pfcp_router *
 	INIT_LIST_HEAD(&new->te_list);
 	INIT_LIST_HEAD(&new->urr_cmd_pending_list);
 	new->apn = apn;
-	new->conn = c;
+	new->ue = ue;
 	new->router = r;
 	time_now_to_calendar(&new->creation_time);
 	seid = pfcp_session_seid_alloc(r);
@@ -211,7 +217,10 @@ pfcp_session_alloc(struct gtp_conn *c, struct gtp_apn *apn, struct pfcp_router *
 	if (apn->cdr_spool)
 		new->cdr = gtp_cdr_alloc();
 
-	pfcp_session_add(c, new);
+	list_add_tail(&new->next, &ue->pfcp_sessions);
+	gtp_conn_refinc(&ue->c);
+	__sync_add_and_fetch(&pfcp_sessions_count, 1);
+
 	pfcp_session_hash(new);
 	pfcp_session_add_timer(new);
 	__sync_add_and_fetch(&apn->session_count, 1);
@@ -262,41 +271,25 @@ nospc:
 	return -1;
 }
 
-static int
+void
 pfcp_session_release(struct pfcp_session *s)
 {
-	__sync_sub_and_fetch(&s->apn->session_count, 1);
-	__sync_sub_and_fetch(&pfcp_sessions_count, 1);
-	gtp_apn_cdr_commit(s->apn, s->cdr);
-	pfcp_session_delete(s);
-	list_head_del(&s->next);
-	pfcp_session_unhash(s);
-	pfcp_session_release_ue_ip(s);
-	pfcp_session_release_teid(s);
-	free(s);
-	return 0;
-}
-
-int
-pfcp_session_destroy(struct pfcp_session *s)
-{
-	struct gtp_conn *c = s->conn;
-
 	if (s->capture.entry_id)
 		gtp_capture_stop(&s->capture);
 
 	thread_del(s->timer);
-	pfcp_session_release(s);
+	__sync_sub_and_fetch(&s->apn->session_count, 1);
+	gtp_apn_cdr_commit(s->apn, s->cdr);
+	pfcp_session_delete(s);
+	pfcp_session_unhash(s);
+	pfcp_session_release_ue_ip(s);
+	pfcp_session_release_teid(s);
 
-	/* Release connection if no more sessions */
-	if (__sync_sub_and_fetch(&c->refcnt, 1) == 0) {
-		gtp_conn_unhash(c);
-		log_message(LOG_INFO, "IMSI:%ld - no more sessions - Releasing tracking"
-				    , c->imsi);
-		free(c);
-	}
+	list_del(&s->next);
+	gtp_conn_refdec(&s->ue->c);
+	__sync_sub_and_fetch(&pfcp_sessions_count, 1);
 
-	return 0;
+	free(s);
 }
 
 
@@ -309,35 +302,17 @@ pfcp_session_expire(struct thread *t)
 	struct pfcp_session *s = THREAD_ARG(t);
 
 	log_message(LOG_INFO, "IMSI:%ld - Expiring pfcp-session-id:0x%" PRIx64 ""
-			    , s->conn->imsi, s->seid);
-	pfcp_session_destroy(s);
+			    , s->ue->c.imsi, s->seid);
+	pfcp_session_release(s);
 }
 
-int
-pfcp_sessions_release(struct gtp_conn *c)
+void
+pfcp_session_ue_release(struct pfcp_ue *ue)
 {
-	struct list_head *l = &c->pfcp_sessions;
 	struct pfcp_session *s, *_s;
 
-	/* Release sessions */
-	list_for_each_entry_safe(s, _s, l, next)
-		pfcp_session_destroy(s);
-
-	return 0;
-}
-
-int
-pfcp_sessions_free(struct gtp_conn *c)
-{
-	struct list_head *l = &c->pfcp_sessions;
-	struct pfcp_session *s, *_s;
-
-	list_for_each_entry_safe(s, _s, l, next) {
-		thread_del(s->timer);
+	list_for_each_entry_safe(s, _s, &ue->pfcp_sessions, next)
 		pfcp_session_release(s);
-	}
-
-	return 0;
 }
 
 

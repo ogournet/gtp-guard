@@ -645,6 +645,7 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 	if (s->pending_pbuff != NULL && list_empty(&s->urr_cmd_pending_list)) {
 		struct pkt_buffer *pbuff = s->pending_pbuff;
 		struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
+		bool delete = false;
 		switch (pfcph->type) {
 		case PFCP_SESSION_MODIFICATION_REQUEST:
 			pfcp_msg_reset_hlen(pbuff);
@@ -659,6 +660,7 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 			pfcph->seid = s->remote_seid.id;
 			pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_ACCEPTED);
 			pfcp_session_report_put_deletion(pbuff, s);
+			delete = true;
 			break;
 		}
 
@@ -666,6 +668,9 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 				&s->pending_addr.sin);
 		pkt_buffer_free(pbuff);
 		s->pending_pbuff = NULL;
+
+		if (delete)
+			pfcp_session_release(s);
 	}
 
 	return 0;

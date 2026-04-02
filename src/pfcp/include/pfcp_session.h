@@ -186,6 +186,12 @@ struct pfcp_fwd_rule {
 	struct list_head	next;
 };
 
+/* PFCP User Equipement */
+struct pfcp_ue {
+	struct gtp_conn		c;
+	struct list_head	pfcp_sessions;	/* pdn sessions */
+	struct gtp_capture_entry capture;
+};
 
 /* PFCP session */
 struct pfcp_session {
@@ -201,7 +207,7 @@ struct pfcp_session {
 	struct ue_ip_address	ue_ip;
 	int			teid_cnt;
 
-	struct gtp_conn		*conn;		/* backpointer */
+	struct pfcp_ue		*ue;
 	struct pfcp_router	*router;	/* Server used */
 	struct gtp_apn		*apn;
 	struct gtp_cdr		*cdr;
@@ -236,20 +242,21 @@ struct pfcp_session {
 };
 
 /* Prototypes */
+struct pfcp_ue *pfcp_ue_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn);
 int pfcp_sessions_count_read(void);
 union addr *pfcp_session_get_addr_by_interface(struct pfcp_router *r,
 					       uint8_t interface);
 struct pfcp_session *pfcp_session_get(uint64_t id);
-struct pfcp_session *pfcp_session_alloc(struct gtp_conn *c,
+struct pfcp_session *pfcp_session_alloc(struct pfcp_ue *ue,
 					struct gtp_apn *apn,
 					struct pfcp_router *r);
 
 int pfcp_session_alloc_ue_ip(struct pfcp_session *s, sa_family_t af);
 int pfcp_session_release_ue_ip(struct pfcp_session *s);
 int pfcp_session_release_teid(struct pfcp_session *s);
-int pfcp_session_destroy(struct pfcp_session *s);
-int pfcp_sessions_release(struct gtp_conn *c);
-int pfcp_sessions_free(struct gtp_conn *c);
+void pfcp_session_release(struct pfcp_session *s);
+void pfcp_session_ue_release(struct pfcp_ue *ue);
+int pfcp_sessions_free(struct pfcp_ue *ue);
 int pfcp_sessions_init(void);
 int pfcp_sessions_destroy(void);
 int pfcp_session_create(struct pfcp_session *s,
