@@ -21,7 +21,7 @@ struct {
 
 static __always_inline void
 capture_xdp_to_userspc(struct xdp_md *ctx, void *data, void *data_end,
-		       __u16 entry_id, __u16 cap_len, __u16 dir_fl)
+		       __u16 entry_id, __u16 cap_len, __u16 dir_fl, int action)
 {
 	struct capture_metadata md;
 
@@ -29,9 +29,9 @@ capture_xdp_to_userspc(struct xdp_md *ctx, void *data, void *data_end,
 	md.rx_queue = ctx->rx_queue_index;
 	md.pkt_len = (__u16)(data_end - data);
 	md.cap_len = min(md.pkt_len, cap_len);
-	md.entry_id = entry_id;
 	md.flags = dir_fl;
-	md.action = 0;
+	md.entry_id = entry_id;
+	md.action = action;
 
 	bpf_perf_event_output(ctx, &capture_perf_map,
 			      ((__u64) md.cap_len << 32) | BPF_F_CURRENT_CPU,
@@ -52,7 +52,7 @@ capture_xdp_to_userspc_in(struct xdp_md *ctx, struct capture_bpf_entry *e, __u16
 	if (data >= data_end)
 		return;
 
-	capture_xdp_to_userspc(ctx, data, data_end, e->entry_id, e->cap_len, dir_fl);
+	capture_xdp_to_userspc(ctx, data, data_end, e->entry_id, e->cap_len, dir_fl, -1);
 }
 
 static __always_inline void

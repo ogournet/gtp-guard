@@ -385,6 +385,18 @@ run_with_smf() {
     "expect report timeout 8 cp_seid 1 urr_id 15 trigger quhti total_min 880 urr_id 19 trigger liusa total_min 44"	\
     "expect no report timeout 2"
 
+    # test session modify
+    _hash_set testset modify1 <<EOF
+urr set id 8 triggers quhti measure volume qht 5
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 8
+pause 1
+session modify 1 query-urr 1
+pause 1
+session modify 1 qaurr
+pause 1
+session delete 1
+EOF
+    
     # volume quota
     smf_basic_urr testset volqu1			\
     "triggers volqu measure volume volquota total 120"	\

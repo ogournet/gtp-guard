@@ -26,7 +26,7 @@ struct gtp_bpf_capture_ctx;
 struct gtp_capture_file;
 struct gtp_capture_entry;
 
-#define GTP_CAPTURE_DEFAULT_CAPLEN		96
+#define GTP_CAPTURE_DEFAULT_SNAPLEN		96
 
 /* INPUT: xdp RX entry function
  * OUTPUT: xdp RX exit function (as we mainly fwd, this is output)
@@ -59,6 +59,8 @@ struct gtp_capture_entry
 	struct gtp_capture_file		*cf;
 };
 
+void gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
+		     uint16_t flags);
 int gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 		      const char *name);
 void gtp_capture_stop(struct gtp_capture_entry *e);
@@ -68,3 +70,17 @@ int gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 			    const char *name, int iface);
 int gtp_capture_init(void);
 void gtp_capture_release(void);
+
+static inline void
+gtp_capture_pkt_in(struct gtp_capture_entry *e, const void *data, size_t len)
+{
+	if (e->flags && e->cf != NULL)
+		gtp_capture_pkt(e, data, len, GTP_CAPTURE_FL_INPUT);
+}
+
+static inline void
+gtp_capture_pkt_out(struct gtp_capture_entry *e, const void *data, size_t len)
+{
+	if (e->flags && e->cf != NULL)
+		gtp_capture_pkt(e, data, len, GTP_CAPTURE_FL_OUTPUT);
+}

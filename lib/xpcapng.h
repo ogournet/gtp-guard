@@ -1,0 +1,41 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+
+/*
+ * from https://github.com/xdp-project/xdp-tools
+ */
+
+#pragma once
+
+struct xpcapng_dumper;
+
+enum xpcapng_epb_flags {
+	PCAPNG_EPB_FLAG_INBOUND  = 0x1,
+	PCAPNG_EPB_FLAG_OUTBOUND = 0x2
+};
+
+struct xpcapng_epb_options_s {
+	enum xpcapng_epb_flags  flags;
+	uint64_t                dropcount;
+	uint64_t               *packetid;
+	uint32_t               *queue;
+	int64_t                *xdp_verdict;
+	const char             *comment;
+};
+
+struct xpcapng_dumper *xpcapng_dump_open(const char *file,
+					 const char *comment,
+					 const char *hardware,
+					 const char *os,
+					 const char *user_application);
+void xpcapng_dump_close(struct xpcapng_dumper *pd);
+int xpcapng_dump_flush(struct xpcapng_dumper *pd);
+int xpcapng_dump_add_interface(struct xpcapng_dumper *pd,
+			       uint16_t snap_len,
+			       const char *name, const char *description,
+			       const uint8_t *mac, uint64_t speed,
+			       uint8_t ts_resolution,
+			       const char *hardware);
+bool xpcapng_dump_enhanced_pkt(struct xpcapng_dumper *pd, uint32_t ifid,
+			       const uint8_t *pkt, uint32_t len,
+			       uint32_t caplen, uint64_t timestamp,
+			       struct xpcapng_epb_options_s *options);

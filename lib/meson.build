@@ -34,6 +34,7 @@ lib_src = files(
   'vector.c',
   'vty.c',
   'table.c',
+  'xpcapng.c',
 )
 src += lib_src
 
