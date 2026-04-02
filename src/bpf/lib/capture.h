@@ -13,7 +13,7 @@
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-	__uint(max_entries, 16);	/* XXX: set to max cpu before load */
+	__uint(max_entries, 512);
 	__type(key, int);
 	__type(value, __u32);
 } capture_perf_map SEC(".maps");
@@ -34,7 +34,7 @@ capture_xdp_to_userspc(struct xdp_md *ctx, void *data, void *data_end,
 	md.action = action;
 
 	bpf_perf_event_output(ctx, &capture_perf_map,
-			      ((__u64) md.cap_len << 32) | BPF_F_CURRENT_CPU,
+			      ((__u64)md.cap_len << 32) | BPF_F_CURRENT_CPU,
 			      &md, sizeof(md));
 }
 
@@ -42,15 +42,17 @@ capture_xdp_to_userspc(struct xdp_md *ctx, void *data, void *data_end,
 static __always_inline void
 capture_xdp_to_userspc_in(struct xdp_md *ctx, struct capture_bpf_entry *e, __u16 dir_fl)
 {
-	void *data_end = (void *)(long)ctx->data_end;
-	void *data = (void *)(long)ctx->data;
 	struct capture_metadata md;
+	void *data, *data_end;
 
 	if (!e->entry_id || (dir_fl & e->flags) != dir_fl)
 		return;
 
 	if (data >= data_end)
 		return;
+
+	data_end = (void *)(long)ctx->data_end;
+	data = (void *)(long)ctx->data;
 
 	capture_xdp_to_userspc(ctx, data, data_end, e->entry_id, e->cap_len, dir_fl, -1);
 }

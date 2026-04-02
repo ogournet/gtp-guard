@@ -62,7 +62,6 @@ stop_gtp(void)
 	/* Just cleanup memory & exit */
 	vty_terminate();
 	cmd_terminate();
-	gtp_capture_release();
 	gtp_netlink_destroy();
 	free_daemon_data();
 	thread_destroy_master(master);
@@ -85,7 +84,6 @@ start_gtp(void)
 	daemon_data = alloc_daemon_data();
 
 	gtp_netlink_init();
-	gtp_capture_init();
 	cmd_init();
 	vty_init();
 	sort_node();

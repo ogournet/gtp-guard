@@ -722,6 +722,8 @@ gtp_bpf_prog_unload(struct gtp_bpf_prog *p)
 		bpf_object__close(p->obj_load);
 	p->obj_load = NULL;
 
+	gtp_capture_stop(&p->capture_entry);
+
 	for (i = 0; i < p->tpl_n; i++) {
 		if (p->tpl[i]->release != NULL)
 			p->tpl[i]->release(p, p->tpl_data[i]);

@@ -29,6 +29,8 @@
 #include "pfcp_router.h"
 #include "pfcp_session_report.h"
 #include "pfcp_teid.h"
+#include "pfcp_utils.h"
+#include "gtp_bpf_capture.h"
 #include "gtp_bpf_utils.h"
 #include "list_head.h"
 #include "addr.h"
@@ -663,6 +665,11 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 			delete = true;
 			break;
 		}
+
+		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+				 &s->pending_addr,
+				 (const union addr *)&s->router->s.s.addr,
+				 GTP_CAPTURE_FL_OUTPUT);
 
 		inet_server_snd(&s->router->s.s, s->router->s.s.fd, pbuff,
 				&s->pending_addr.sin);

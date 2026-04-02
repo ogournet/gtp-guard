@@ -191,6 +191,7 @@ struct pfcp_ue {
 	struct gtp_conn		c;
 	struct list_head	pfcp_sessions;	/* pdn sessions */
 	struct gtp_capture_entry capture;
+	bool			persistent_capture;
 };
 
 /* PFCP session */
@@ -223,8 +224,9 @@ struct pfcp_session {
 	/* I/O MUX */
 	struct thread		*timer;
 
-	/* packet capture */
-	struct gtp_capture_entry capture;
+	/* packets capture */
+	struct gtp_capture_entry sig_cap;
+	struct gtp_capture_entry data_cap;
 
 	/* urr handling */
 	uint8_t			urr_cmd_cur_id;

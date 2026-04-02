@@ -64,6 +64,7 @@ enum node_type {
 	PFCP_ROUTER_NODE,				/* PFCP Router commands. */
 	MAPE_NODE,					/* MAP-E commands. */
 	CPU_SCHED_NODE,					/* CPU Scheduling commands. */
+	CAPTURE_NODE,					/* PCAPNG writer commands. */
 
 	VTY_NODE,					/* Vty node. */
 };

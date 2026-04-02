@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
 #include <sys/uio.h>
 
 #include "xpcapng.h"
@@ -346,8 +345,8 @@ static bool pcapng_write_idb(struct xpcapng_dumper *pd, const char *name,
 }
 
 static bool pcapng_write_epb(struct xpcapng_dumper *pd, uint32_t ifid,
-			     const uint8_t *pkt, uint32_t len,
-			     uint32_t caplen, uint64_t timestamp,
+			     const struct iovec *pkt_iov, int iovcnt,
+			     uint32_t pktlen, uint32_t caplen, uint64_t timestamp,
 			     struct xpcapng_epb_options_s *epb_options)
 {
 	int                                  i = 0;
@@ -357,7 +356,7 @@ static bool pcapng_write_epb(struct xpcapng_dumper *pd, uint32_t ifid,
 	size_t                               epb_length;
 	struct pcapng_enhanced_packet_block  epb;
 	struct pcapng_option                *opt;
-	struct iovec                         iov[7];
+	struct iovec                         iov[7 + iovcnt];
 	static uint8_t                       pad[4] = {0, 0, 0, 0};
 	uint8_t                              options[8 + 12 + 12 + 8 + 16 + 4 + 4];
 					     /* PCAPNG_OPT_EPB_FLAGS[8] +
@@ -415,7 +414,7 @@ static bool pcapng_write_epb(struct xpcapng_dumper *pd, uint32_t ifid,
 	epb.epb_timestamp_hi = timestamp >> 32;
 	epb.epb_timestamp_low = (uint32_t) timestamp;
 	epb.epb_captured_length = caplen;
-	epb.epb_original_length = len;
+	epb.epb_original_length = pktlen;
 
 	/* Add the flag/end option and block_length value */
 	opt = (struct pcapng_option *) options;
@@ -460,8 +459,15 @@ static bool pcapng_write_epb(struct xpcapng_dumper *pd, uint32_t ifid,
 	iov[i++].iov_len = sizeof(epb);
 
 	/* Add Packet Data. */
-	iov[i].iov_base = (void *)pkt;
-	iov[i++].iov_len = caplen;
+	uint32_t remaining = caplen;
+	for (int j = 0; j < iovcnt && remaining > 0; j++) {
+		uint32_t chunk = pkt_iov[j].iov_len;
+		if (chunk > remaining)
+			chunk = remaining;
+		iov[i].iov_base = pkt_iov[j].iov_base;
+		iov[i++].iov_len = chunk;
+		remaining -= chunk;
+	}
 
 	/* Add Packet Data padding if needed. */
 	if (pad_length > 0) {
@@ -526,7 +532,7 @@ struct xpcapng_dumper *xpcapng_dump_open(const char *file,
 	if (strcmp(file, "-") == 0) {
 		pd->pd_fd = STDOUT_FILENO;
 	} else {
-		pd->pd_fd = open(file, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+		pd->pd_fd = open(file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 		if (pd->pd_fd < 0)
 			goto error_exit;
 	}
@@ -579,12 +585,12 @@ int xpcapng_dump_add_interface(struct xpcapng_dumper *pd, uint16_t snap_len,
 }
 
 bool xpcapng_dump_enhanced_pkt(struct xpcapng_dumper *pd, uint32_t ifid,
-			       const uint8_t *pkt, uint32_t len,
-			       uint32_t caplen, uint64_t timestamp,
+			       const struct iovec *pkt_iov, int iovcnt,
+			       uint32_t pktlen, uint32_t caplen, uint64_t timestamp,
 			       struct xpcapng_epb_options_s *options)
 {
 	struct xpcapng_epb_options_s default_options = {};
 
-	return pcapng_write_epb(pd, ifid, pkt, len, caplen, timestamp,
+	return pcapng_write_epb(pd, ifid, pkt_iov, iovcnt, pktlen, caplen, timestamp,
 				options ?: &default_options);
 }

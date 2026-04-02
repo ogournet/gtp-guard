@@ -25,6 +25,8 @@ struct pfcp_msg_type_map {
 	const char *description;
 };
 
+struct gtp_capture_entry;
+
 /* Prototypes */
 const char *pfcp_msgtype2str(int type);
 const char *pfcp_cause2str(int cause);
