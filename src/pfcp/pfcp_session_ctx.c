@@ -906,11 +906,10 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 	u->urr_idx = s->bpf_urr_idx;
 
 	/* Packet capture */
-	u->capture.flags = s->capture.flags &
+	u->capture.flags = s->data_cap.flags &
 		(GTP_CAPTURE_FL_DIRECTION_MASK | GTP_CAPTURE_FL_SIDE_MASK);
-	u->capture.cap_len = s->capture.cap_len;
-	u->capture.entry_id = s->capture.entry_id;
-	s->capture.flags &= ~GTP_CAPTURE_FL_NEED_BPF_UPDATE;
+	u->capture.cap_len = s->data_cap.cap_len;
+	u->capture.entry_id = s->data_cap.entry_id;
 
 	/* Set data-path */
 	if (u->flags & UPF_FWD_FL_EGRESS) {
@@ -955,6 +954,7 @@ pfcp_session_create_fwd_rules(struct pfcp_session *s)
 		p->fwd_rule = new;
 		pfcp_session_set_fwd_rule(s, p);
 	}
+	s->data_cap.flags &= ~GTP_CAPTURE_FL_NEED_BPF_UPDATE;
 
 	return 0;
 }
@@ -1048,12 +1048,13 @@ pfcp_session_update_fwd_rules(struct pfcp_session *s)
 
 		/* Update needed ? */
 		if (!p->action && (!f || !f->action) && (!q || !q->action) &&
-		    !(s->capture.flags & GTP_CAPTURE_FL_NEED_BPF_UPDATE))
+		    !(s->data_cap.flags & GTP_CAPTURE_FL_NEED_BPF_UPDATE))
 			continue;
 
 		r->action = PFCP_ACT_UPDATE;
 		pfcp_session_set_fwd_rule(s, p);
 	}
+	s->data_cap.flags &= ~GTP_CAPTURE_FL_NEED_BPF_UPDATE;
 
 	return 0;
 }

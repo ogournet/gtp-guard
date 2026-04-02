@@ -541,16 +541,16 @@ DEFUN(interface_no_shutdown,
 /* Capture */
 DEFUN(capture_start_interface,
       capture_start_interface_cmd,
-      "capture interface IFNAME start [CAPENTRY side (input|output|both) caplen <32-10000>]",
+      "capture start interface IFNAME [CAPENTRY side (input|output|both) caplen <32-10000>]",
       "Capture menu\n"
+      "Start capture\n"
       "Capture interface submenu\n"
       "Interface name\n"
-      "Start capture\n"
-      "Capture file entry\n"
-      "Capture side, on interface entry and/or exit\n"
-      "Capture on interface ingress/input\n"
-      "Capture on interface egress/output\n"
-      "Capture on interface ingress and egress\n"
+      "Capture file entry name\n"
+      "Capture side (default: input)\n"
+      "Capture on interface input (xdp rx)\n"
+      "Capture on interface output (xdp tx/pass/redirect)\n"
+      "Capture on interface input and output\n"
       "Capture packet max length\n"
       "Value\n")
 {
@@ -594,11 +594,11 @@ DEFUN(capture_start_interface,
 
 DEFUN(capture_stop_interface,
       capture_stop_interface_cmd,
-      "capture interface IFNAME stop",
+      "capture stop interface IFNAME",
       "Capture menu\n"
+      "Stop capture\n"
       "Capture interface submenu\n"
-      "Interface name\n"
-      "Stop capture\n")
+      "Interface name\n")
 {
 	struct gtp_interface *iface = NULL;
 

@@ -24,6 +24,7 @@
 #include <errno.h>
 #include "gtp.h"
 #include "gtp_utils.h"
+#include "gtp_bpf_capture.h"
 #include "pfcp.h"
 #include "pfcp_router.h"
 #include "pfcp_assoc.h"
@@ -332,7 +333,9 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 		goto err;
 	}
 
-	gtp_capture_pkt_in(&s->capture, rcv_pbuff->head, pkt_buffer_len(rcv_pbuff));
+	gtp_capture_data(&s->sig_cap, rcv_pbuff->head, pkt_buffer_len(rcv_pbuff),
+			 addr, (const union addr *)&srv->s.addr,
+			 GTP_CAPTURE_FL_INPUT);
 
 	ret = pfcp_session_create(s, req, addr);
 	if (ret) {
@@ -389,7 +392,9 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	pkt_buffer_free(srv->s.pbuff);
 	srv->s.pbuff = pbuff;
 	if (s != NULL)
-		gtp_capture_pkt_out(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
+		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+				 addr, (const union addr *)&srv->s.addr,
+				 GTP_CAPTURE_FL_OUTPUT);
 	return ret;
 }
 
@@ -419,7 +424,9 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		pfcph->seid = 0;
 		goto reply_now;
 	}
-	gtp_capture_pkt_in(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
+	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+			 addr, (const union addr *)&srv->s.addr,
+			 GTP_CAPTURE_FL_INPUT);
 	pfcph->seid = s->remote_seid.id;
 
 	/* Handle modification message */
@@ -453,7 +460,9 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		log_message(LOG_INFO, "%s(): Error while Appending IEs"
 				    , __FUNCTION__);
 	if (s != NULL)
-		gtp_capture_pkt_out(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
+		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+				 addr, (const union addr *)&srv->s.addr,
+				 GTP_CAPTURE_FL_OUTPUT);
 
 	return ret;
 }
@@ -484,7 +493,9 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		pfcph->seid = 0;
 		goto reply_now;
 	}
-	gtp_capture_pkt_in(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
+	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+			 addr, (const union addr *)&srv->s.addr,
+			 GTP_CAPTURE_FL_INPUT);
 	pfcph->seid = s->remote_seid.id;
 
 	/* Delete URRs, and generate the last report */
@@ -513,7 +524,9 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		log_message(LOG_INFO, "%s(): Error while Appending IEs"
 				    , __FUNCTION__);
 	if (s != NULL)
-		gtp_capture_pkt_out(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
+		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+				 addr, (const union addr *)&srv->s.addr,
+				 GTP_CAPTURE_FL_OUTPUT);
 
 	return ret;
 }
@@ -524,12 +537,23 @@ pfcp_session_report_response(struct pfcp_msg *msg, struct pfcp_server *srv,
 			      union addr *addr)
 {
 	struct pfcp_session_report_response *rsp = msg->session_report_response;
+	struct pkt_buffer *pbuff = srv->s.pbuff;
+	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
+	struct pfcp_session *s = NULL;
 
 	if (rsp->cause->value != PFCP_CAUSE_REQUEST_ACCEPTED)
 		log_message(LOG_INFO, "%s(): remote PFCP peer:'%s' rejection (%s)"
 				    , __FUNCTION__
 				    , inet_sockaddrtos(&addr->ss)
 				    , pfcp_cause2str(rsp->cause->value));
+
+	if (pfcph->s)
+		s = pfcp_session_get(be64toh(pfcph->seid));
+	if (s != NULL)
+		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+				 addr, (const union addr *)&srv->s.addr,
+				 GTP_CAPTURE_FL_INPUT);
+
 	return -1;
 }
 

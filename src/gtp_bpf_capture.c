@@ -21,15 +21,20 @@
 
 #include <unistd.h>
 #include <stdlib.h>
-#include <syslog.h>
 #include <time.h>
+#include <assert.h>
+#include <sys/types.h>
+#include <dirent.h>
 #include <linux/perf_event.h>
 #include <libbpf.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
 
 #include "xpcapng.h"
 #include "utils.h"
+#include "logger.h"
+#include "inet_utils.h"
 #include "command.h"
-#include "table.h"
 #include "config.h"
 #include "gtp_interface.h"
 #include "gtp_bpf_prog.h"
@@ -37,10 +42,13 @@
 #include "bpf/lib/capture-def.h"
 
 
-#define PERF_BUFFER_PAGES		128
+#define PERF_BUFFER_PAGES		256
 
 /* set max number of running captures per bpf program */
 #define CAPTURE_BPF_MAX_ENTRY		8
+
+/* max number of interfaces in pcap file */
+#define CAPTURE_BPF_MAX_INTERFACE	100
 
 
 struct capture_perf_buf_cpu
@@ -56,7 +64,9 @@ struct gtp_bpf_capture_ctx
 {
 	struct list_head		list;
 	struct gtp_bpf_prog		*p;
+	bool				is_tpl;
 
+	/* capturing items */
 	struct gtp_capture_entry	*ae[CAPTURE_BPF_MAX_ENTRY];
 	int				ae_n;
 
@@ -64,6 +74,7 @@ struct gtp_bpf_capture_ctx
 	struct bpf_map			*perf_map;
 	struct perf_buffer		*pb;
 	struct capture_perf_buf_cpu	*apbc;
+	struct thread			*flush_ev;
 	uint64_t			missed_events;
 	uint32_t			last_missed_events;
 
@@ -83,10 +94,10 @@ struct gtp_capture_file
 	char				filename[64];
 	struct gtp_bpf_prog		*p;
 	struct xpcapng_dumper		*pcapng;
+	struct thread			*flush_ev;
 	int				refcnt;
 	bool				running;
 	bool				persist;
-	uint16_t			snaplen;
 
 	uint32_t			pkt_max;
 	uint32_t			duration;	/* in seconds */
@@ -94,6 +105,8 @@ struct gtp_capture_file
 	time_t				until;
 	uint64_t			*cpu_packet_id;
 	int				cpu_packet_id_n;
+	uint64_t			*if2itfidx;
+	uint32_t			if2itfidx_mask;
 
 	struct list_head		list;
 };
@@ -104,16 +117,20 @@ extern struct thread_master *master;
 
 /* config and local data */
 static char cfg_pcap_path[256];
-static int cfg_wakeup_events;
+static int cfg_rotate_file = 5;
+static int cfg_wakeup_events = 64;
 static uint16_t cfg_capture_snaplen = GTP_CAPTURE_DEFAULT_SNAPLEN;
 static uint64_t epoch_delta;
-static struct thread *flush_ev;
 static LIST_HEAD(cfile_list);		/* opened pcap files */
 static LIST_HEAD(bcc_list);		/* running bpf-prog */
+
+/* local forward declaration */
+static struct gtp_bpf_capture_ctx *_alloc_bpf_ctx(struct gtp_bpf_prog *p, bool);
 
 
 /********************************************************************/
 /* perf_buffer */
+
 
 struct perf_sample_raw
 {
@@ -132,7 +149,7 @@ struct perf_sample_lost
 };
 
 static enum bpf_perf_event_ret
-capture_handle_perf_event(void *ctx, int cpu, struct perf_event_header *event)
+capture_perf_event(void *ctx, int cpu, struct perf_event_header *event)
 {
 	struct gtp_bpf_capture_ctx *bcc = ctx;
 	struct gtp_capture_entry *ce;
@@ -174,21 +191,27 @@ capture_handle_perf_event(void *ctx, int cpu, struct perf_event_header *event)
 	options.queue = &queue;
 	options.xdp_verdict = action == -1 ? NULL : &action;
 
-	int if_idx = 0;
-	/* XXX: set if_idx to xpcapng_add_interface index */
+	int itf_idx;
+	uint32_t idx = e->md.ifindex & cf->if2itfidx_mask;
+	while (cf->if2itfidx[idx] && (cf->if2itfidx[idx] >> 32) != e->md.ifindex)
+		idx = (idx + 1) & cf->if2itfidx_mask;
+	itf_idx = cf->if2itfidx[idx] ? cf->if2itfidx[idx] & 0xffffffff : 0;
 
-	xpcapng_dump_enhanced_pkt(cf->pcapng, if_idx, e->packet,
-				  min(cf->snaplen, e->md.pkt_len),
-				  e->md.cap_len, ts, &options);
+	struct iovec pkt_iov = {
+		.iov_base = e->packet,
+		.iov_len = min(e->md.cap_len, e->md.pkt_len)
+	};
+	xpcapng_dump_enhanced_pkt(cf->pcapng, itf_idx, &pkt_iov, 1,
+				  e->md.pkt_len, e->md.cap_len, ts, &options);
 	bcc->last_missed_events = 0;
 
 	cf->pkt_count++;
 	if ((cf->pkt_max && cf->pkt_count >= cf->pkt_max) ||
 	    (cf->until && ts / NSEC_PER_SEC > cf->until)) {
-		printf("stopping capture, pkt: %d/%d, expired:%s (ref:%d)\n",
-		       cf->pkt_count, cf->pkt_max,
-		       cf->until && ts / NSEC_PER_SEC > cf->until ? "yes" : "no",
-		       cf->refcnt);
+		log_message(LOG_DEBUG, "stopping capture, pkt: %d/%d, expired:%s (ref:%d)",
+			    cf->pkt_count, cf->pkt_max,
+			    cf->until && ts / NSEC_PER_SEC > cf->until ? "yes" : "no",
+			    cf->refcnt);
 		cf->running = false;
 	}
 
@@ -202,11 +225,11 @@ capture_perf_consume(struct capture_perf_buf_cpu *pbc)
 
 	ret = perf_buffer__consume_buffer(pbc->pb, pbc->cpu);
 	if (ret && errno != EAGAIN)
-		fprintf(stderr, "perf consume buffer: %m\n");
+		log_message(LOG_ERR, "%s: perf consume buffer: %m", __func__);
 }
 
 /* callback called by thread, when there is something to read on perf buffer's fd.
- * libbpf will handle data and then will call handle_event. */
+ * libbpf will handle data and then will call capture_perf_event() */
 static void
 capture_perf_io_read(struct thread *t)
 {
@@ -217,52 +240,169 @@ capture_perf_io_read(struct thread *t)
 				 THREAD_FD(t), TIMER_NEVER, 0);
 }
 
+static void
+capture_perf_flush(struct thread *th)
+{
+	struct gtp_bpf_capture_ctx *bcc = THREAD_ARG(th);
+	int i;
+
+	for (i = 0; i < perf_buffer__buffer_cnt(bcc->pb); i++)
+		capture_perf_consume(&bcc->apbc[i]);
+	bcc->flush_ev = thread_add_timer(master, capture_perf_flush, bcc, TIMER_HZ);
+}
+
 
 /********************************************************************/
 /* capture_file */
+
+static void capture_file_flush(struct thread *th);
+
+
+static int _filter(const void *a, const void *b)
+{
+	return strcmp(*(const char **)a, *(const char **)b);
+}
+
+/* keep 'cfg_rotate_file' latest capture file, unlink olders */
+static void
+capture_file_rotate(struct gtp_capture_file *cf)
+{
+	char pathname[600];
+	struct dirent *entry;
+	char **fnlist = NULL;
+	int fnlist_msize = cfg_rotate_file;
+	int fnlist_n = 0;
+	int flen, i, n;
+	DIR *d;
+
+	d = opendir(cfg_pcap_path);
+	if (d == NULL)
+		return;
+
+	flen = strlen(cf->filename);
+	cf->filename[flen] = '-';
+	while ((entry = readdir(d)) != NULL) {
+		if (strncmp(entry->d_name, cf->filename, flen + 1))
+			continue;
+
+		if (fnlist == NULL || fnlist_n == fnlist_msize) {
+			fnlist_msize *= 2;
+			fnlist = realloc(fnlist, fnlist_msize * sizeof (char *));
+			if (fnlist == NULL)
+				goto err;
+		}
+		fnlist[fnlist_n] = strdup(entry->d_name);
+		if (fnlist[fnlist_n] == NULL)
+			goto err;
+		fnlist_n++;
+	}
+
+	qsort(fnlist, fnlist_n, sizeof (char *), _filter);
+
+	n = max(0, fnlist_n - cfg_rotate_file + 1);
+	for (i = 0; i < n; i++) {
+		snprintf(pathname, sizeof (pathname), "%s/%s",
+			 cfg_pcap_path, fnlist[i]);
+		unlink(pathname);
+	}
+
+ err:
+	cf->filename[flen] = 0;
+	for (i = 0; i < fnlist_n; i++)
+		free(fnlist[i]);
+	free(fnlist);
+	closedir(d);
+}
 
 static int
 capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 {
 	struct gtp_interface *iface;
-	char pathname[400];
+	char pathname[600];
+	char linkname[400];
 	char ifname[200];
+	struct tm date;
+	time_t now;
+	uint32_t k;
 
 	if (cf->running)
 		return 0;
 	if (cf->p != NULL && cf->p != p)
 		return -1;
 	cf->p = p;
-	cf->snaplen = cfg_capture_snaplen;
 
 	/* set filename from name, if not set */
 	if (!*cf->filename)
 		snprintf(cf->filename, sizeof (cf->filename), "%s", cf->name);
-	snprintf(pathname, sizeof (pathname), "%s/%s.pcap",
-		 cfg_pcap_path, cf->filename);
+
+	if (!cfg_rotate_file) {
+		snprintf(pathname, sizeof (pathname), "%s/%s.pcap",
+			 cfg_pcap_path, cf->filename);
+	} else {
+		/* filename with creation date */
+		now = time(NULL);
+		strftime(ifname, sizeof(ifname), "%y%m%d_%H%M%S",
+			 localtime_r(&now, &date));
+		snprintf(pathname, sizeof (pathname), "%s/%s-%s.pcap",
+			 cfg_pcap_path, cf->filename, ifname);
+
+		/* symlink to it */
+		snprintf(linkname, sizeof (linkname), "%s/%s.pcap",
+			 cfg_pcap_path, cf->filename);
+		unlink(linkname);
+		if (symlink(pathname, linkname) < 0)
+			log_message(LOG_INFO, "symlink{%s}: %m", linkname);
+
+		/* remove file after nth element */
+		capture_file_rotate(cf);
+	}
 
 	/* open pcap */
 	cf->pcapng = xpcapng_dump_open(pathname, NULL, NULL, NULL,
 				       VERSION_STRING);
 	if (cf->pcapng == NULL) {
-		syslog(LOG_ERR, "Can't open PcapNG file for writing!");
+		log_message(LOG_ERR, "Can't open PcapNG file for writing!");
 		return -1;
 	}
 
-	/* XXX: dynamically register to bpf prog's ifaces */
+	/* interfaces are written in pcap file header. once written, it won't
+	 * be modified. if a new interface is added to bpf_prog, then add it
+	 * to special interface 'undefined' */
+	snprintf(ifname, sizeof (ifname), "_undefined");
+	if (xpcapng_dump_add_interface(cf->pcapng, cfg_capture_snaplen,
+				       ifname, NULL, NULL, 0, 9, NULL) < 0) {
+		log_message(LOG_ERR, "Can't add %s interface to PcapNG file!", ifname);
+		goto err;
+	}
+
+	/* use this interface for all packets sent from userspace. do not limit
+	 * capture size */
+	snprintf(ifname, sizeof (ifname), "_protocol");
+	if (xpcapng_dump_add_interface(cf->pcapng, ~0, ifname, NULL, NULL,
+				       0, 9, NULL) < 0) {
+		log_message(LOG_ERR, "Can't add %s interface to PcapNG file!", ifname);
+		goto err;
+	}
+
+	/* add all current bpf_prog's interfaces */
+	k = 2;
 	list_for_each_entry(iface, &p->iface_bind_list, bpf_prog_list) {
+		if (k >= CAPTURE_BPF_MAX_INTERFACE)
+			break;
 		snprintf(ifname, sizeof (ifname), "%s:%s",
 			 p->name, iface->ifname);
 		if (xpcapng_dump_add_interface(cf->pcapng,
 					       cfg_capture_snaplen,
 					       ifname, NULL, NULL,
 					       0, 9, NULL) < 0) {
-			syslog(LOG_ERR, "Can't add %s interface to PcapNG file!",
-				ifname);
-			xpcapng_dump_close(cf->pcapng);
-			cf->pcapng = NULL;
-			return -1;
+			log_message(LOG_ERR, "Can't add %s interface to PcapNG file!",
+				    ifname);
+			goto err;
 		}
+		uint32_t idx = iface->ifindex & cf->if2itfidx_mask;
+		while (cf->if2itfidx[idx])
+			idx = (idx + 1) & cf->if2itfidx_mask;
+		cf->if2itfidx[idx] = ((uint64_t)iface->ifindex << 32ULL) | k++;
 	}
 
 	cf->pkt_count = 0;
@@ -270,10 +410,17 @@ capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 		cf->until = time(NULL) + cf->duration;
 	else
 		cf->until = 0;
+
+	cf->flush_ev = thread_add_timer(master, capture_file_flush, cf, TIMER_HZ);
 	cf->running = true;
-	printf("%s.pcap: capture file started\n", cf->filename);
+	log_message(LOG_DEBUG, "%s.pcap: capture file started", cf->filename);
 
 	return 0;
+
+ err:
+	xpcapng_dump_close(cf->pcapng);
+	cf->pcapng = NULL;
+	return -1;
 }
 
 static void
@@ -285,11 +432,6 @@ capture_file_stop(struct gtp_capture_file *cf)
 	if (!cf->running)
 		return;
 
-	xpcapng_dump_close(cf->pcapng);
-	printf("%s.pcap: capture file closed, wrote %d packets\n",
-	       cf->filename, cf->pkt_count);
-	cf->running = false;
-
 	/* force capture_stop() on each linked gtp_capture_entry */
 	list_for_each_entry(bcc, &bcc_list, list) {
 		for (i = 0; i < CAPTURE_BPF_MAX_ENTRY; i++) {
@@ -298,32 +440,39 @@ capture_file_stop(struct gtp_capture_file *cf)
 
 		}
 	}
+
+	xpcapng_dump_close(cf->pcapng);
+	thread_del(cf->flush_ev);
+	cf->running = false;
 	cf->p = NULL;
+	log_message(LOG_DEBUG, "%s.pcap: capture file closed, wrote %d packets",
+	       cf->filename, cf->pkt_count);
 }
 
 static struct gtp_capture_file *
 capture_file_get(const char *name, bool alloc)
 {
 	struct gtp_capture_file *cf;
+	uint32_t n;
 
-	list_for_each_entry(cf, &cfile_list, list) {
-		if (!strcmp(cf->name, name)) {
-			cf->refcnt++;
+	list_for_each_entry(cf, &cfile_list, list)
+		if (!strcmp(cf->name, name))
 			return cf;
-		}
-	}
+
 	if (!alloc)
 		return NULL;
-
 	cf = calloc(1, sizeof (*cf));
 	if (cf == NULL)
 		return NULL;
 	snprintf(cf->name, sizeof (cf->name), "%s", name);
-	cf->refcnt = 1;
 	cf->cpu_packet_id_n = libbpf_num_possible_cpus();
 	cf->cpu_packet_id = calloc(cf->cpu_packet_id_n + 1,
 				   sizeof (*cf->cpu_packet_id));
-	if (cf->cpu_packet_id == NULL) {
+	n = next_power_of_2(CAPTURE_BPF_MAX_INTERFACE + 4);
+	cf->if2itfidx = calloc(n, sizeof (uint64_t));
+	cf->if2itfidx_mask = n - 1;
+	if (cf->cpu_packet_id == NULL || cf->if2itfidx == NULL) {
+		free(cf->cpu_packet_id);
 		free(cf);
 		return NULL;
 	}
@@ -333,39 +482,45 @@ capture_file_get(const char *name, bool alloc)
 }
 
 static void
-capture_file_put(struct gtp_capture_file *cf)
+capture_file_destroy(struct gtp_capture_file *cf)
 {
-	if (cf->refcnt && --cf->refcnt)
-		return;
 	capture_file_stop(cf);
-	if (!cf->persist) {
-		list_del(&cf->list);
-		free(cf->cpu_packet_id);
-		free(cf);
+	assert(cf->refcnt == 0);
+	list_del(&cf->list);
+	free(cf->if2itfidx);
+	free(cf->cpu_packet_id);
+	free(cf);
+}
+
+static struct gtp_capture_file *
+capture_file_refinc(struct gtp_capture_file *cf)
+{
+	++cf->refcnt;
+	return cf;
+}
+
+static void
+capture_file_refdec(struct gtp_capture_file *cf)
+{
+	if (!--cf->refcnt) {
+		if (cf->persist)
+			capture_file_stop(cf);
+		else
+			capture_file_destroy(cf);
 	}
 }
 
-
 static void
-capture_timer_flush(struct thread *thread)
+capture_file_flush(struct thread *th)
 {
-	struct gtp_bpf_capture_ctx *bcc;
-	struct gtp_capture_file *cf;
-	int i;
+	struct gtp_capture_file *cf = THREAD_ARG(th);
 
-	list_for_each_entry(cf, &cfile_list, list) {
-		if (cf->until && time(NULL) > cf->until)
-			capture_file_stop(cf);
-		if (cf->running)
-			xpcapng_dump_flush(cf->pcapng);
-	}
-
-	list_for_each_entry(bcc, &bcc_list, list) {
-		for (i = 0; i < perf_buffer__buffer_cnt(bcc->pb); i++)
-			capture_perf_consume(&bcc->apbc[i]);
-	}
-
-	flush_ev = thread_add_timer(master, capture_timer_flush, NULL, TIMER_HZ);
+	xpcapng_dump_flush(cf->pcapng);
+	if (cf->until && time(NULL) > cf->until)
+		capture_file_stop(cf);
+	else
+		cf->flush_ev = thread_add_timer(master, capture_file_flush,
+						cf, TIMER_HZ);
 }
 
 
@@ -396,19 +551,19 @@ capture_add_trace_func(struct gtp_bpf_capture_ctx *bcc)
 	/* open our special trace bpf program */
 	bcc->tr_obj = bpf_object__open_file(path, NULL);
 	if (bcc->tr_obj == NULL) {
-		syslog(LOG_NOTICE, "%s: cannot open: %m", path);
+		log_message(LOG_NOTICE, "%s: cannot open: %m", path);
 		return 0;
 	}
 
 	/* locate the fentry and fexit functions */
 	fentry_prg = bpf_object__find_program_by_name(bcc->tr_obj, "entry_trace");
 	if (!fentry_prg) {
-		syslog(LOG_ERR, "Can't find XDP trace fentry function!");
+		log_message(LOG_ERR, "Can't find XDP trace fentry function!");
 		goto err;
 	}
 	fexit_prg = bpf_object__find_program_by_name(bcc->tr_obj, "exit_trace");
 	if (!fexit_prg) {
-		syslog(LOG_ERR, "Can't find XDP trace fexit function!");
+		log_message(LOG_ERR, "Can't find XDP trace fexit function!");
 		goto err;
 	}
 	bpf_program__set_expected_attach_type(fentry_prg, BPF_TRACE_FENTRY);
@@ -418,7 +573,8 @@ capture_add_trace_func(struct gtp_bpf_capture_ctx *bcc)
 	ret = gtp_bpf_lookup_program(p->obj_run, &xprg, BPF_XDP, p->name,
 				     p->xdp_progname, "");
 	if (ret < 0 || xprg == NULL) {
-		syslog(LOG_INFO, "Can't find program in running bfp %s!", p->name);
+		log_message(LOG_INFO, "Can't find program in running bfp %s!",
+			    p->name);
 		goto err;
 	}
 	bpf_program__set_attach_target(fentry_prg, bpf_program__fd(xprg),
@@ -436,26 +592,35 @@ capture_add_trace_func(struct gtp_bpf_capture_ctx *bcc)
 
 	/* reuse perf map from running program, if it exists */
 	map = bpf_object__find_map_by_name(bcc->tr_obj, "capture_perf_map");
-	if (bcc->perf_map == NULL)
+	if (bcc->perf_map == NULL) {
+		if (map == NULL) {
+			log_message(LOG_ERR, "cannot find perf_map");
+			goto err;
+		}
+		if (bpf_map__set_max_entries(map, libbpf_num_possible_cpus())) {
+			log_message(LOG_ERR, "cannot set perf max_entries: %m");
+			goto err;
+		}
 		bcc->perf_map = map;
-	else
+	} else {
 		bpf_map__reuse_fd(map, bpf_map__fd(bcc->perf_map));
+	}
 
 	/* load obj */
 	ret = bpf_object__load(bcc->tr_obj);
 	if (ret) {
-		syslog(LOG_ERR, "%s: cannot load: %m", p->path);
+		log_message(LOG_ERR, "%s: cannot load: %m", p->path);
 		goto err;
 	}
 
 	bcc->fentry_lnk = bpf_program__attach_trace(fentry_prg);
 	if (bcc->fentry_lnk == NULL) {
-		syslog(LOG_ERR, "%s: cannot attach: %m", p->path);
+		log_message(LOG_ERR, "%s: cannot attach: %m", p->path);
 		goto err;
 	}
 	bcc->fexit_lnk = bpf_program__attach_trace(fexit_prg);
 	if (bcc->fexit_lnk == NULL) {
-		syslog(LOG_ERR, "%s: cannot attach: %m", p->path);
+		log_message(LOG_ERR, "%s: cannot attach: %m", p->path);
 		goto err;
 	}
 
@@ -477,7 +642,7 @@ _trace_map_prg_entry_update(struct gtp_bpf_capture_ctx *bcc)
 	ret = bpf_map__update_elem(bcc->cfg_map, &idx, sizeof (idx),
 				   &bcc->prg_entry, sizeof (bcc->prg_entry), 0);
 	if (ret)
-		printf("update map{capture_cfg}: %m\n");
+		log_message(LOG_INFO, "update map{capture_cfg}: %m");
 }
 
 int
@@ -518,40 +683,105 @@ gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 	ret = bpf_map__update_elem(bcc->iface_map, &iface, sizeof (iface),
 				   &be, sizeof (be), 0);
 	if (ret)
-		printf("update map{capture_iface}: %m\n");
+		log_message(LOG_INFO, "update map{capture_iface}: %m");
 
 	if (!(bcc->prg_entry.flags & BPF_CAPTURE_EFL_BY_IFACE)) {
 		bcc->prg_entry.flags |= BPF_CAPTURE_EFL_BY_IFACE;
 		_trace_map_prg_entry_update(bcc);
 	}
 
-	printf("%s: capture started on ifindex %d\n", e->cf->filename, iface);
+	log_message(LOG_DEBUG, "%s: capture started on ifindex %d",
+		    e->cf->filename, iface);
 
 	return 0;
 }
 
 
-
 /********************************************************************/
-/* capture api */
-
 /* capture packet from userspace */
-void
-gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
-		uint16_t flags)
+
+
+static int
+_build_fake_l2l3_hdr(uint8_t *buffer, size_t buflen, size_t payload_len,
+		     const union addr *remote_addr, const union addr *local_addr,
+		     uint16_t flags)
+{
+	struct ethhdr *eth;
+	struct iphdr *iph;
+	struct udphdr *udph;
+	size_t total_len = sizeof(*eth) + sizeof(*iph) + sizeof(*udph);
+	uint8_t *macaddr;
+
+	if (buflen < total_len)
+		return -1;
+
+	if (remote_addr->family != AF_INET || local_addr->family != AF_INET)
+		return -1;
+
+	/* Ethernet header */
+	eth = (struct ethhdr *)buffer;
+	macaddr = flags & GTP_CAPTURE_FL_INPUT ? eth->h_dest : eth->h_source;
+	macaddr[0] = 0;
+	macaddr[1] = 0x24;
+	macaddr[2] = 0xd4;
+	macaddr[3] = 0;
+	macaddr[4] = 0;
+	macaddr[5] = 1;
+	macaddr = flags & GTP_CAPTURE_FL_INPUT ? eth->h_source : eth->h_dest;
+	macaddr[0] = 0xEC;
+	macaddr[1] = 0x0D;
+	macaddr[2] = 0x9d;
+	macaddr[3] = 0;
+	macaddr[4] = 0;
+	macaddr[5] = 2;
+	eth->h_proto = htons(ETH_P_IP);
+
+	/* IP header */
+	iph = (struct iphdr *)(eth + 1);
+	iph->ihl = 5;
+	iph->version = 4;
+	iph->tos = 0;
+	iph->tot_len = htons(sizeof(*iph) + sizeof(*udph) + payload_len);
+	iph->id = htons(0x6666);
+	iph->frag_off = 0;
+	iph->ttl = 64;
+	iph->protocol = IPPROTO_UDP;
+	iph->check = 0;
+	if (flags & GTP_CAPTURE_FL_INPUT) {
+		iph->saddr = addr_toip4(remote_addr);
+		iph->daddr = addr_toip4(local_addr);
+	} else {
+		iph->daddr = addr_toip4(remote_addr);
+		iph->saddr = addr_toip4(local_addr);
+	}
+	iph->check = in_csum((uint16_t *) iph, sizeof(*iph), 0);
+
+	/* UDP header */
+	udph = (struct udphdr *)(iph + 1);
+	if (flags & GTP_CAPTURE_FL_INPUT) {
+		udph->source = htons(addr_get_port(remote_addr));
+		udph->dest = htons(addr_get_port(local_addr));
+	} else {
+		udph->dest = htons(addr_get_port(remote_addr));
+		udph->source = htons(addr_get_port(local_addr));
+	}
+	udph->len = htons(sizeof(*udph) + payload_len);
+	udph->check = 0;
+
+	return total_len;
+}
+
+static void
+_capture_userspace_pkt(struct gtp_capture_entry *e, uint32_t pktlen,
+		       const struct iovec *pkt_iov, int iovcnt, uint16_t flags)
 {
 	struct gtp_capture_file *cf = e->cf;
 	struct xpcapng_epb_options_s options = {};
 	struct timespec ts;
 	uint64_t ns;
-	uint32_t caplen;
-
-	if (!cf->running)
-		return;
 
 	clock_gettime(CLOCK_REALTIME, &ts);
-	ns = ts.tv_sec + ts.tv_nsec * NSEC_PER_SEC ;
-	caplen = min(e->cap_len, cf->snaplen);
+	ns = ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec;
 	++cf->cpu_packet_id[cf->cpu_packet_id_n];
 
 	options.flags = flags & GTP_CAPTURE_FL_INPUT ?
@@ -559,21 +789,64 @@ gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
 	options.dropcount = 0;
 	options.packetid = &cf->cpu_packet_id[cf->cpu_packet_id_n];
 
-	int if_idx = 0;
-	/* XXX: set if_idx to xpcapng_add_interface index */
-
-	xpcapng_dump_enhanced_pkt(cf->pcapng, if_idx, data,
-				  len, caplen, ns, &options);
+	xpcapng_dump_enhanced_pkt(cf->pcapng, 1, pkt_iov, iovcnt,
+				  pktlen, min(pktlen, e->cap_len),
+				  ns, &options);
 
 	cf->pkt_count++;
 	if ((cf->pkt_max && cf->pkt_count >= cf->pkt_max) ||
 	    (cf->until && ns / NSEC_PER_SEC > cf->until)) {
-		printf("stopping capture, pkt: %d/%d, expired:%s (ref:%d)\n",
-		       cf->pkt_count, cf->pkt_max,
-		       cf->until && ns / NSEC_PER_SEC > cf->until ? "yes" : "no",
-		       cf->refcnt);
+		log_message(LOG_DEBUG, "stopping capture, pkt: %d/%d, expired:%s (ref:%d)",
+			    cf->pkt_count, cf->pkt_max,
+			    cf->until && ns / NSEC_PER_SEC > cf->until ? "yes" : "no",
+			    cf->refcnt);
 		cf->running = false;
 	}
+}
+
+
+/********************************************************************/
+/* capture api */
+
+void
+gtp_capture_pkt(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
+		uint16_t flags)
+{
+	struct iovec pkt_iov[1];
+
+	if (e->cf == NULL || !e->flags || !e->cf->running)
+		return;
+
+	pkt_iov[0].iov_base = (void *)data;
+	pkt_iov[0].iov_len = len;
+
+	_capture_userspace_pkt(e, len, pkt_iov, 1, flags);
+
+}
+
+void
+gtp_capture_data(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
+		 const union addr *remote_addr, const union addr *local_addr,
+		 uint16_t flags)
+{
+	struct iovec pkt_iov[2];
+	uint8_t buf[100];
+	int n;
+
+	if (e->cf == NULL || !e->flags || !e->cf->running)
+		return;
+
+	n = _build_fake_l2l3_hdr(buf, sizeof(buf), len,
+				 remote_addr, local_addr, flags);
+	if (n < 0)
+		return;
+
+	pkt_iov[0].iov_base = buf;
+	pkt_iov[0].iov_len = n;
+	pkt_iov[1].iov_base = (void *)data;
+	pkt_iov[1].iov_len = len;
+
+	_capture_userspace_pkt(e, len + n, pkt_iov, 2, flags);
 }
 
 int
@@ -614,23 +887,20 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 		}
 	}
 	if (bcc == NULL) {
-		bcc = calloc(1, sizeof (*bcc));
-		bcc->p = p;
-		bcc->perf_map = bpf_object__find_map_by_name(p->obj_run,
-							     "capture_perf_map");
-		list_add(&bcc->list, &bcc_list);
-
-	} else if (bcc->ae_n == CAPTURE_BPF_MAX_ENTRY) {
-		 /* max running capture */
-		return -1;
+		bcc = _alloc_bpf_ctx(p, false);
+		if (bcc == NULL)
+			return -1;
 	}
-	e->bcc = bcc;
+
+	/* max running capture */
+	if (bcc->ae_n == CAPTURE_BPF_MAX_ENTRY)
+		return -1;
 
 	/* link entry and capture file */
 	cf = capture_file_get(name, true);
 	if (cf == NULL || capture_file_start(cf, p) < 0)
 		goto err;
-	e->cf = cf;
+	e->cf = capture_file_refinc(cf);
 
 	/* link entry and bpf-program capture context */
 	for (i = 0; i < CAPTURE_BPF_MAX_ENTRY; i++)
@@ -640,6 +910,7 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 	e->entry_id = i + 1;
 	e->flags |= GTP_CAPTURE_FL_NEED_BPF_UPDATE;
 	++bcc->ae_n;
+	e->bcc = bcc;
 
 	/* add fentry/fexit trace */
 	if (e->flags & GTP_CAPTURE_FL_USE_TRACEFUNC)
@@ -650,11 +921,6 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 	if (bcc->pb != NULL)
 		goto opened;
 
-	if (bcc->perf_map == NULL) {
-		printf("cannot find bpf map 'capture_perf_map'\n");
-		goto err;
-	}
-
 	/* create perf buffer */
 	struct perf_event_attr perf_attr = {
 		.sample_type = PERF_SAMPLE_RAW | PERF_SAMPLE_TIME,
@@ -664,10 +930,10 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 	};
 	bcc->pb = perf_buffer__new_raw(bpf_map__fd(bcc->perf_map),
 				       PERF_BUFFER_PAGES,
-				       &perf_attr, capture_handle_perf_event,
+				       &perf_attr, capture_perf_event,
 				       bcc, NULL);
 	if (bcc->pb == NULL) {
-		fprintf(stderr, "Failed to open perf buffer: %m\n");
+		log_message(LOG_INFO, "Failed to open perf buffer: %m");
 		goto err;
 	}
 
@@ -681,6 +947,9 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 		pbc->pb = bcc->pb;
 		pbc->cpu = i;
 	}
+	bcc->flush_ev = thread_add_timer(master, capture_perf_flush, bcc, TIMER_HZ);
+	bcc->missed_events = 0;
+	bcc->last_missed_events = 0;
 
  opened:
 	if (e->opened_cb != NULL)
@@ -706,7 +975,7 @@ gtp_capture_stop(struct gtp_capture_entry *e)
 	if (e->cf != NULL) {
 		cf = e->cf;
 		e->cf = NULL;
-		capture_file_put(cf);
+		capture_file_refdec(cf);
 	}
 	if (e->entry_id) {
 		bcc->ae[e->entry_id - 1] = NULL;
@@ -732,71 +1001,145 @@ gtp_capture_stop(struct gtp_capture_entry *e)
 			thread_del(bcc->apbc[i].t);
 		free(bcc->apbc);
 		perf_buffer__free(bcc->pb);
+		bcc->pb = NULL;
 	}
-	list_del(&bcc->list);
-	free(bcc);
-}
-
-int
-gtp_capture_init(void)
-{
-	struct timespec ts;
-	uint64_t epoch, uptime;
-
-	snprintf(cfg_pcap_path, sizeof (cfg_pcap_path), "/tmp");
-	cfg_wakeup_events = 64;
-
-	/* get delta from monotonic to realtime to add in each packet-pcap */
-	if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
-		printf("ERROR: Failed to get CLOCK_MONOTONIC time: %m\n");
-		return -errno;
-	}
-	epoch = time(NULL) * 1000000000ULL;
-	uptime = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
-	epoch_delta = epoch - uptime;
-
-	flush_ev = thread_add_timer(master, capture_timer_flush,
-				    NULL, TIMER_HZ);
-
-	return 0;
-}
-
-void
-gtp_capture_release(void)
-{
-	struct gtp_bpf_capture_ctx *bcc, *bcc_tmp;
-	struct gtp_capture_file *cf, *cf_tmp;
-	struct gtp_capture_entry e = {};
-
-	thread_del(flush_ev);
-
-	/* force bpf-prog context release */
-	list_for_each_entry_safe(bcc, bcc_tmp, &bcc_list, list) {
-		bcc->ae_n = 0;
-		e.bcc = bcc;
-		gtp_capture_stop(&e);
-	}
-
-	list_for_each_entry_safe(cf, cf_tmp, &cfile_list, list) {
-		capture_file_stop(cf);
-		free(cf->cpu_packet_id);
-		free(cf);
+	thread_del(bcc->flush_ev);
+	if (!bcc->is_tpl) {
+		list_del(&bcc->list);
+		free(bcc);
 	}
 }
 
 
 /********************************************************************/
+/* eBPF template */
+
+
+static struct gtp_bpf_capture_ctx *
+_alloc_bpf_ctx(struct gtp_bpf_prog *p, bool is_tpl)
+{
+	struct gtp_bpf_capture_ctx *bcc;
+	struct timespec ts;
+	uint64_t epoch, uptime;
+	static int init_once = 0;
+
+	/* get delta from monotonic to realtime to add in each packet-pcap */
+	if (init_once == 0) {
+		if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
+			log_message(LOG_ERR, "Failed to get CLOCK_MONOTONIC time: %m");
+			return NULL;
+		}
+		epoch = time(NULL) * 1000000000ULL;
+		uptime = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+		epoch_delta = epoch - uptime;
+
+		init_once = 1;
+	}
+
+	bcc = calloc(1, sizeof (*bcc));
+	if (bcc == NULL)
+		return NULL;
+	bcc->p = p;
+	bcc->is_tpl = is_tpl;
+	list_add(&bcc->list, &bcc_list);
+
+	return bcc;
+}
+
+
+static void *
+gtp_bpf_capture_alloc(struct gtp_bpf_prog *p)
+{
+	return _alloc_bpf_ctx(p, true);
+}
+
+static void
+gtp_bpf_capture_release(struct gtp_bpf_prog *p, void *udata)
+{
+	struct gtp_bpf_capture_ctx *bcc = udata;
+
+	list_del(&bcc->list);
+	free(bcc);
+}
+
+static int
+gtp_bpf_capture_prepare(struct gtp_bpf_prog *p, void *udata)
+{
+	struct bpf_map *map;
+
+	map = gtp_bpf_prog_load_map(p->obj_load, "capture_perf_map");
+	if (map == NULL)
+		return -1;
+	if (bpf_map__set_max_entries(map, libbpf_num_possible_cpus())) {
+		log_message(LOG_ERR, "cannot set perf max_entries: %m");
+		return -1;
+	}
+
+	return 0;
+}
+
+static int
+gtp_bpf_capture_loaded(struct gtp_bpf_prog *p, void *udata, bool reload)
+{
+	struct gtp_bpf_capture_ctx *bcc = udata;
+
+	bcc->perf_map = gtp_bpf_prog_load_map(p->obj_load, "capture_perf_map");
+	if (bcc->perf_map == NULL)
+		return -1;
+
+	return 0;
+}
+
+static void
+gtp_bpf_capture_vty(struct gtp_bpf_prog *p, void *udata, struct vty *vty,
+		    int argc, const char **argv)
+{
+	struct gtp_bpf_capture_ctx *bcc = udata;
+	struct gtp_capture_entry *e;
+	int i;
+
+	vty_out(vty, "capture on bpf-prog '%s': ", p->name);
+	if (bcc->pb == NULL) {
+		vty_out(vty, "currently not in use\n");
+		return;
+	}
+	vty_out(vty, "capture entries %d/%d\n",
+		bcc->ae_n, CAPTURE_BPF_MAX_ENTRY);
+
+	for (i = 0; i < CAPTURE_BPF_MAX_ENTRY; i++) {
+		e = bcc->ae[i];
+		if (e == NULL)
+			continue;
+		vty_out(vty, "  [%d] flags:0x%04x caplen:%d pcap:%s\n",
+			i, e->flags, e->cap_len, e->cf ? e->cf->name : "<no pcap>");
+	}
+	vty_out(vty, "perf missed events : %ld\n",
+		bcc->missed_events);
+}
+
+static struct gtp_bpf_prog_tpl gtp_bpf_capture_module = {
+	.name = "capture",
+	.description = "PcapNG capture handler",
+	.alloc = gtp_bpf_capture_alloc,
+	.release = gtp_bpf_capture_release,
+	.prepare = gtp_bpf_capture_prepare,
+	.loaded = gtp_bpf_capture_loaded,
+	.vty_out = gtp_bpf_capture_vty,
+};
+
+
+
+/********************************************************************/
 /* Vty */
+
 
 DEFUN(capture_file_set,
       capture_file_set_cmd,
-      "capture file NAME set [TIME MAXPKT FILENAME]",
+      "capture file set NAME [TIME MAXPKT FILENAME]",
       "Capture menu\n"
-      "Capture file submenu\n"
+      "Capture file configuration\n"
       "Capture file entry name\n"
-      "Add a new capture\n"
-      "Delete existing capture\n"
-      "Update existing capture\n"
+      "Add/Update a capture\n"
       "Time in second before stopping capture (default: 0, unlimited)\n"
       "Packets to write before stopping capture (default: 0, unlimited)\n"
       "Pcap filename to write into\n")
@@ -805,28 +1148,27 @@ DEFUN(capture_file_set,
 
 	cf = capture_file_get(argv[0], true);
 	if (cf == NULL) {
-		vty_out(vty, "%% cannot get capture file %s\n", argv[0]);
+		vty_out(vty, "%% Cannot get capture file %s\n", argv[0]);
 		return CMD_WARNING;
 	}
+	cf->persist = true;
 
-	if (argc > 2)
+	if (argc > 1)
 		cf->duration = atoi(argv[1]);
-	if (argc > 3)
+	if (argc > 2)
 		cf->pkt_max = atoi(argv[2]);
-	if (argc > 4)
+	if (argc > 3)
 		snprintf(cf->filename, sizeof (cf->filename), "%s", argv[3]);
 
-	cf->persist = true;
-	capture_file_put(cf);
 
 	return CMD_SUCCESS;
 }
 
 DEFUN(capture_file_del,
       capture_file_del_cmd,
-      "capture file NAME del",
+      "capture file del NAME",
       "Capture menu\n"
-      "Capture file submenu\n"
+      "Capture file configuration\n"
       "Capture file entry name\n"
       "Delete existing capture\n")
 {
@@ -837,94 +1179,147 @@ DEFUN(capture_file_del,
 		vty_out(vty, "%% Cannot get capture file %s\n", argv[0]);
 		return CMD_WARNING;
 	}
-
-	cf->refcnt = 1;
-	capture_file_stop(cf);
-	cf->persist = false;
-	capture_file_put(cf);
+	capture_file_destroy(cf);
 
 	return CMD_SUCCESS;
 }
 
-DEFUN(capture_file_show,
-      capture_file_show_cmd,
-      "capture file NAME show",
-      "Capture menu\n"
-      "Capture file submenu\n"
-      "Capture file entry name\n"
-      "Show capture\n")
+static void
+_vty_show_cf(struct vty *vty, struct gtp_capture_file *cf)
 {
-	struct gtp_capture_file *cf;
 	struct gtp_bpf_capture_ctx *bcc;
 	char pathname[400];
 	int i;
+
+	vty_out(vty, "capture entry %s\n", cf->name);
+	if (*cf->filename) {
+		if (strcmp(cf->name, cf->filename))
+			vty_out(vty, "filename         : %s\n", cf->filename);
+		snprintf(pathname, sizeof (pathname), "%s/%s.pcap",
+			 cfg_pcap_path, cf->filename);
+		vty_out(vty, "pathname         : %s\n", pathname);
+	}
+	vty_out(vty, "  refcnt         : %d%s\n",
+		cf->refcnt, cf->persist ? " (persist)" : "");
+	vty_out(vty, "  status         : %s\n",
+		cf->running ? "running" : "closed");
+	if (!cf->running)
+		return;
+
+	assert(cf->pcapng != NULL);
+	vty_out(vty, "  bpf-prog link  : %s\n", cf->p->name);
+	if (cf->refcnt) {
+		vty_out(vty, "  referenced from:");
+		bool seen = false;
+		list_for_each_entry(bcc, &bcc_list, list) {
+			for (i = 0; i < CAPTURE_BPF_MAX_ENTRY; i++) {
+				if (bcc->ae[i] != NULL && bcc->ae[i]->cf == cf) {
+					if (!seen) {
+						vty_out(vty, " [%d", i);
+						seen = true;
+					} else {
+						vty_out(vty, ", %d", i);
+					}
+				}
+			}
+			if (seen) {
+				vty_out(vty, "]\n");
+				break;
+			}
+		}
+		if (!seen)
+			vty_out(vty, " <nowhere!>\n");
+	}
+	if (cf->pkt_max)
+		vty_out(vty, "  packet count   : %d / %d\n",
+			cf->pkt_count, cf->pkt_max);
+	else
+		vty_out(vty, "  packet count   : %d\n", cf->pkt_count);
+	if (cf->duration) {
+		vty_out(vty, "  duration       : %d seconds", cf->duration);
+		if (cf->until)
+			vty_out(vty, " (%ld seconds remaining)",
+				cf->until - time(NULL));
+		vty_out(vty, VTY_NEWLINE);
+	}
+	vty_out(vty, "  interface index:\n");
+	for (i = 0; i < cf->if2itfidx_mask + 1; i++)
+		if (cf->if2itfidx[i])
+			vty_out(vty, "    [%d] if-index:%-3d  pcap-itf-idx:%-3d\n",
+				i, (uint32_t)(cf->if2itfidx[i] >> 32ULL),
+				(uint32_t)cf->if2itfidx[i]);
+}
+
+DEFUN(capture_file_show,
+      capture_file_show_cmd,
+      "capture file show [NAME]",
+      "Capture menu\n"
+      "Capture file configuration\n"
+      SHOW_STR
+      "Capture file entry name\n")
+{
+	struct gtp_capture_file *cf;
+
+	if (argc == 0) {
+		list_for_each_entry(cf, &cfile_list, list)
+			_vty_show_cf(vty, cf);
+		return CMD_SUCCESS;
+	}
 
 	cf = capture_file_get(argv[0], false);
 	if (cf == NULL) {
 		vty_out(vty, "%% Cannot get capture file %s\n", argv[0]);
 		return CMD_WARNING;
 	}
+	_vty_show_cf(vty, cf);
 
-	vty_out(vty, "name         : %s\n", cf->name);
-	if (*cf->filename) {
-		if (strcmp(cf->name, cf->filename))
-			vty_out(vty, "filename     : %s\n", cf->filename);
-		snprintf(pathname, sizeof (pathname), "%s/%s.pcap",
-			 cfg_pcap_path, cf->filename);
-		vty_out(vty, "pathname     : %s\n", pathname);
-	}
-	vty_out(vty, "status       : %s\n", cf->running ? "running" : "closed");
-	if (cf->running) {
-		vty_out(vty, "packet count : %d / %d\n",
-			cf->pkt_count, cf->pkt_max);
-		if (cf->until) {
-			vty_out(vty, "remaining  : %ld seconds\n",
-				cf->until - time(NULL));
-		}
-	}
-	if (cf->refcnt == 1)
-		goto out;
-
-	vty_out(vty, "referenced by %d capture entries:\n", cf->refcnt - 1);
-	list_for_each_entry(bcc, &bcc_list, list) {
-		for (i = 0; i < CAPTURE_BPF_MAX_ENTRY; i++) {
-			if (bcc->ae[i] != NULL && bcc->ae[i]->cf == cf)
-				vty_out(vty, "  - %s:%d\n",
-					bcc->p->name, i);
-		}
-	}
-
- out:
-	capture_file_put(cf);
 	return CMD_SUCCESS;
 }
 
 
+DEFUN(capture_entry,
+      capture_entry_cmd,
+      "capture-config",
+      "Configure capture module\n")
+{
+	vty->node = CAPTURE_NODE;
+	return CMD_SUCCESS;
+}
 
 DEFUN(capture_set_record_path,
       capture_set_record_path_cmd,
-      "capture set record-path PATH",
-      "Capture menu\n")
+      "record-path PATH",
+      "set record-path\n")
 {
-	snprintf(cfg_pcap_path, sizeof (cfg_pcap_path), argv[0]);
+	snprintf(cfg_pcap_path, sizeof (cfg_pcap_path), "%s", argv[0]);
 
 	return CMD_SUCCESS;
 }
 
 DEFUN(capture_set_snaplen,
       capture_set_snaplen_cmd,
-      "capture set snaplen <32-65535>",
-      "Capture menu\n")
+      "snaplen <32-65535>",
+      "set snaplen\n")
 {
 	VTY_GET_INTEGER_RANGE("Capture length", cfg_capture_snaplen, argv[0], 32, 65535);
 
 	return CMD_SUCCESS;
 }
 
+DEFUN(capture_set_rotate_file,
+      capture_set_rotate_file_cmd,
+      "rotate <0-100>",
+      "set rotate file count (0: do not rotate)\n")
+{
+	VTY_GET_INTEGER_RANGE("Rotate file", cfg_rotate_file, argv[0], 0, 100);
+
+	return CMD_SUCCESS;
+}
+
 DEFUN(capture_set_wakeup_events,
       capture_set_wakeup_events_cmd,
-      "capture set wakeup-events <1-128>",
-      "Capture menu\n")
+      "wakeup-events <1-128>",
+      "set wakeup-events")
 {
 	VTY_GET_INTEGER_RANGE("Wakeup events", cfg_wakeup_events, argv[0], 1, 128);
 
@@ -932,57 +1327,14 @@ DEFUN(capture_set_wakeup_events,
 }
 
 
-DEFUN(capture_show,
-      capture_show_cmd,
-      "show capture",
-      "show\n"
-      "capture\n")
+static int
+capture_config_write(struct vty *vty)
 {
-	struct gtp_capture_file *cf;
-	struct gtp_bpf_capture_ctx *bcc;
-	int i;
-
-	list_for_each_entry(bcc, &bcc_list, list) {
-		vty_out(vty, "bpf-prog %s:\n", bcc->p->name);
-		for (i = 0; i < CAPTURE_BPF_MAX_ENTRY; i++) {
-			if (bcc->ae[i] == NULL)
-				continue;
-			cf = bcc->ae[i]->cf;
-			vty_out(vty, " - %d %s\n",
-				i, cf ? cf->filename : "<closed>");
-		}
-	}
-
-	return CMD_SUCCESS;
-}
-
-
-DEFUN(capture_show_file,
-      capture_show_file_cmd,
-      "show capture file",
-      "show\n"
-      "capture\n"
-      "name\n")
-{
-	struct gtp_capture_file *cf;
-	struct table *tbl;
-
-	tbl = table_init(6, STYLE_SINGLE_LINE_ROUNDED);
-	table_set_column(tbl, "Name", "Filename", "Refcnt",
-			 "Time", "Packets", "Interface");
-	table_set_header_align(tbl, ALIGN_CENTER, ALIGN_CENTER, ALIGN_CENTER,
-			       ALIGN_CENTER, ALIGN_CENTER, ALIGN_CENTER);
-
-	list_for_each_entry(cf, &cfile_list, list) {
-		table_add_row_fmt(tbl, "%s|%s|%d|%ld|%d/%d|%s",
-				  cf->name, cf->filename, cf->refcnt,
-				  cf->until, cf->pkt_count, cf->pkt_max,
-				  "itf");
-	}
-
-	table_vty_out(tbl, vty);
-	table_destroy(tbl);
-
+	vty_out(vty, "capture-config\n");
+	vty_out(vty, " record-path %s\n", cfg_pcap_path);
+	vty_out(vty, " snaplen %d\n", cfg_capture_snaplen);
+	vty_out(vty, " rotate %d\n", cfg_rotate_file);
+	vty_out(vty, " wakeup-events %d\n", cfg_wakeup_events);
 	return CMD_SUCCESS;
 }
 
@@ -990,24 +1342,52 @@ DEFUN(capture_show_file,
 static int
 cmd_ext_capture_install(void)
 {
+	/* Config commands */
+	install_element(CONFIG_NODE, &capture_entry_cmd);
+
+	install_element(CAPTURE_NODE, &capture_set_record_path_cmd);
+	install_element(CAPTURE_NODE, &capture_set_snaplen_cmd);
+	install_element(CAPTURE_NODE, &capture_set_rotate_file_cmd);
+	install_element(CAPTURE_NODE, &capture_set_wakeup_events_cmd);
+
+	/* Action commands */
 	install_element(ENABLE_NODE, &capture_file_set_cmd);
 	install_element(ENABLE_NODE, &capture_file_del_cmd);
 	install_element(ENABLE_NODE, &capture_file_show_cmd);
-	install_element(ENABLE_NODE, &capture_set_record_path_cmd);
-	install_element(ENABLE_NODE, &capture_set_snaplen_cmd);
-	install_element(ENABLE_NODE, &capture_set_wakeup_events_cmd);
-	install_element(ENABLE_NODE, &capture_show_cmd);
-	install_element(ENABLE_NODE, &capture_show_file_cmd);
 
 	return 0;
 }
 
+struct cmd_node capture_node = {
+	.node = CAPTURE_NODE,
+	.parent_node = CONFIG_NODE,
+	.prompt = "%s(capture)# ",
+	.config_write = capture_config_write,
+};
+
+
 static struct cmd_ext cmd_ext_capture = {
+	.node = &capture_node,
 	.install = cmd_ext_capture_install,
 };
+
+
 
 static void __attribute__((constructor))
 gtp_bpf_capture_init(void)
 {
+	snprintf(cfg_pcap_path, sizeof (cfg_pcap_path), "/tmp");
+
 	cmd_ext_register(&cmd_ext_capture);
+	gtp_bpf_prog_tpl_register(&gtp_bpf_capture_module);
+}
+
+static void __attribute__((destructor))
+gtp_bpf_capture_destroy(void)
+{
+	struct gtp_capture_file *cf, *cf_tmp;
+
+	/* delete persistent capture file */
+ 	list_for_each_entry_safe(cf, cf_tmp, &cfile_list, list)
+		capture_file_destroy(cf);
 }

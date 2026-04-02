@@ -44,7 +44,6 @@ struct {
 
 #include "upf_urr.h"
 
-
 static __always_inline int
 _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
 {
@@ -56,8 +55,8 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
 	int adjust_sz, pkt_len;
 	__u32 csum = 0;
 
-	capture_xdp_to_userspc_in(ctx, &u->capture,
-				  BPF_CAPTURE_EFL_INPUT | BPF_CAPTURE_EFL_CORE);
+	capture_xdp_to_userspc_in(ctx, &u->capture,  BPF_CAPTURE_EFL_INPUT |
+				  BPF_CAPTURE_EFL_CORE);
 
 	uu = bpf_map_lookup_elem(&upf_urr, &u->urr_idx);
 	if (uu == NULL)

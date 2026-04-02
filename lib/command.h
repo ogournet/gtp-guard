@@ -43,6 +43,7 @@ enum node_type {
 	DEBUG_NODE,					/* Debug node. */
 	CFG_LOG_NODE,					/* Configure the logging */
 
+	CAPTURE_NODE,					/* PCAPNG writer commands. */
 	PDN_NODE,					/* PDN daemon commands. */
 	CDRFWD_NODE,					/* CDR-FWD commands. */
 	BPF_PROG_NODE,					/* BPF prog commands. */

@@ -43,7 +43,6 @@ gtp_bpf_rt_metrics_init(struct gtp_bpf_prog *p, int a, int b)
 {
 	return 0;
 }
-
 int
 gtp_netlink_if_lookup(int)
 {
@@ -53,6 +52,10 @@ int
 gtp_netlink_fs_uninstall(void *, void *)
 {
 	return 0;
+}
+void
+gtp_capture_stop(void *p)
+{
 }
 
 /* Local data */

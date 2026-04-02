@@ -290,10 +290,25 @@ DEFUN(clear_pfcp_session,
 /* Capture */
 DEFUN(capture_start_pfcp,
       capture_start_pfcp_cmd,
-      "capture start pfcp (imsi|imei|msisdn) USER "
+      "capture start pfcp (seid|imsi|imei|msisdn) USER "
       "[CAPENTRY side (input|output|access|core|all) caplen <32-10000>]",
       "Capture menu\n"
-      "Capture pfcp submenu\n")
+      "Start capture\n"
+      "Capture pfcp protocol submenu\n"
+      "Capture by SEID\n"
+      "Capture by IMSI\n"
+      "Capture by IMEI\n"
+      "Capture by MSISDN\n"
+      "Capture this user\n"
+      "Capture file entry name\n"
+      "Capture side (default: input)\n"
+      "Capture on input (xdp rx)\n"
+      "Capture on output (xdp tx/pass/redirect)\n"
+      "Capture on acces side (encap in gtp-u)\n"
+      "Capture on core side (plain l3)\n"
+      "Capture on both input and output\n"
+      "Capture packet max length\n"
+      "Value\n")
 {
 	struct gtp_capture_entry cap = {};
 	struct pfcp_session *s;
@@ -301,7 +316,6 @@ DEFUN(capture_start_pfcp,
 	struct pfcp_ue *ue;
 	uint64_t v = atoll(argv[1]);
 	char capname[64];
-	int caplen = 0;
 
 	if (!strcmp(argv[0], "imsi"))
 		c = gtp_conn_get_by_imsi(v);
@@ -309,23 +323,26 @@ DEFUN(capture_start_pfcp,
 		c = gtp_conn_get_by_imei(v);
 	else if (!strcmp(argv[0], "msisdn"))
 		c = gtp_conn_get_by_msisdn(v);
+	else if (!strcmp(argv[0], "seid")) {
+		s = pfcp_session_get(v);
+		c = s ? (s->ue ? &s->ue->c : NULL) : NULL;
+	}
 
 	if (c == NULL) {
 		if (!strcmp(argv[0], "imsi")) {
 			ue = pfcp_ue_alloc(v, 0, 0);
 			if (ue == NULL)
 				return CMD_WARNING;
+			ue->persistent_capture = true;
+			gtp_conn_refinc(&ue->c);
+			vty_out(vty, "user imsi=%s doesn't exist yet, will start "
+				"capture when it will attach\n", argv[1]);
 		} else {
 			vty_out(vty, "%% Cannot find user '%s' by %s\n", argv[1], argv[0]);
 			return CMD_WARNING;
 		}
 	} else {
 		ue = (struct pfcp_ue *)c;
-	}
-
-	if (list_empty(&ue->pfcp_sessions)) {
-		vty_out(vty, "%% No established pfcp session for user %s\n", argv[0]);
-		return CMD_WARNING;
 	}
 
 	if (argc > 2)
@@ -349,14 +366,21 @@ DEFUN(capture_start_pfcp,
 	}
 
 	if (argc > 6)
-		VTY_GET_INTEGER_RANGE("caplen", caplen, argv[6], 32, 10000);
-	cap.cap_len = caplen;
+		VTY_GET_INTEGER_RANGE("caplen", cap.cap_len, argv[6], 32, 10000);
 
+	ue->capture = cap;
 	list_for_each_entry(s, &ue->pfcp_sessions, next) {
-		s->capture = cap;
-		if (gtp_capture_start(&s->capture, s->router->bpf_prog, capname))
-			vty_out(vty, "%% Error starting pfcp trace\n");
+		s->data_cap = cap;
+		if (gtp_capture_start(&s->data_cap, s->router->bpf_prog, capname))
+			vty_out(vty, "%% Error starting pfcp gtp-u trace\n");
 		pfcp_session_update_fwd_rules(s);
+
+		/* on signaling path, we always want full packets and both path */
+		memset(&s->sig_cap, 0x00, sizeof (s->sig_cap));
+		s->sig_cap.flags = GTP_CAPTURE_FL_INPUT | GTP_CAPTURE_FL_OUTPUT;
+		s->sig_cap.cap_len = ~0;
+		if (gtp_capture_start(&s->sig_cap, s->router->bpf_prog, capname))
+			vty_out(vty, "%% Error starting pfcp trace\n");
 	}
 
 	return CMD_SUCCESS;
@@ -366,9 +390,9 @@ DEFUN(capture_stop_pfcp,
       capture_stop_pfcp_cmd,
       "capture stop pfcp (imsi|imei|msisdn) USER",
       "Capture menu\n"
-      "Capture interface submenu\n"
-      "Interface name\n"
-      "Stop capture\n")
+      "Stop capture\n"
+      "Capture pfcp protocol submenu\n"
+      "Interface name\n")
 {
 	struct pfcp_session *s;
 	struct gtp_conn *c = NULL;
@@ -388,8 +412,14 @@ DEFUN(capture_stop_pfcp,
 	}
 
 	ue = (struct pfcp_ue *)c;
+	memset(&ue->capture, 0x00, sizeof (ue->capture));
+	if (ue->persistent_capture) {
+		gtp_conn_refdec(&ue->c);
+		ue->persistent_capture = false;
+	}
 	list_for_each_entry(s, &ue->pfcp_sessions, next) {
-		gtp_capture_stop(&s->capture);
+		gtp_capture_stop(&s->sig_cap);
+		gtp_capture_stop(&s->data_cap);
 		pfcp_session_update_fwd_rules(s);
 	}
 
