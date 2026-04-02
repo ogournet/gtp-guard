@@ -236,6 +236,20 @@ if_rule_parse_pkt(struct xdp_md *ctx, struct if_rule_data *d)
 }
 
 
+static __always_inline void
+_if_rule_output_capture(struct xdp_md *ctx, struct if_rule_data *d,
+			void *data, void *data_end, int action)
+{
+	int i;
+
+#pragma unroll
+	for (i = 0; i < ARRAY_SIZE(d->cap_entries) && d->cap_entries[i]; i++) {
+		capture_xdp_to_userspc(ctx, data, data_end,
+				       d->cap_entries[i], d->cap_len[i],
+				       BPF_CAPTURE_EFL_OUTPUT, action);
+	}
+}
+
 /*
  * rewrite packet according to 'if_rule'. usually the latest
  * call from xdp program.
@@ -252,7 +266,7 @@ if_rule_rewrite_pkt(struct xdp_md *ctx, struct if_rule_data *d)
 	struct if_rule *r = d->r;
 	void *data, *data_end, *payload;
 	struct ethhdr *ethh;
-	int i, fibl_ret, adjust_sz;
+	int fibl_ret, ret, adjust_sz;
 	__u32 flags;
 
 	if (r->force_ifindex) {
@@ -454,17 +468,14 @@ if_rule_rewrite_pkt(struct xdp_md *ctx, struct if_rule_data *d)
 	__builtin_memcpy(ethh->h_source, fibp.smac, ETH_ALEN);
 	__builtin_memcpy(ethh->h_dest, fibp.dmac, ETH_ALEN);
 
-	/* output capture(s) should be done once full headers rewrite is done */
-#pragma unroll
-	for (i = 0; i < ARRAY_SIZE(d->cap_entries) && d->cap_entries[i]; i++) {
-		capture_xdp_to_userspc(ctx, data, data_end,
-				       d->cap_entries[i], d->cap_len[i],
-				       BPF_CAPTURE_EFL_OUTPUT);
+	if (a->ifindex == ctx->ingress_ifindex) {
+		/* output capture(s) should be done once full headers rewrite is done */
+		_if_rule_output_capture(ctx, d, data, data_end, XDP_TX);
+		return XDP_TX;
 	}
 
-	if (a->ifindex == ctx->ingress_ifindex)
-		return XDP_TX;
-
 	/* remember that forwarding must be enabled on input interface ! */
-	return bpf_redirect(a->ifindex, 0);
+	ret = bpf_redirect(a->ifindex, 0);
+	_if_rule_output_capture(ctx, d, data, data_end, ret);
+	return ret;
 }

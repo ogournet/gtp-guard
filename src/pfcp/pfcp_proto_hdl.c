@@ -327,6 +327,8 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 		goto err;
 	}
 
+	gtp_capture_pkt_in(&s->capture, rcv_pbuff->head, pkt_buffer_len(rcv_pbuff));
+
 	ret = pfcp_session_create(s, req, addr);
 	if (ret) {
 		if (errno == ENOSPC) {
@@ -381,6 +383,8 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
  reply_now:
 	pkt_buffer_free(srv->s.pbuff);
 	srv->s.pbuff = pbuff;
+	if (s != NULL)
+		gtp_capture_pkt_out(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
 	return ret;
 }
 
@@ -410,6 +414,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		pfcph->seid = 0;
 		goto reply_now;
 	}
+	gtp_capture_pkt_in(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
 	pfcph->seid = s->remote_seid.id;
 
 	/* Handle modification message */
@@ -442,6 +447,8 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	if (ret)
 		log_message(LOG_INFO, "%s(): Error while Appending IEs"
 				    , __FUNCTION__);
+	if (s != NULL)
+		gtp_capture_pkt_out(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
 
 	return ret;
 }
@@ -472,6 +479,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		pfcph->seid = 0;
 		goto reply_now;
 	}
+	gtp_capture_pkt_in(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
 	pfcph->seid = s->remote_seid.id;
 
 	/* Delete URRs, and generate the last report  */
@@ -499,6 +507,8 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	if (ret)
 		log_message(LOG_INFO, "%s(): Error while Appending IEs"
 				    , __FUNCTION__);
+	if (s != NULL)
+		gtp_capture_pkt_out(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
 
 	return ret;
 }

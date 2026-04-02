@@ -38,6 +38,7 @@ lib_src = files(
   'vty_gauge.c',
   'vty_matrix.c',
   'table.c',
+  'xpcapng.c',
 )
 src += lib_src
 
