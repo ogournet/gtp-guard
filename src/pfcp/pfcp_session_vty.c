@@ -150,6 +150,7 @@ _pfcp_session_pdr_vty(struct vty *vty, struct pfcp_session *s, bool details)
 int
 pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 {
+	struct pfcp_ue *pue = (struct pfcp_ue *)c;
 	struct pfcp_session *s;
 	struct ue_ip_address *ue;
 	struct urr *u;
@@ -159,7 +160,7 @@ pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 	bool details = arg != NULL;
 
 	/* Walk the line */
-	list_for_each_entry(s, &c->pfcp_sessions, next) {
+	list_for_each_entry(s, &pue->pfcp_sessions, next) {
 		if (s->timer) {
 			timeout = s->timer->sands.tv_sec - time_now.tv_sec;
 			snprintf(s->tmp_str, 63, "%ld secs", timeout);
@@ -198,7 +199,8 @@ pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 int
 pfcp_session_summary_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 {
-	struct list_head *l = &c->pfcp_sessions;
+	struct pfcp_ue *ue = (struct pfcp_ue *)c;
+	struct list_head *l = &ue->pfcp_sessions;
 	struct table *tbl = arg;
 	struct pfcp_session *s;
 	time_t timeout = 0;
@@ -280,8 +282,7 @@ DEFUN(clear_pfcp_session,
 		return CMD_WARNING;
 	}
 
-	pfcp_sessions_release(c);
-	gtp_conn_put(c);
+	pfcp_session_ue_release((struct pfcp_ue *)c);
 	return CMD_SUCCESS;
 }
 
@@ -289,7 +290,7 @@ DEFUN(clear_pfcp_session,
 /* Capture */
 DEFUN(capture_start_pfcp,
       capture_start_pfcp_cmd,
-      "capture pfcp (imsi|imei|msisdn) USER start "
+      "capture start pfcp (imsi|imei|msisdn) USER "
       "[CAPENTRY side (input|output|access|core|all) caplen <32-10000>]",
       "Capture menu\n"
       "Capture pfcp submenu\n")
@@ -297,6 +298,7 @@ DEFUN(capture_start_pfcp,
 	struct gtp_capture_entry cap = {};
 	struct pfcp_session *s;
 	struct gtp_conn *c = NULL;
+	struct pfcp_ue *ue;
 	uint64_t v = atoll(argv[1]);
 	char capname[64];
 	int caplen = 0;
@@ -309,11 +311,19 @@ DEFUN(capture_start_pfcp,
 		c = gtp_conn_get_by_msisdn(v);
 
 	if (c == NULL) {
-		vty_out(vty, "%% Cannot find user '%s' by %s\n", argv[1], argv[0]);
-		return CMD_WARNING;
+		if (!strcmp(argv[0], "imsi")) {
+			ue = pfcp_ue_alloc(v, 0, 0);
+			if (ue == NULL)
+				return CMD_WARNING;
+		} else {
+			vty_out(vty, "%% Cannot find user '%s' by %s\n", argv[1], argv[0]);
+			return CMD_WARNING;
+		}
+	} else {
+		ue = (struct pfcp_ue *)c;
 	}
 
-	if (list_empty(&c->pfcp_sessions)) {
+	if (list_empty(&ue->pfcp_sessions)) {
 		vty_out(vty, "%% No established pfcp session for user %s\n", argv[0]);
 		return CMD_WARNING;
 	}
@@ -342,7 +352,7 @@ DEFUN(capture_start_pfcp,
 		VTY_GET_INTEGER_RANGE("caplen", caplen, argv[6], 32, 10000);
 	cap.cap_len = caplen;
 
-	list_for_each_entry(s, &c->pfcp_sessions, next) {
+	list_for_each_entry(s, &ue->pfcp_sessions, next) {
 		s->capture = cap;
 		if (gtp_capture_start(&s->capture, s->router->bpf_prog, capname))
 			vty_out(vty, "%% Error starting pfcp trace\n");
@@ -354,7 +364,7 @@ DEFUN(capture_start_pfcp,
 
 DEFUN(capture_stop_pfcp,
       capture_stop_pfcp_cmd,
-      "capture pfcp (imsi|imei|msisdn) USER stop",
+      "capture stop pfcp (imsi|imei|msisdn) USER",
       "Capture menu\n"
       "Capture interface submenu\n"
       "Interface name\n"
@@ -362,6 +372,7 @@ DEFUN(capture_stop_pfcp,
 {
 	struct pfcp_session *s;
 	struct gtp_conn *c = NULL;
+	struct pfcp_ue *ue;
 	uint64_t v = atoll(argv[1]);
 
 	if (!strcmp(argv[0], "imsi"))
@@ -376,7 +387,8 @@ DEFUN(capture_stop_pfcp,
 		return CMD_WARNING;
 	}
 
-	list_for_each_entry(s, &c->pfcp_sessions, next) {
+	ue = (struct pfcp_ue *)c;
+	list_for_each_entry(s, &ue->pfcp_sessions, next) {
 		gtp_capture_stop(&s->capture);
 		pfcp_session_update_fwd_rules(s);
 	}

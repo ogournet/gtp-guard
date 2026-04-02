@@ -89,7 +89,7 @@ start_gtp(void)
 	cmd_init();
 	vty_init();
 	sort_node();
-	gtp_conn_init();
+	gtp_conn_module_init();
 	gtp_teid_init();
 	gtp_sessions_init();
 

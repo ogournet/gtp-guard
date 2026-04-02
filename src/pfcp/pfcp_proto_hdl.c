@@ -266,7 +266,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	struct pfcp_router *ctx = srv->ctx;
 	struct pfcp_assoc *assoc;
 	struct pfcp_session *s;
-	struct gtp_conn *c;
+	struct pfcp_ue *ue;
 	struct gtp_apn *apn = NULL;
 	struct pfcp_session_establishment_request *req;
 	uint8_t cause = PFCP_CAUSE_REQUEST_ACCEPTED;
@@ -314,12 +314,17 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 		goto err;
 	}
 
-	c = gtp_conn_get_by_imsi(imsi);
-	if (!c)
-		c = gtp_conn_alloc(imsi, imei, msisdn);
+	ue = (struct pfcp_ue *)gtp_conn_get_by_imsi(imsi);
+	if (ue == NULL) {
+		ue = pfcp_ue_alloc(imsi, imei, msisdn);
+		if (ue == NULL) {
+			cause = PFCP_CAUSE_REQUEST_REJECTED;
+			goto err;
+		}
+	}
 
 	/* Create new session */
-	s = pfcp_session_alloc(c, apn, ctx);
+	s = pfcp_session_alloc(ue, apn, ctx);
 	if (!s) {
 		log_message(LOG_INFO, "%s(): Unable to create new session... rejecting..."
 				    , __FUNCTION__);
@@ -482,7 +487,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	gtp_capture_pkt_in(&s->capture, pbuff->head, pkt_buffer_len(pbuff));
 	pfcph->seid = s->remote_seid.id;
 
-	/* Delete URRs, and generate the last report  */
+	/* Delete URRs, and generate the last report */
 	if (s->bpf_urr_idx) {
 		struct upf_urr_cmd_req *uc = pfcp_bpf_urr_alloc_cmd(s);
 		uc->urr_idx = s->bpf_urr_idx;
@@ -500,7 +505,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
  reply_now:
 	/* Recycle header and reset length */
 	pfcp_msg_reset_hlen(pbuff);
-	pfcph->type = PFCP_SESSION_MODIFICATION_RESPONSE;
+	pfcph->type = PFCP_SESSION_DELETION_RESPONSE;
 
 	/* Append Cause IE */
 	ret = pfcp_ie_put_cause(pbuff, cause);

@@ -202,7 +202,6 @@ DEFUN(clear_gtp_session,
 	}
 
 	gtp_sessions_release(c);
-	gtp_conn_put(c);
 	return CMD_SUCCESS;
 }
 
