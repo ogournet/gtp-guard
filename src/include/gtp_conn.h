@@ -44,12 +44,9 @@ struct gtp_conn {
         uint64_t                msisdn;
 	struct sockaddr_in	sgw_addr;
 
-	/* FIXME: maybe use a global dlock here */
 	struct list_head	gtp_sessions;
 	struct list_head	pppoe_sessions;
 	int			pppoe_cnt;
-	struct list_head	pfcp_sessions;
-	int			pfcp_cnt;
 	time_t			ts;
 
 	/* hash stuff */
@@ -62,16 +59,14 @@ struct gtp_conn {
 };
 
 /* Prototypes */
-int gtp_conn_count_read(void);
-int gtp_conn_get(struct gtp_conn *c);
-int gtp_conn_put(struct gtp_conn *c);
 struct gtp_conn *gtp_conn_get_by_imsi(uint64_t imsi);
 struct gtp_conn *gtp_conn_get_by_imei(uint64_t imei);
 struct gtp_conn *gtp_conn_get_by_msisdn(uint64_t msisdn);
 struct gtp_conn *gtp_conn_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn);
-int gtp_conn_hash(struct gtp_conn *c);
-int gtp_conn_unhash(struct gtp_conn *c);
+void gtp_conn_init(struct gtp_conn *c, uint64_t imsi, uint64_t imei, uint64_t msisdn);
+struct gtp_conn *gtp_conn_refinc(struct gtp_conn *c);
+void gtp_conn_refdec(struct gtp_conn *c);
 int gtp_conn_vty(struct vty *vty, int (*vty_conn) (struct vty *, struct gtp_conn *, void *),
 		 uint64_t imsi, void *arg);
-int gtp_conn_init(void);
-int gtp_conn_destroy(void);
+int gtp_conn_module_init(void);
+int gtp_conn_module_destroy(void);

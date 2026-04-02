@@ -356,23 +356,14 @@ gtp_session_free(struct gtp_session *s)
 int
 gtp_session_destroy(struct gtp_session *s)
 {
-	struct gtp_conn *c = s->conn;
-
 	thread_del(s->timer);
 
 	/* Send Delete-Bearer-Request if needed */
 	if (s->action == GTP_ACTION_SEND_DELETE_BEARER_REQUEST)
 		gtp_session_send_delete_bearer(s);
 
+	gtp_conn_refdec(s->conn);
 	gtp_session_free(s);
-
-	/* Release connection if no more sessions */
-	if (__sync_sub_and_fetch(&c->refcnt, 1) == 0) {
-		gtp_conn_unhash(c);
-		log_message(LOG_INFO, "IMSI:%ld - no more sessions - Releasing tracking"
-				    , c->imsi);
-		FREE(c);
-	}
 
 	return 0;
 }
