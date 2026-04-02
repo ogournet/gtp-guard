@@ -260,8 +260,9 @@ static int
 pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 				   union addr *addr)
 {
-	struct pkt_buffer *pbuff = srv->s.pbuff;
-	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
+	struct pkt_buffer *rcv_pbuff = srv->s.pbuff;
+	struct pkt_buffer *pbuff;
+	struct pfcp_hdr *pfcph = (struct pfcp_hdr *)rcv_pbuff->head;
 	struct pfcp_router *ctx = srv->ctx;
 	struct pfcp_assoc *assoc;
 	struct pfcp_session *s;
@@ -270,53 +271,47 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	struct pfcp_session_establishment_request *req;
 	uint8_t cause = PFCP_CAUSE_REQUEST_ACCEPTED;
 	uint64_t imsi, imei, msisdn;
-	int err;
+	int ret;
 
 	req = msg->session_establishment_request;
 
-	/* Recycle header and reset length */
-	pfcp_msg_reset_hlen(pbuff);
-	pfcph->type = PFCP_SESSION_ESTABLISHMENT_RESPONSE;
-
 	if (!pfcph->s) {
-		log_message(LOG_INFO, "%s(): Session-ID is not present... rejecting..."
-				    , __FUNCTION__);
-		return pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_REJECTED);
+		cause = PFCP_CAUSE_MANDATORY_IE_MISSING;
+		pfcph->s = 1;
+		pfcph->seid = 0;
+		goto err;
 	}
 
 	assoc = pfcp_assoc_get_by_ie(req->node_id);
-	if (!assoc)
-		return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-					       PFCP_CAUSE_NO_ESTABLISHED_PFCP_ASSOCIATION);
+	if (!assoc) {
+		cause = PFCP_CAUSE_NO_ESTABLISHED_PFCP_ASSOCIATION;
+		goto err;
+	}
 
 	/* APN selection */
-	if (__test_bit(PFCP_ROUTER_FL_STRICT_APN, &ctx->flags)) {
+	if (__test_bit(PFCP_ROUTER_FL_STRICT_APN, &ctx->flags))
 		apn = pfcp_session_get_apn(req->apn_dnn);
-		if (!apn)
-			return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-						       PFCP_CAUSE_REQUEST_REJECTED);
-	}
 	if (!apn) {
 		log_message(LOG_INFO, "%s(): No APN selected... rejecting..."
 				    , __FUNCTION__);
-		return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-					       PFCP_CAUSE_REQUEST_REJECTED);
+		cause = PFCP_CAUSE_REQUEST_REJECTED;
+		goto err;
 	}
 
 	/* User infos */
 	if (!req->user_id) {
 		log_message(LOG_INFO, "%s(): IE User-ID not present... rejecting..."
 				    , __FUNCTION__);
-		return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-					       PFCP_CAUSE_REQUEST_REJECTED);
+		cause = PFCP_CAUSE_REQUEST_REJECTED;
+		goto err;
 	}
 
-	err = pfcp_ie_decode_user_id(req->user_id, &imsi, &imei, &msisdn);
-	if (err) {
+	ret = pfcp_ie_decode_user_id(req->user_id, &imsi, &imei, &msisdn);
+	if (ret) {
 		log_message(LOG_INFO, "%s(): malformed IE User-ID... rejecting..."
 				    , __FUNCTION__);
-		return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-					       PFCP_CAUSE_REQUEST_REJECTED);
+		cause = PFCP_CAUSE_REQUEST_REJECTED;
+		goto err;
 	}
 
 	c = gtp_conn_get_by_imsi(imsi);
@@ -328,49 +323,65 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	if (!s) {
 		log_message(LOG_INFO, "%s(): Unable to create new session... rejecting..."
 				    , __FUNCTION__);
-		return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-					       PFCP_CAUSE_REQUEST_REJECTED);
+		cause = PFCP_CAUSE_REQUEST_REJECTED;
+		goto err;
 	}
 
-	err = pfcp_session_create(s, req, addr);
-	if (err) {
-		pfcp_session_delete(s);
+	ret = pfcp_session_create(s, req, addr);
+	if (ret) {
 		if (errno == ENOSPC) {
-			pfcph->seid = s->remote_seid.id;
-			return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-						       PFCP_CAUSE_ALL_DYNAMIC_ADDRESS_ARE_OCCUPIED);
-		}
-
-		log_message(LOG_INFO, "%s(): malformed IE Create-PDR... rejecting..."
+			cause = PFCP_CAUSE_ALL_DYNAMIC_ADDRESS_ARE_OCCUPIED;
+		} else {
+			log_message(LOG_INFO, "%s(): malformed IE Create-PDR... rejecting..."
 				    , __FUNCTION__);
-		return pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
-					       PFCP_CAUSE_REQUEST_REJECTED);
+			cause = PFCP_CAUSE_REQUEST_REJECTED;
+		}
+		pfcp_session_delete(s);
+		goto err;
+	}
+
+ err:
+	/* Alloc and copy header to response buffer */
+	pbuff = pkt_buffer_alloc(DEFAULT_PKT_BUFFER_SIZE);
+	if (pbuff == NULL)
+		return -1;
+	memcpy(pbuff->head, rcv_pbuff->head, pfcp_msg_hlen(rcv_pbuff));
+	pfcp_msg_reset_hlen(pbuff);
+	pfcph = (struct pfcp_hdr *)pbuff->head;
+	pfcph->type = PFCP_SESSION_ESTABLISHMENT_RESPONSE;
+
+	/* Append IEs */
+	ret = pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len, cause);
+	if (cause != PFCP_CAUSE_REQUEST_ACCEPTED)
+		goto reply_now;
+
+	ret = (ret) ? : pfcp_ie_put_f_seid(pbuff, htobe64(s->seid), &srv->s.addr);
+	ret = (ret) ? : pfcp_session_put_created_pdr(pbuff, s);
+	ret = (ret) ? : pfcp_session_put_created_traffic_endpoint(pbuff, s);
+	if (ret) {
+		log_message(LOG_INFO, "%s(): Error while Appending IEs"
+				    , __FUNCTION__);
+		pfcp_session_delete(s);
+		pfcp_msg_reset_hlen(pbuff);
+		ret = pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
+					      PFCP_CAUSE_SYSTEM_FAILURE);
+		goto reply_now;
 	}
 
 	/* Update PFCP Header */
 	pfcph->seid = s->remote_seid.id;
 
-	/* Append IEs */
-	err = pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len, cause);
-	err = (err) ? : pfcp_ie_put_f_seid(pbuff, htobe64(s->seid), &srv->s.addr);
-	err = (err) ? : pfcp_session_put_created_pdr(pbuff, s);
-	err = (err) ? : pfcp_session_put_created_traffic_endpoint(pbuff, s);
-	if (err) {
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
-			pfcp_session_delete(s);
-		return -1;
-	}
-
 	/* Some urr commands are still pending, delay reply */
 	if (!list_empty(&s->urr_cmd_pending_list)) {
 		s->pending_addr = *addr;
-		s->pending_pbuff = srv->s.pbuff;
-		srv->s.pbuff = NULL;
+		s->pending_pbuff = pbuff;
 		return PFCP_ROUTER_DELAYED;
 	}
 
-	return 0;
+ reply_now:
+	pkt_buffer_free(srv->s.pbuff);
+	srv->s.pbuff = pbuff;
+	return ret;
 }
 
 /* Session modification */
@@ -380,68 +391,59 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
-	struct pfcp_session_modification_request *req;
-	uint8_t cause = PFCP_CAUSE_REQUEST_ACCEPTED;
 	struct pfcp_session *s;
-	int err;
+	uint8_t cause = PFCP_CAUSE_REQUEST_REJECTED;
+	int ret;
 
-	req = msg->session_modification_request;
-
-	/* Recycle header and reset length */
-	pfcp_msg_reset_hlen(pbuff);
-	pfcph->type = PFCP_SESSION_MODIFICATION_RESPONSE;
-
+	/* Retrieve pfcp session */
 	if (!pfcph->s) {
-		log_message(LOG_INFO, "%s(): Session-ID is not present... rejecting..."
-				    , __FUNCTION__);
-		return pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_REJECTED);
+		cause = PFCP_CAUSE_MANDATORY_IE_MISSING;
+		pfcph->s = 1;
+		pfcph->seid = 0;
+		goto reply_now;
 	}
-
 	s = pfcp_session_get(be64toh(pfcph->seid));
 	if (!s) {
-		log_message(LOG_INFO, "%s(): Unknown Session-ID:0x%" PRIx64 "... rejecting..."
+		log_message(LOG_INFO, "%s(): Unknown Session-ID:0x%" PRIx64
 				    , __FUNCTION__, be64toh(pfcph->seid));
-		return pfcp_ie_put_cause(pbuff, PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND);
+		cause = PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
+		pfcph->seid = 0;
+		goto reply_now;
 	}
 	pfcph->seid = s->remote_seid.id;
 
-	err = pfcp_session_modify(s, req);
-	if (err) {
-		log_message(LOG_INFO, "%s(): malformed Modification request... rejecting..."
+	/* Handle modification message */
+	if (msg->session_modification_request == NULL)
+		goto reply_now;
+	ret = pfcp_session_modify(s, msg->session_modification_request);
+	if (ret) {
+		log_message(LOG_INFO, "%s(): malformed Modification request...."
 				    , __FUNCTION__);
-		return pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_REJECTED);
-	}
-
-	/* URR query ? */
-	if ((req->pfcpsmreq_flags && req->pfcpsmreq_flags->qaurr) || req->nr_query_urr) {
-		/* handle request before recycle buffer mangling */
-		pfcp_session_report_put_modification(NULL, s, req);
-
-		err = pfcp_ie_put_additional_usage_reports_info(pbuff, true, 0);
-		if (err) {
-			log_message(LOG_INFO, "%s(): Error while adding AURI IE"
-					    , __FUNCTION__);
-			return -1;
-		}
-	}
-
-	/* Append IEs */
-	err = pfcp_ie_put_cause(pbuff, cause);
-	if (err) {
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
-		return -1;
+		goto reply_now;
 	}
 
 	/* Some urr commands are still pending, delay reply */
 	if (!list_empty(&s->urr_cmd_pending_list)) {
 		s->pending_addr = *addr;
-		s->pending_pbuff = srv->s.pbuff;
+		s->pending_pbuff = pbuff;
 		srv->s.pbuff = NULL;
 		return PFCP_ROUTER_DELAYED;
 	}
 
-	return 0;
+	cause = PFCP_CAUSE_REQUEST_ACCEPTED;
+
+ reply_now:
+	/* Recycle header and reset length */
+	pfcp_msg_reset_hlen(pbuff);
+	pfcph->type = PFCP_SESSION_MODIFICATION_RESPONSE;
+
+	/* Append Cause IE */
+	ret = pfcp_ie_put_cause(pbuff, cause);
+	if (ret)
+		log_message(LOG_INFO, "%s(): Error while Appending IEs"
+				    , __FUNCTION__);
+
+	return ret;
 }
 
 /* Session deletion */
@@ -451,38 +453,28 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
-	uint8_t cause = PFCP_CAUSE_REQUEST_ACCEPTED;
 	struct pfcp_session *s;
-	int err;
+	uint8_t cause = PFCP_CAUSE_REQUEST_REJECTED;
+	int ret;
 
-	/* Recycle header and reset length */
-	pfcp_msg_reset_hlen(pbuff);
-	pfcph->type = PFCP_SESSION_DELETION_RESPONSE;
-
+	/* Retrieve pfcp session */
 	if (!pfcph->s) {
-		log_message(LOG_INFO, "%s(): Session-ID is not present... rejecting..."
-				    , __FUNCTION__);
-		return pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_REJECTED);
+		cause = PFCP_CAUSE_MANDATORY_IE_MISSING;
+		pfcph->s = 1;
+		pfcph->seid = 0;
+		goto reply_now;
 	}
-
 	s = pfcp_session_get(be64toh(pfcph->seid));
 	if (!s) {
-		log_message(LOG_INFO, "%s(): Unknown Session-ID:0x%" PRIx64 "... rejecting..."
+		log_message(LOG_INFO, "%s(): Unknown Session-ID:0x%" PRIx64
 				    , __FUNCTION__, be64toh(pfcph->seid));
-		return pfcp_ie_put_cause(pbuff, PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND);
+		cause = PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
+		pfcph->seid = 0;
+		goto reply_now;
 	}
-
 	pfcph->seid = s->remote_seid.id;
 
-	/* Append IEs */
-	err = pfcp_ie_put_cause(pbuff, cause);
-	if (err) {
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
-		return -1;
-	}
-
-	/* Delete URRs, and generate the latest report  */
+	/* Delete URRs, and generate the last report  */
 	if (s->bpf_urr_idx) {
 		struct upf_urr_cmd_req *uc = pfcp_bpf_urr_alloc_cmd(s);
 		uc->urr_idx = s->bpf_urr_idx;
@@ -492,19 +484,23 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		s->pending_addr = *addr;
 		s->pending_pbuff = srv->s.pbuff;
 		srv->s.pbuff = NULL;
-
 		return PFCP_ROUTER_DELAYED;
 	}
 
-	err = pfcp_session_report_put_deletion(pbuff, s);
-	if (err) {
+	cause = PFCP_CAUSE_REQUEST_ACCEPTED;
+
+ reply_now:
+	/* Recycle header and reset length */
+	pfcp_msg_reset_hlen(pbuff);
+	pfcph->type = PFCP_SESSION_MODIFICATION_RESPONSE;
+
+	/* Append Cause IE */
+	ret = pfcp_ie_put_cause(pbuff, cause);
+	if (ret)
 		log_message(LOG_INFO, "%s(): Error while Appending IEs"
 				    , __FUNCTION__);
-		return -1;
-	}
-	pfcp_session_destroy(s);
 
-	return 0;
+	return ret;
 }
 
 /* Session Report Response */
