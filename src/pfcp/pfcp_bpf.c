@@ -665,7 +665,7 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 		}
 
 		inet_server_snd(&s->router->s.s, s->router->s.s.fd, pbuff,
-				&s->pending_addr.sin);
+				&s->pending_addr);
 		pkt_buffer_free(pbuff);
 		s->pending_pbuff = NULL;
 

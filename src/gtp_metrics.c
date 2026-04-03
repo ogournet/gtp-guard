@@ -172,10 +172,10 @@ gtp_metrics_cnx_process(struct inet_cnx *c)
 int
 gtp_metrics_srv_prepare(struct inet_server *s)
 {
-	struct sockaddr_storage	*addr = &s->addr;
+	union addr *addr = &s->bind_addr;
 
-	if (addr->ss_family == AF_UNIX)
-		unlink(((struct sockaddr_un *) addr)->sun_path);
+	if (addr->family == AF_UNIX)
+		unlink(addr->sun.sun_path);
 
 	return 0;
 }

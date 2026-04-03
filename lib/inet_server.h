@@ -16,7 +16,7 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #pragma once
@@ -28,6 +28,7 @@
 #include "gtp_stddef.h"
 #include "vty.h"
 #include "thread.h"
+#include "addr.h"
 #include "pkt_buffer.h"
 
 
@@ -51,7 +52,7 @@ enum inet_server_flags {
 struct inet_cnx {
 	pthread_t		task;
 	pthread_attr_t		task_attr;
-	struct sockaddr_storage	addr;
+	union addr		remote_addr;
 	int                     fd;
 	FILE			*fp;
 	uint32_t                id;
@@ -84,7 +85,7 @@ struct inet_worker {
 };
 
 struct inet_server {
-	struct sockaddr_storage	addr;
+	union addr		bind_addr;
 	char			if_boundto[GTP_NAME_MAX_LEN];
 	int			type;		/* SOCK_DGRAM or SOCK_STREAM */
 
@@ -105,7 +106,7 @@ struct inet_server {
 	int (*init) (struct inet_server *);
 	int (*snd) (struct inet_server *, struct pkt_buffer *, ssize_t);
 	int (*rcv) (struct inet_server *, ssize_t);
-	int (*process) (struct inet_server *, struct sockaddr_storage *);
+	int (*process) (struct inet_server *, union addr *);
 	int (*destroy) (struct inet_server *);
 	int (*cnx_init) (struct inet_cnx *);
 	int (*cnx_destroy) (struct inet_cnx *);
@@ -125,7 +126,7 @@ struct inet_server {
 /* Prototypes */
 int inet_server_vty(struct vty *vty, const char *type_str, struct inet_server *srv);
 ssize_t inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
-			struct sockaddr_in *addr);
+			const union addr *addr);
 ssize_t inet_http_read(struct inet_cnx *c);
 int inet_server_start(struct inet_server *s, struct thread_master *m);
 int inet_server_init(struct inet_server *s, int type);

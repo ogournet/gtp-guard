@@ -129,7 +129,7 @@ DEFUN(gtpc_router_tunnel_endpoint,
 {
 	struct gtp_router *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpc;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	struct sockaddr_storage *addr = &srv->s.bind_addr.ss;
 	int port = 2123, err = 0;
 
 	if (argc < 1) {
@@ -188,7 +188,7 @@ DEFUN(gtpu_router_tunnel_endpoint,
 {
 	struct gtp_router *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpu;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	struct sockaddr_storage *addr = &srv->s.bind_addr.ss;
 	int port = GTP_U_PORT, err = 0;
 
 	if (argc < 1) {
@@ -281,8 +281,8 @@ vty_server(struct vty *vty, struct gtp_server *srv, const char *gtplane)
 		     "   flags:0x%lx (%s)%s"
 		     "   rx:%"PRIu64"packets %"PRIu64"bytes | tx:%"PRIu64"packets %"PRIu64"bytes%s"
 		   , gtplane
-		   , inet_sockaddrtos(&srv->s.addr)
-		   , ntohs(inet_sockaddrport(&srv->s.addr))
+		   , inet_sockaddrtos(&srv->s.bind_addr.ss)
+		   , ntohs(inet_sockaddrport(&srv->s.bind_addr.ss))
 		   , VTY_NEWLINE
 		   , srv->flags, gtp_flags2str(flags2str, sizeof(flags2str), srv->flags)
 		   , VTY_NEWLINE

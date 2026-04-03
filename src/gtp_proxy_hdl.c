@@ -202,7 +202,7 @@ gtpu_error_indication_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
 
 	/* xlat TEID */
 	*f_teid.teid_grekey = htonl(teid->vid);
-	*f_teid.ipv4 = ((struct sockaddr_in *) &srv->s.addr)->sin_addr.s_addr;
+	*f_teid.ipv4 = ((struct sockaddr_in *) &srv->s.bind_addr)->sin_addr.s_addr;
 
 	/* Finaly set addr back to linked peer */
 	((struct sockaddr_in *) addr)->sin_addr.s_addr = pteid->ipv4;

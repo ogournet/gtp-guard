@@ -95,8 +95,8 @@ gtp_request_json_parse_cmd(struct inet_cnx *c, struct json_node *json)
 			    , __FUNCTION__
 			    , imsi_str
 			    ,  NIPQUAD(conn->sgw_addr.sin_addr.s_addr)
-			    , inet_sockaddrtos2(&c->addr, addr_str)
-			    , ntohs(inet_sockaddrport(&c->addr)));
+			    , inet_sockaddrtos2(&c->remote_addr.ss, addr_str)
+			    , ntohs(inet_sockaddrport(&c->remote_addr.ss)));
 
   end:
 	jsonw_end_object(jwriter);

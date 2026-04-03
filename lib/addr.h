@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <netinet/in.h>
+#include <sys/un.h>
 #include <linux/if_packet.h>
 
 #ifdef __cplusplus
@@ -18,6 +19,7 @@ union addr
 	struct sockaddr_in sin;		/* AF_INET */
 	struct sockaddr_in6 sin6;	/* AF_INET6 */
 	struct sockaddr_ll sll;		/* AF_PACKET */
+	struct sockaddr_un sun;		/* AF_UNIX */
 	struct sockaddr_storage ss;
 };
 

@@ -94,27 +94,27 @@ gtp_proxy_ingress_init(struct inet_server *srv)
 }
 
 int
-gtp_proxy_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr_from)
+gtp_proxy_ingress_process(struct inet_server *srv, union addr *addr_from)
 {
 	struct gtp_server *s = srv->ctx;
 	struct gtp_proxy *ctx = s->ctx;
 	struct gtp_server *s_egress = &ctx->gtpc_egress;
-	struct sockaddr_in addr_to;
+	union addr addr_to;
 	struct gtp_teid *teid;
 	int fd = srv->fd;
 
 	/* GTP-U handling */
 	if (__test_bit(GTP_FL_UPF_BIT, &s->flags)) {
-		teid = gtpu_proxy_handle(s, addr_from);
+		teid = gtpu_proxy_handle(s, &addr_from->ss);
 		if (!teid)
 			return -1;
 
-		inet_server_snd(srv, srv->fd, srv->pbuff, (struct sockaddr_in *) addr_from);
+		inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 		return 0;
 	}
 
 	/* GTP-C handling */
-	teid = gtpc_proxy_handle(s, addr_from);
+	teid = gtpc_proxy_handle(s, &addr_from->ss);
 	if (!teid)
 		return -1;
 
@@ -128,9 +128,9 @@ gtp_proxy_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr
 	}
 
 	/* Set destination address */
-	gtp_proxy_fwd_addr_get(teid, addr_from, &addr_to);
+	gtp_proxy_fwd_addr_get(teid, &addr_from->ss, &addr_to.sin);
 	inet_server_snd(srv, TEID_IS_DUMMY(teid) ? srv->fd : fd, srv->pbuff,
-			TEID_IS_DUMMY(teid) ? (struct sockaddr_in *) addr_from : &addr_to);
+			TEID_IS_DUMMY(teid) ? addr_from : &addr_to);
 	gtpc_proxy_handle_post(s, teid);
 
 	return 0;
@@ -178,8 +178,8 @@ _set_tun_rules(struct gtp_proxy *ctx, bool add, bool ingress, uint32_t addr)
 	    ctx->ipip_xlat == 3)
 		xlat_after = true;
 
-	if (ingress || (local = inet_sockaddrip4(&ctx->gtpu_egress.s.addr)) == (uint32_t)-1)
-		local = inet_sockaddrip4(&ctx->gtpu.s.addr);
+	if (ingress || (local = inet_sockaddrip4(&ctx->gtpu_egress.s.bind_addr.ss)) == (uint32_t)-1)
+		local = inet_sockaddrip4(&ctx->gtpu.s.bind_addr.ss);
 
 	/* rule to put into tunnel */
 	struct if_rule_key k = {

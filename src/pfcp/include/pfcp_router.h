@@ -95,10 +95,10 @@ void pfcp_peer_list_ctx_destroy(struct pfcp_peer_list *ctx);
 void pfcp_peer_list_destroy(void);
 int pfcp_gtpu_ingress_init(struct inet_server *srv);
 int pfcp_gtpu_ingress_process(struct inet_server *srv,
-			      struct sockaddr_storage *addr_from);
+			      union addr *addr_from);
 int pfcp_router_ingress_init(struct inet_server *srv);
 int pfcp_router_ingress_process(struct inet_server *srv,
-				struct sockaddr_storage *addr_from);
+				union addr *addr_from);
 size_t pfcp_router_dump(struct pfcp_router *ctx, char *buffer, size_t bsize);
 bool pfcp_router_inuse(void);
 void pfcp_router_foreach(int (*hdl) (struct pfcp_router *, void *), void *arg);

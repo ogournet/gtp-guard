@@ -136,7 +136,7 @@ gtpu_teid_create(struct gtp_server *srv, struct gtp_session *s, int direction, v
 	struct gtp_teid *teid, *pteid;
 
 	teid = gtpu_teid_add(srv, s, direction, bearer_id, ie_buffer);
-	pteid = gtpu_teid_alloc_peer(teid, inet_sockaddrip4(&srv->s.addr), bearer_id, &srv->s.seed);
+	pteid = gtpu_teid_alloc_peer(teid, inet_sockaddrip4(&srv->s.bind_addr.ss), bearer_id, &srv->s.seed);
 	gtp_teid_set(srv, s, pteid, GTP_TEID_U, !direction);
 	return teid;
 }
@@ -183,7 +183,7 @@ gtpc_teid_create(struct gtp_server *srv, struct gtp_session *s, struct gtp_msg *
 		teid = gtp_teid_create(srv, s, GTP_TEID_C, GTP_INGRESS, &f_teid, NULL);
 		if (create_peer) {
 			pteid = gtpc_teid_alloc_peer(teid,
-						     inet_sockaddrip4(&srv->s.addr),
+						     inet_sockaddrip4(&srv->s.bind_addr.ss),
 						     NULL, &srv->s.seed);
 			gtp_teid_set(srv, s, pteid, GTP_TEID_C, GTP_EGRESS);
 		}
@@ -746,7 +746,7 @@ gtpc_send_delete_bearer_request(struct gtp_teid *teid)
 {
 	struct gtp_session *s = teid->session;
 	struct gtp_server *srv = s->srv;
-	struct sockaddr_in addr;
+	union addr addr;
 	struct pkt_buffer *pbuff;
 	int ret;
 
@@ -755,9 +755,9 @@ gtpc_send_delete_bearer_request(struct gtp_teid *teid)
 	if (ret < 0)
 		return -1;
 
-	addr = teid->sgw_addr;
-	addr.sin_port = htons(GTP_C_PORT);
-	inet_server_snd(&srv->s, srv->s.fd, pbuff, (struct sockaddr_in*) &addr);
+	addr.sin = teid->sgw_addr;
+	addr.sin.sin_port = htons(GTP_C_PORT);
+	inet_server_snd(&srv->s, srv->s.fd, pbuff, &addr);
 	pkt_buffer_free(pbuff);
 	return 0;
 }
@@ -805,7 +805,7 @@ gtpc_pppoe_tlf(struct sppp *sp)
 		gtpc_build_errmsg(pbuff, teid, GTP_CREATE_SESSION_RESPONSE_TYPE
 					     , GTP_CAUSE_USER_AUTH_FAILED);
 		inet_server_snd(&srv->s, srv->s.fd, pbuff,
-				(struct sockaddr_in *) &s->gtpc_peer_addr);
+				(union addr *)&s->gtpc_peer_addr);
 
 		pkt_buffer_free(pbuff);
 
@@ -879,8 +879,7 @@ gtpc_pppoe_create_session_response(struct sppp *sp)
 			    , NIPQUAD(s_gtp->ipv4));
 
 end:
-	inet_server_snd(&srv->s, srv->s.fd, pbuff,
-			(struct sockaddr_in *) &s->gtpc_peer_addr);
+	inet_server_snd(&srv->s, srv->s.fd, pbuff, (union addr *)&s->gtpc_peer_addr);
 	pkt_buffer_free(pbuff);
 }
 
@@ -1143,7 +1142,7 @@ gtpc_delete_session_request_hdl(struct gtp_server *srv, struct sockaddr_storage 
 	if (!msg)
 		return -1;
 
-	teid = _gtpc_teid_get(h->teid, inet_sockaddrip4(&srv->s.addr));
+	teid = _gtpc_teid_get(h->teid, inet_sockaddrip4(&srv->s.bind_addr.ss));
 	if (!teid) {
 		rc = gtpc_build_errmsg(srv->s.pbuff, NULL
 						   , GTP_DELETE_SESSION_RESPONSE_TYPE
@@ -1219,7 +1218,7 @@ gtpc_modify_bearer_request_hdl(struct gtp_server *srv, struct sockaddr_storage *
 	if (!msg)
 		return -1;
 
-	teid = _gtpc_teid_get(h->teid, inet_sockaddrip4(&srv->s.addr));
+	teid = _gtpc_teid_get(h->teid, inet_sockaddrip4(&srv->s.bind_addr.ss));
 	if (!teid) {
 		log_message(LOG_INFO, "%s(): Unknown TEID 0x%.8x..."
 				    , __FUNCTION__
@@ -1292,7 +1291,7 @@ gtpc_change_notification_request_hdl(struct gtp_server *srv, struct sockaddr_sto
 	if (!msg)
 		return -1;
 
-	teid = _gtpc_teid_get(h->teid, inet_sockaddrip4(&srv->s.addr));
+	teid = _gtpc_teid_get(h->teid, inet_sockaddrip4(&srv->s.bind_addr.ss));
 	if (!teid) {
 		log_message(LOG_INFO, "%s(): Unknown TEID 0x%.8x..."
 				    , __FUNCTION__

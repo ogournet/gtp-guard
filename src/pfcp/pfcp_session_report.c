@@ -83,8 +83,8 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	if (!p) {
 		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server [%s]:%d"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(&srv->s.addr)
-				    , ntohs(inet_sockaddrport(&srv->s.addr)));
+				    , inet_sockaddrtos(&srv->s.bind_addr.ss)
+				    , ntohs(inet_sockaddrport(&srv->s.bind_addr.ss)));
 		return;
 	}
 
@@ -109,13 +109,13 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	if (err) {
 		log_message(LOG_INFO, "%s(): Error building report pkt for server [%s]:%d"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(&srv->s.addr)
-				    , ntohs(inet_sockaddrport(&srv->s.addr)));
+				    , inet_sockaddrtos(&srv->s.bind_addr.ss)
+				    , ntohs(inet_sockaddrport(&srv->s.bind_addr.ss)));
 		goto end;
 	}
 
 	/* Run, Baby, Run */
-	inet_server_snd(&srv->s, srv->s.fd, pbuff, &s->remote_seid.addr.sin);
+	inet_server_snd(&srv->s, srv->s.fd, pbuff, &s->remote_seid.addr);
 end:
 	__pkt_queue_put(&srv->pkt_q, p);
 }

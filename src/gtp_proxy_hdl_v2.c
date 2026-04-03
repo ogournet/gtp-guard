@@ -69,8 +69,8 @@ gtp_create_teid(uint8_t type, int direction, struct gtp_server *srv,
 	/* Determine if this is related to an existing VTEID.
 	 * If so need to restore original TEID related, otherwise
 	 * create a new VTEID */
-	if ((*f_teid->ipv4 == ((struct sockaddr_in *) &srv_gtpc_ingress->s.addr)->sin_addr.s_addr) ||
-	    (*f_teid->ipv4 == ((struct sockaddr_in *) &srv_gtpc_egress->s.addr)->sin_addr.s_addr)) {
+	if ((*f_teid->ipv4 == ((struct sockaddr_in *) &srv_gtpc_ingress->s.bind_addr)->sin_addr.s_addr) ||
+	    (*f_teid->ipv4 == ((struct sockaddr_in *) &srv_gtpc_egress->s.bind_addr)->sin_addr.s_addr)) {
 		teid = gtp_vteid_get(ctx->vteid_tab, ntohl(*f_teid->teid_grekey));
 		if (!teid)
 			return NULL;
@@ -113,7 +113,7 @@ gtp_create_teid(uint8_t type, int direction, struct gtp_server *srv,
 		    __test_bit(GTP_TEID_FL_INGRESS, &teid->flags))
 			ssrv = srv_gtpc_egress;
 	}
-	gtp_teid_masq(f_teid, &ssrv->s.addr, teid->vid);
+	gtp_teid_masq(f_teid, &ssrv->s.bind_addr.ss, teid->vid);
 
 	return teid;
 }

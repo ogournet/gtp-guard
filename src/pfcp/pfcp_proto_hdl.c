@@ -192,8 +192,8 @@ pfcp_assoc_setup_request_send(struct thread *t)
 	if (!p) {
 		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server [%s]:%d"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(&srv->s.addr)
-				    , ntohs(inet_sockaddrport(&srv->s.addr)));
+				    , inet_sockaddrtos(&srv->s.bind_addr.ss)
+				    , ntohs(inet_sockaddrport(&srv->s.bind_addr.ss)));
 		return;
 	}
 
@@ -220,7 +220,7 @@ pfcp_assoc_setup_request_send(struct thread *t)
 		if (plist->addr[i].family != AF_INET)
 			continue;
 
-		inet_server_snd(&ctx->s.s, ctx->s.s.fd, pbuff, &plist->addr[i].sin);
+		inet_server_snd(&ctx->s.s, ctx->s.s.fd, pbuff, &plist->addr[i]);
 	}
 
 end:
@@ -362,7 +362,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	if (cause != PFCP_CAUSE_REQUEST_ACCEPTED)
 		goto reply_now;
 
-	ret = (ret) ? : pfcp_ie_put_f_seid(pbuff, htobe64(s->seid), &srv->s.addr);
+	ret = (ret) ? : pfcp_ie_put_f_seid(pbuff, htobe64(s->seid), &srv->s.bind_addr.ss);
 	ret = (ret) ? : pfcp_session_put_created_pdr(pbuff, s);
 	ret = (ret) ? : pfcp_session_put_created_traffic_endpoint(pbuff, s);
 	if (ret) {
@@ -560,13 +560,12 @@ static const struct {
 };
 
 int
-pfcp_proto_hdl(struct pfcp_server *srv, struct sockaddr_storage *raddr)
+pfcp_proto_hdl(struct pfcp_server *srv, union addr *addr)
 {
 	struct pfcp_router *c = srv->ctx;
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
 	struct pfcp_msg *msg = srv->msg;
-	union addr *addr = (union addr *)raddr;
 	int err;
 
 	err = pfcp_msg_parse(msg, srv->s.pbuff);
@@ -605,10 +604,12 @@ int
 gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 {
 	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
-	struct sockaddr_in addr_to = {
-		.sin_family = AF_INET,
-		.sin_addr = f->outer_header_ip4,
-		.sin_port = htons(GTP_U_PORT),
+	union addr addr_to = {
+		.sin = {
+			.sin_family = AF_INET,
+			.sin_addr = f->outer_header_ip4,
+			.sin_port = htons(GTP_U_PORT),
+		}
 	};
 
 	memset(h, 0, sizeof(*h));
@@ -663,10 +664,9 @@ static const struct {
 };
 
 int
-pfcp_gtpu_hdl(struct gtp_server *srv, struct sockaddr_storage *raddr)
+pfcp_gtpu_hdl(struct gtp_server *srv, union addr *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
-	union addr *addr = (union addr *)raddr;
 	ssize_t len;
 
 	len = gtpu_get_header_len(srv->s.pbuff);
@@ -683,7 +683,7 @@ pfcp_gtpu_hdl(struct gtp_server *srv, struct sockaddr_storage *raddr)
 	log_message(LOG_INFO, "%s(): GTP-U/path-mgt msg_type:0x%.2x from %s not supported..."
 			    , __FUNCTION__
 			    , gtph->type
-			    , inet_sockaddrtos(raddr));
+			    , inet_sockaddrtos(&addr->ss));
 
 	gtp_metrics_rx_notsup(&srv->msg_metrics, gtph->type);
 	return -1;

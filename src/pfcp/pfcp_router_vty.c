@@ -202,7 +202,7 @@ DEFUN(pfcp_listen,
 {
 	struct pfcp_router *c = vty->index;
 	struct pfcp_server *srv = &c->s;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	struct sockaddr_storage *addr = &srv->s.bind_addr.ss;
 	int port = PFCP_PORT, err = 0;
 
 	if (argc < 1) {
@@ -630,10 +630,10 @@ DEFUN(pfcp_gtpu_tunnel_endpoint,
 
 	/* endpoint ip address */
 	VTY_GET_INTEGER_RANGE("UDP Port", port, argv[2], 1024, 65535);
-	err = inet_stosockaddr(addr_str, port, &srv->s.addr);
+	err = inet_stosockaddr(addr_str, port, &srv->s.bind_addr.ss);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s\n", addr_str);
-		memset(&srv->s.addr, 0, sizeof(struct sockaddr_storage));
+		memset(&srv->s.bind_addr.ss, 0, sizeof(struct sockaddr_storage));
 		return CMD_WARNING;
 	}
 
@@ -645,7 +645,7 @@ DEFUN(pfcp_gtpu_tunnel_endpoint,
 	if (err) {
 		vty_out(vty, "%% Error initializing GTP-U listener on [%s]:%d%s"
 			   , addr_str, port, VTY_NEWLINE);
-		memset(&srv->s.addr, 0, sizeof(struct sockaddr_storage));
+		memset(&srv->s.bind_addr.ss, 0, sizeof(struct sockaddr_storage));
 		return CMD_WARNING;
 	}
 

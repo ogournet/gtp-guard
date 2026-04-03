@@ -48,5 +48,5 @@ struct pfcp_server {
 /* Prototypes */
 int pfcp_server_init(struct pfcp_server *s, void *ctx,
 		     int (*init) (struct inet_server *),
-		     int (*process) (struct inet_server *, struct sockaddr_storage *));
+		     int (*process) (struct inet_server *, union addr *));
 int pfcp_server_destroy(struct pfcp_server *s);

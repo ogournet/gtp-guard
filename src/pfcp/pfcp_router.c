@@ -100,7 +100,7 @@ pfcp_gtpu_ingress_init(struct inet_server *srv)
 }
 
 int
-pfcp_gtpu_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr_from)
+pfcp_gtpu_ingress_process(struct inet_server *srv, union addr *addr_from)
 {
 	struct gtp_server *s = srv->ctx;
 	int ret;
@@ -109,7 +109,7 @@ pfcp_gtpu_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr
 	if (ret < 0)
 		return -1;
 
-	inet_server_snd(srv, srv->fd, srv->pbuff, (struct sockaddr_in *) addr_from);
+	inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 	return 0;
 }
 
@@ -120,7 +120,7 @@ pfcp_router_ingress_init(struct inet_server *s)
 }
 
 int
-pfcp_router_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr_from)
+pfcp_router_ingress_process(struct inet_server *srv, union addr *addr_from)
 {
 	struct pfcp_server *s = srv->ctx;
 	int ret;
@@ -130,7 +130,7 @@ pfcp_router_ingress_process(struct inet_server *srv, struct sockaddr_storage *ad
 		return -1;
 
 	if (ret != PFCP_ROUTER_DELAYED)
-		inet_server_snd(srv, srv->fd, srv->pbuff, (struct sockaddr_in *) addr_from);
+		inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 
 	return 0;
 }

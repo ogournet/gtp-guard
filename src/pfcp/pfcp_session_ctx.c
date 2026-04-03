@@ -134,7 +134,7 @@ pfcp_session_get_addr_by_interface(struct pfcp_router *r, uint8_t interface)
 		return NULL;
 	}
 
-	return (union addr *)&srv->s.addr;
+	return (union addr *)&srv->s.bind_addr;
 }
 
 static struct pfcp_teid *

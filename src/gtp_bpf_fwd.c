@@ -46,9 +46,9 @@ gtp_bpf_teid_rule_set(struct gtp_proxy *p, struct gtp_teid_rule *r, struct gtp_t
 	int i;
 
 	if (__test_bit(GTP_TEID_FL_INGRESS, &t->flags))
-		local = inet_sockaddrip4(&p->gtpu_egress.s.addr);
+		local = inet_sockaddrip4(&p->gtpu_egress.s.bind_addr.ss);
 	if (local == ~0)
-		local = inet_sockaddrip4(&p->gtpu.s.addr);
+		local = inet_sockaddrip4(&p->gtpu.s.bind_addr.ss);
 
 	for (i = 0; i < nr_cpus; i++) {
 		r[i].vteid = t->vid;

@@ -127,7 +127,7 @@ DEFUN(restart_counter_file,
 static int
 pdn_channel_prepare(int argc, const char **argv, struct vty *vty, struct inet_server *srv)
 {
-	struct sockaddr_storage *addr = &srv->addr;
+	struct sockaddr_storage *addr = &srv->bind_addr.ss;
 	int port = 0, err = 0;
 
 	if (argc < 1) {
@@ -383,8 +383,8 @@ DEFUN(show_workers_request_channel,
 
 	vty_out(vty, "pdn request-channel:%s port:%d with %d threads%s"
 		     "  flags:%s%s"
-		     , inet_sockaddrtos2(&srv->addr, addr_str)
-		     , ntohs(inet_sockaddrport(&srv->addr))
+		     , inet_sockaddrtos2(&srv->bind_addr.ss, addr_str)
+		     , ntohs(inet_sockaddrport(&srv->bind_addr.ss))
 		     , srv->thread_cnt
 		     , VTY_NEWLINE
 		     , gtp_flags2str(flags2str, sizeof(flags2str), srv->flags)

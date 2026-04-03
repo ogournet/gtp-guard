@@ -160,7 +160,7 @@ DEFUN(gtpc_proxy_tunnel_endpoint,
 {
 	struct gtp_proxy *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpc;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	struct sockaddr_storage *addr = &srv->s.bind_addr.ss;
 	int port = 2123, err = 0;
 
 	if (argc < 1) {
@@ -206,7 +206,7 @@ DEFUN(gtpc_proxy_egress_tunnel_endpoint,
 {
 	struct gtp_proxy *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpc_egress;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	struct sockaddr_storage *addr = &srv->s.bind_addr.ss;
 	int port = 2123, err = 0;
 
 	if (argc < 1) {
@@ -322,7 +322,7 @@ DEFUN(gtpu_proxy_tunnel_endpoint,
 	}
 	addr_set_port(&bind_addr, port);
 
-	srv->s.addr = bind_addr.ss;
+	srv->s.bind_addr.ss = bind_addr.ss;
 	__set_bit(GTP_FL_UPF_BIT, &srv->flags);
 	if (ingress)
 		__set_bit(GTP_FL_GTPU_INGRESS_BIT, &srv->flags);
@@ -516,29 +516,29 @@ gtp_config_write(struct vty *vty)
 		srv = &ctx->gtpc;
 		if (__test_bit(GTP_FL_GTPC_INGRESS_BIT, &srv->flags)) {
 			vty_out(vty, " gtpc-tunnel-endpoint %s port %d%s"
-				   , inet_sockaddrtos(&srv->s.addr)
-				   , ntohs(inet_sockaddrport(&srv->s.addr))
+				   , inet_sockaddrtos(&srv->s.bind_addr.ss)
+				   , ntohs(inet_sockaddrport(&srv->s.bind_addr.ss))
 				   , VTY_NEWLINE);
 		}
 		srv = &ctx->gtpc_egress;
 		if (__test_bit(GTP_FL_GTPC_EGRESS_BIT, &srv->flags)) {
 			vty_out(vty, " gtpc-egress-tunnel-endpoint %s port %d%s"
-				   , inet_sockaddrtos(&srv->s.addr)
-				   , ntohs(inet_sockaddrport(&srv->s.addr))
+				   , inet_sockaddrtos(&srv->s.bind_addr.ss)
+				   , ntohs(inet_sockaddrport(&srv->s.bind_addr.ss))
 				   , VTY_NEWLINE);
 		}
 		srv = &ctx->gtpu;
 		if (__test_bit(GTP_FL_GTPU_INGRESS_BIT, &srv->flags)) {
-			port = ntohs(inet_sockaddrport(&srv->s.addr));
+			port = ntohs(inet_sockaddrport(&srv->s.bind_addr.ss));
 			vty_out(vty, " gtpu-tunnel-endpoint %s port %d %s",
-				inet_sockaddrtos(&srv->s.addr), port,
+				inet_sockaddrtos(&srv->s.bind_addr.ss), port,
 				ctx->gtpu_egress.s.type ? "both-sides" : "ingress");
 		}
 		srv = &ctx->gtpu_egress;
-		port = ntohs(inet_sockaddrport(&srv->s.addr));
+		port = ntohs(inet_sockaddrport(&srv->s.bind_addr.ss));
 		if (__test_bit(GTP_FL_GTPU_EGRESS_BIT, &srv->flags) && port) {
 			vty_out(vty, " gtpu-tunnel-endpoint %s port %d egress",
-				inet_sockaddrtos(&srv->s.addr), port);
+				inet_sockaddrtos(&srv->s.bind_addr.ss), port);
 		}
 
 		if (__test_bit(GTP_FL_FORCE_PGW_BIT, &ctx->flags))
