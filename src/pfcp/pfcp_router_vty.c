@@ -22,9 +22,9 @@
 #include <string.h>
 #include <assert.h>
 
-#include "gtp_bpf_prog.h"
 #include "gtp_data.h"
 #include "gtp.h"
+#include "gtp_bpf_prog.h"
 #include "pfcp_router.h"
 #include "inet_server.h"
 #include "pfcp_assoc.h"

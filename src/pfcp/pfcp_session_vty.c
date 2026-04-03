@@ -351,10 +351,17 @@ DEFUN(capture_start_pfcp,
 
 	ue->capture = cap;
 	list_for_each_entry(s, &ue->pfcp_sessions, next) {
-		s->capture = cap;
-		if (gtp_capture_start(&s->capture, s->router->bpf_prog, capname))
-			vty_out(vty, "%% Error starting pfcp trace\n");
+		s->data_cap = cap;
+		if (gtp_capture_start(&s->data_cap, s->router->bpf_prog, capname))
+			vty_out(vty, "%% Error starting pfcp gtp-u trace\n");
 		pfcp_session_update_fwd_rules(s);
+
+		/* on signaling path, we always want full packets and both path */
+		memset(&s->sig_cap, 0x00, sizeof (s->sig_cap));
+		s->sig_cap.flags = GTP_CAPTURE_FL_INPUT | GTP_CAPTURE_FL_OUTPUT;
+		s->sig_cap.cap_len = ~0;
+		if (gtp_capture_start(&s->sig_cap, s->router->bpf_prog, capname))
+			vty_out(vty, "%% Error starting pfcp trace\n");
 	}
 
 	return CMD_SUCCESS;
@@ -392,7 +399,8 @@ DEFUN(capture_stop_pfcp,
 		ue->persistent_capture = false;
 	}
 	list_for_each_entry(s, &ue->pfcp_sessions, next) {
-		gtp_capture_stop(&s->capture);
+		gtp_capture_stop(&s->sig_cap);
+		gtp_capture_stop(&s->data_cap);
 		pfcp_session_update_fwd_rules(s);
 	}
 

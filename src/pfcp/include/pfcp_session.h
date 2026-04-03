@@ -224,8 +224,9 @@ struct pfcp_session {
 	/* I/O MUX */
 	struct thread		*timer;
 
-	/* packet capture */
-	struct gtp_capture_entry capture;
+	/* packets capture */
+	struct gtp_capture_entry sig_cap;
+	struct gtp_capture_entry data_cap;
 
 	/* urr handling */
 	uint8_t			urr_cmd_cur_id;

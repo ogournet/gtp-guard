@@ -7,6 +7,7 @@
 #pragma once
 
 struct xpcapng_dumper;
+struct iovec;
 
 enum xpcapng_epb_flags {
 	PCAPNG_EPB_FLAG_INBOUND  = 0x1,
@@ -36,6 +37,6 @@ int xpcapng_dump_add_interface(struct xpcapng_dumper *pd,
 			       uint8_t ts_resolution,
 			       const char *hardware);
 bool xpcapng_dump_enhanced_pkt(struct xpcapng_dumper *pd, uint32_t ifid,
-			       const uint8_t *pkt, uint32_t len,
+			       const struct iovec *pkt_iov, int iovcnt,
 			       uint32_t caplen, uint64_t timestamp,
 			       struct xpcapng_epb_options_s *options);

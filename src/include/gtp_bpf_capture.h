@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <stddef.h>
+
 struct gtp_bpf_prog;
 struct gtp_bpf_capture_ctx;
 struct gtp_capture_file;
@@ -59,8 +61,11 @@ struct gtp_capture_entry
 	struct gtp_capture_file		*cf;
 };
 
-void gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
+void gtp_capture_pkt(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
 		     uint16_t flags);
+void gtp_capture_data(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
+		      const union addr *remote_addr, const union addr *local_addr,
+		      uint16_t flags);
 int gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 		      const char *name);
 void gtp_capture_stop(struct gtp_capture_entry *e);
@@ -70,17 +75,3 @@ int gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 			    const char *name, int iface);
 int gtp_capture_init(void);
 void gtp_capture_release(void);
-
-static inline void
-gtp_capture_pkt_in(struct gtp_capture_entry *e, const void *data, size_t len)
-{
-	if (e->flags && e->cf != NULL)
-		gtp_capture_pkt(e, data, len, GTP_CAPTURE_FL_INPUT);
-}
-
-static inline void
-gtp_capture_pkt_out(struct gtp_capture_entry *e, const void *data, size_t len)
-{
-	if (e->flags && e->cf != NULL)
-		gtp_capture_pkt(e, data, len, GTP_CAPTURE_FL_OUTPUT);
-}

@@ -24,9 +24,12 @@
 #include <syslog.h>
 #include <linux/perf_event.h>
 #include <libbpf.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
 
 #include "xpcapng.h"
 #include "utils.h"
+#include "inet_utils.h"
 #include "command.h"
 #include "table.h"
 #include "config.h"
@@ -40,6 +43,9 @@
 
 /* set max number of running captures per bpf program */
 #define CAPTURE_BPF_MAX_ENTRY		8
+
+/* max number of interfaces in pcap file */
+#define CAPTURE_BPF_MAX_INTERFACE	100
 
 
 struct capture_perf_buf_cpu
@@ -85,7 +91,6 @@ struct gtp_capture_file
 	int				refcnt;
 	bool				running;
 	bool				persist;
-	uint16_t			snaplen;
 
 	uint32_t			pkt_max;
 	uint32_t			duration;	/* in seconds */
@@ -93,6 +98,8 @@ struct gtp_capture_file
 	time_t				until;
 	uint64_t			*cpu_packet_id;
 	int				cpu_packet_id_n;
+	uint64_t			*if2itfidx;
+	uint32_t			if2itfidx_mask;
 
 	struct list_head		list;
 };
@@ -173,11 +180,17 @@ capture_handle_perf_event(void *ctx, int cpu, struct perf_event_header *event)
 	options.queue = &queue;
 	options.xdp_verdict = action == -1 ? NULL : &action;
 
-	int if_idx = 0;
-	/* XXX: set if_idx to xpcapng_add_interface index */
+	int itf_idx;
+	uint32_t idx = e->md.ifindex & cf->if2itfidx_mask;
+	while (cf->if2itfidx[idx] && (cf->if2itfidx[idx] >> 32) != e->md.ifindex)
+		idx = (idx + 1) & cf->if2itfidx_mask;
+	itf_idx = cf->if2itfidx[idx] ? cf->if2itfidx[idx] & 0xffffffff : 0;
 
-	xpcapng_dump_enhanced_pkt(cf->pcapng, if_idx, e->packet,
-				  min(cf->snaplen, e->md.pkt_len),
+	struct iovec pkt_iov = {
+		.iov_base = e->packet,
+		.iov_len = min(e->md.cap_len, e->md.pkt_len)
+	};
+	xpcapng_dump_enhanced_pkt(cf->pcapng, itf_idx, &pkt_iov, 1,
 				  e->md.cap_len, ts, &options);
 	bcc->last_missed_events = 0;
 
@@ -226,13 +239,13 @@ capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 	struct gtp_interface *iface;
 	char pathname[400];
 	char ifname[200];
+	uint32_t k;
 
 	if (cf->running)
 		return 0;
 	if (cf->p != NULL && cf->p != p)
 		return -1;
 	cf->p = p;
-	cf->snaplen = cfg_capture_snaplen;
 
 	/* set filename from name, if not set */
 	if (!*cf->filename)
@@ -248,8 +261,30 @@ capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 		return -1;
 	}
 
-	/* XXX: dynamically register to bpf prog's ifaces */
+	/* interfaces are written in pcap file header. once written, it won't
+	 * be modified. if a new interface is added to bpf_prog, then add it
+	 * to special interface 'undefined' */
+	snprintf(ifname, sizeof (ifname), "_undefined");
+	if (xpcapng_dump_add_interface(cf->pcapng, cfg_capture_snaplen,
+				       ifname, NULL, NULL, 0, 9, NULL) < 0) {
+		syslog(LOG_ERR, "Can't add %s interface to PcapNG file!", ifname);
+		goto err;
+	}
+
+	/* use this interface for all packets sent from userspace. do not limit
+	 * capture size */
+	snprintf(ifname, sizeof (ifname), "_protocol");
+	if (xpcapng_dump_add_interface(cf->pcapng, ~0, ifname, NULL, NULL,
+				       0, 9, NULL) < 0) {
+		syslog(LOG_ERR, "Can't add %s interface to PcapNG file!", ifname);
+		goto err;
+	}
+
+	/* add all current bpf_prog's interfaces */
+	k = 2;
 	list_for_each_entry(iface, &p->iface_bind_list, bpf_prog_list) {
+		if (k >= CAPTURE_BPF_MAX_INTERFACE)
+			break;
 		snprintf(ifname, sizeof (ifname), "%s:%s",
 			 p->name, iface->ifname);
 		if (xpcapng_dump_add_interface(cf->pcapng,
@@ -257,11 +292,13 @@ capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 					       ifname, NULL, NULL,
 					       0, 9, NULL) < 0) {
 			syslog(LOG_ERR, "Can't add %s interface to PcapNG file!",
-				ifname);
-			xpcapng_dump_close(cf->pcapng);
-			cf->pcapng = NULL;
-			return -1;
+			       ifname);
+			goto err;
 		}
+		uint32_t idx = iface->ifindex & cf->if2itfidx_mask;
+		while (cf->if2itfidx[idx])
+			idx = (idx + 1) & cf->if2itfidx_mask;
+		cf->if2itfidx[idx] = ((uint64_t)iface->ifindex << 32ULL) | k++;
 	}
 
 	cf->pkt_count = 0;
@@ -273,6 +310,11 @@ capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 	printf("%s.pcap: capture file started\n", cf->filename);
 
 	return 0;
+
+ err:
+	xpcapng_dump_close(cf->pcapng);
+	cf->pcapng = NULL;
+	return -1;
 }
 
 static void
@@ -304,6 +346,7 @@ static struct gtp_capture_file *
 capture_file_get(const char *name, bool alloc)
 {
 	struct gtp_capture_file *cf;
+	uint32_t n;
 
 	list_for_each_entry(cf, &cfile_list, list) {
 		if (!strcmp(cf->name, name)) {
@@ -322,7 +365,11 @@ capture_file_get(const char *name, bool alloc)
 	cf->cpu_packet_id_n = libbpf_num_possible_cpus();
 	cf->cpu_packet_id = calloc(cf->cpu_packet_id_n + 1,
 				   sizeof (*cf->cpu_packet_id));
-	if (cf->cpu_packet_id == NULL) {
+	n = next_power_of_2(CAPTURE_BPF_MAX_INTERFACE + 4);
+	cf->if2itfidx = calloc(n, sizeof (uint32_t));
+	cf->if2itfidx_mask = n - 1;
+	if (cf->cpu_packet_id == NULL || cf->if2itfidx == NULL) {
+		free(cf->cpu_packet_id);
 		free(cf);
 		return NULL;
 	}
@@ -530,27 +577,91 @@ gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 }
 
 
-
 /********************************************************************/
-/* capture api */
-
 /* capture packet from userspace */
-void
-gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
-		uint16_t flags)
+
+
+static int
+_build_fake_l2l3_hdr(uint8_t *buffer, size_t buflen, size_t payload_len,
+		     const union addr *remote_addr, const union addr *local_addr,
+		     uint16_t flags)
+{
+	struct ethhdr *eth;
+	struct iphdr *iph;
+	struct udphdr *udph;
+	size_t total_len = sizeof(*eth) + sizeof(*iph) + sizeof(*udph);
+	uint8_t *macaddr;
+
+	if (buflen < total_len)
+		return -1;
+
+	if (remote_addr->family != AF_INET || local_addr->family != AF_INET)
+		return -1;
+
+	/* Ethernet header */
+	eth = (struct ethhdr *)buffer;
+	macaddr = flags & GTP_CAPTURE_FL_INPUT ? eth->h_dest : eth->h_source;
+	macaddr[0] = 0;
+	macaddr[1] = 0x24;
+	macaddr[2] = 0xd4;
+	macaddr[3] = 0;
+	macaddr[4] = 0;
+	macaddr[5] = 1;
+	macaddr = flags & GTP_CAPTURE_FL_INPUT ? eth->h_source : eth->h_dest;
+	macaddr[0] = 0xEC;
+	macaddr[1] = 0x0D;
+	macaddr[2] = 0x9d;
+	macaddr[3] = 0;
+	macaddr[4] = 0;
+	macaddr[5] = 2;
+	eth->h_proto = htons(ETH_P_IP);
+
+	/* IP header */
+	iph = (struct iphdr *)(eth + 1);
+	iph->ihl = 5;
+	iph->version = 4;
+	iph->tos = 0;
+	iph->tot_len = htons(sizeof(*iph) + sizeof(*udph) + payload_len);
+	iph->id = htons(0x6666);
+	iph->frag_off = 0;
+	iph->ttl = 64;
+	iph->protocol = IPPROTO_UDP;
+	iph->check = 0;
+	if (flags & GTP_CAPTURE_FL_INPUT) {
+		iph->saddr = addr_toip4(remote_addr);
+		iph->daddr = addr_toip4(local_addr);
+	} else {
+		iph->daddr = addr_toip4(remote_addr);
+		iph->saddr = addr_toip4(local_addr);
+	}
+	iph->check = in_csum((uint16_t *) iph, sizeof(*iph), 0);
+
+	/* UDP header */
+	udph = (struct udphdr *)(iph + 1);
+	if (flags & GTP_CAPTURE_FL_INPUT) {
+		udph->source = htons(addr_get_port(remote_addr));
+		udph->dest = htons(addr_get_port(local_addr));
+	} else {
+		udph->dest = htons(addr_get_port(remote_addr));
+		udph->source = htons(addr_get_port(local_addr));
+	}
+	udph->len = htons(sizeof(*udph) + payload_len);
+	udph->check = 0;
+
+	return total_len;
+}
+
+static void
+_capture_userspace_pkt(struct gtp_capture_entry *e, const struct iovec *pkt_iov,
+		       int iovcnt, uint16_t flags)
 {
 	struct gtp_capture_file *cf = e->cf;
 	struct xpcapng_epb_options_s options = {};
 	struct timespec ts;
 	uint64_t ns;
-	uint32_t caplen;
-
-	if (!cf->running)
-		return;
 
 	clock_gettime(CLOCK_REALTIME, &ts);
-	ns = ts.tv_sec + ts.tv_nsec * NSEC_PER_SEC ;
-	caplen = min(e->cap_len, cf->snaplen);
+	ns = ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec;
 	++cf->cpu_packet_id[cf->cpu_packet_id_n];
 
 	options.flags = flags & GTP_CAPTURE_FL_INPUT ?
@@ -558,11 +669,8 @@ gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
 	options.dropcount = 0;
 	options.packetid = &cf->cpu_packet_id[cf->cpu_packet_id_n];
 
-	int if_idx = 0;
-	/* XXX: set if_idx to xpcapng_add_interface index */
-
-	xpcapng_dump_enhanced_pkt(cf->pcapng, if_idx, data,
-				  len, caplen, ns, &options);
+	xpcapng_dump_enhanced_pkt(cf->pcapng, 1, pkt_iov, iovcnt,
+				  e->cap_len, ns, &options);
 
 	cf->pkt_count++;
 	if ((cf->pkt_max && cf->pkt_count >= cf->pkt_max) ||
@@ -573,6 +681,51 @@ gtp_capture_pkt(struct gtp_capture_entry *e, const void *data, size_t len,
 		       cf->refcnt);
 		cf->running = false;
 	}
+}
+
+
+/********************************************************************/
+/* capture api */
+
+void
+gtp_capture_pkt(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
+		uint16_t flags)
+{
+	struct iovec pkt_iov[1];
+
+	if (e->cf == NULL || !e->flags || !e->cf->running)
+		return;
+
+	pkt_iov[0].iov_base = (void *)data;
+	pkt_iov[0].iov_len = len;
+
+	_capture_userspace_pkt(e, pkt_iov, 1, flags);
+
+}
+
+void
+gtp_capture_data(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
+		 const union addr *remote_addr, const union addr *local_addr,
+		 uint16_t flags)
+{
+	struct iovec pkt_iov[2];
+	uint8_t buf[100];
+	int n;
+
+	if (e->cf == NULL || !e->flags || !e->cf->running)
+		return;
+
+	n = _build_fake_l2l3_hdr(buf, sizeof(buf), len,
+				 remote_addr, local_addr, flags);
+	if (n < 0)
+		return;
+
+	pkt_iov[0].iov_base = buf;
+	pkt_iov[0].iov_len = n;
+	pkt_iov[1].iov_base = (void *)data;
+	pkt_iov[1].iov_len = len;
+
+	_capture_userspace_pkt(e, pkt_iov, 2, flags);
 }
 
 int

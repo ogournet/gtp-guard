@@ -228,9 +228,15 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 	/* Automatically start capture */
 	if (ue->capture.flags) {
 		char capname[200];
-		s->capture = ue->capture;
+		s->data_cap = ue->capture;
 		snprintf(capname, sizeof (capname), "%ld", ue->c.imsi);
-		gtp_capture_start(&s->capture, r->bpf_prog, capname);
+		gtp_capture_start(&s->data_cap, r->bpf_prog, capname);
+
+		/* on signaling path, we always want full packets and both path */
+		memset(&s->sig_cap, 0x00, sizeof (s->sig_cap));
+		s->sig_cap.flags = GTP_CAPTURE_FL_INPUT | GTP_CAPTURE_FL_OUTPUT;
+		s->sig_cap.cap_len = ~0;
+		gtp_capture_start(&s->sig_cap, s->router->bpf_prog, capname);
 	}
 
 	return s;
@@ -283,8 +289,10 @@ nospc:
 void
 pfcp_session_release(struct pfcp_session *s)
 {
-	if (s->capture.entry_id)
-		gtp_capture_stop(&s->capture);
+	if (s->data_cap.entry_id)
+		gtp_capture_stop(&s->data_cap);
+	if (s->sig_cap.entry_id)
+		gtp_capture_stop(&s->sig_cap);
 
 	thread_del(s->timer);
 	__sync_sub_and_fetch(&s->apn->session_count, 1);
