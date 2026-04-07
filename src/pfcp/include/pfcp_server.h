@@ -25,7 +25,7 @@
 #include "pfcp_metrics.h"
 
 enum pfcp_server_flags {
-	PFCP_FL_RUNNING_BIT,
+	PFCP_FL_RUNNING_BIT = INET_FL_BIT_LAST,
 };
 
 /* PFCP Server context */
