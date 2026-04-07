@@ -45,6 +45,7 @@ enum inet_server_flags {
 	INET_FL_RUNNING_BIT,
 	INET_FL_STOP_BIT,
 	INET_FL_PIPE_BIT,
+	INET_FL_BIT_LAST,
 };
 
 /* Server */
