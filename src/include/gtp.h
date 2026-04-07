@@ -21,10 +21,11 @@
 #pragma once
 
 #include <stdint.h>
+#include "inet_server.h"
 
 /* Flags */
 enum gtp_flags {
-	GTP_FL_RUNNING_BIT,
+	GTP_FL_RUNNING_BIT = INET_FL_BIT_LAST,
 	GTP_FL_STARTING_BIT,
 	GTP_FL_STOPPING_BIT,
 	GTP_FL_HASHED_BIT,
