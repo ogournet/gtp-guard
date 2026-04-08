@@ -113,6 +113,7 @@ struct urr {
 	uint32_t		urr_idx;	/* index in bpf map */
 	uint8_t			action;
 	bool			queried;
+	bool			reported;
 
 	union pfcp_measurement_method	measurement_method;
 	union pfcp_measurement_information measurement_info;
