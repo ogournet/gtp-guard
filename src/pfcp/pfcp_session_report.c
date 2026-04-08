@@ -235,6 +235,9 @@ pfcp_session_report_put_modification(struct pkt_buffer *pbuff,
 	int i, err;
 
 	list_for_each_entry(u, &s->urr_list, next) {
+		if (!u->queried)
+			continue;
+
 		err = _put_usage_report(pbuff, u,
 					PFCP_IE_USAGE_REPORT_MODIFICATION,
 					rtrig,
@@ -246,7 +249,8 @@ pfcp_session_report_put_modification(struct pkt_buffer *pbuff,
 		rtrig.liusa = 1;
 		list_for_each_entry(lu, &s->urr_list, next) {
 			for (i = 0; i < PFCP_MAX_NR_ELEM && lu->linked_urr_id[i]; i++) {
-				if (lu->queried || lu->linked_urr_id[i] != u->id)
+				if (lu->queried || lu->reported ||
+				    lu->linked_urr_id[i] != u->id)
 					continue;
 
 				/* XXX: do NOT include if measurements are empty */
@@ -256,13 +260,16 @@ pfcp_session_report_put_modification(struct pkt_buffer *pbuff,
 							s->urr_query_ref);
 				if (err)
 					return -1;
+				lu->reported = true;
 			}
 		}
 		rtrig.liusa = 0;
 	}
 
-	list_for_each_entry(u, &s->urr_list, next)
+	list_for_each_entry(u, &s->urr_list, next) {
 		u->queried = false;
+		u->reported = false;
+	}
 
 	return 0;
 }
