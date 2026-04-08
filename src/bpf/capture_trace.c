@@ -92,7 +92,7 @@ capture_trace_to_userspc(struct xdp_buff *xdp, int action)
 	}
 }
 
-/* usage of BPF_PROG is mandatory (else it must use BPF_CORE_READ and cie)
+/* usage of BPF_PROG macro is mandatory (else it must use BPF_CORE_READ and cie)
  * 'func' will be rewritten by real function name when attaching program */
 SEC("fentry/func")
 int BPF_PROG(entry_trace, struct xdp_buff *xdp)
