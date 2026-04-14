@@ -60,6 +60,7 @@ struct upf_fwd_rule {
 	__u8		tos_mask;
 	__u16		flags;
 	__u32		urr_idx;	/* index to upf_urr{,_data} */
+	__u32		li_id;		/* 0: disabled */
 
 	struct capture_bpf_entry capture;
 
@@ -193,3 +194,20 @@ struct upf_urr_report_data {
 	__u32		report_last_pkt;	/* last pkt seen */
 	__u32		duration;		/* total duraction (wrt inactive time) */
 };
+
+
+/*
+ * upf li
+ */
+
+#define UPF_LI_FL_DIR_MASK     0x0003
+#define UPF_LI_FL_DIR_INGRESS  0x0001
+#define UPF_LI_FL_DIR_EGRESS   0x0002
+
+struct upf_li_entry {
+	__u32		id;
+	__u16		flags;
+	__u16		_pad;
+	__u16		payload_len;
+	__u16		offset;
+} __attribute__((packed));

@@ -760,9 +760,10 @@ pfcp_bpf_loaded(struct gtp_bpf_prog *p, void *udata, bool reload)
 
 	bd->user_egress = gtp_bpf_prog_load_map(p->obj_load, "user_egress");
 	bd->user_ingress = gtp_bpf_prog_load_map(p->obj_load, "user_ingress");
+	bd->upf_li_perf = gtp_bpf_prog_load_map(p->obj_load, "upf_li_perf");
 	bd->upf_urr = gtp_bpf_prog_load_map(p->obj_load, "upf_urr");
 	if (bd->user_egress == NULL || bd->user_ingress == NULL ||
-	    bd->upf_urr == NULL)
+	    bd->upf_li_perf == NULL || bd->upf_urr == NULL)
 		return -1;
 
 	prg = bpf_object__find_program_by_name(p->obj_load, "urr_ctl");
