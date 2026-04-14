@@ -543,7 +543,7 @@ static const struct {
 };
 
 static void
-pfcp_proto_buffer_format(union addr *addr, struct pkt_buffer *pbuff,
+pfcp_proto_buffer_format(union sa *addr, struct pkt_buffer *pbuff,
 			 char *buffer, size_t size, enum pfcp_direction dir)
 {
 	int width = 73, padding_left, padding_right, text_len;
@@ -614,7 +614,7 @@ pfcp_proto_header_format(struct pkt_buffer *pbuff, char *buffer, size_t size)
 }
 
 void
-pfcp_proto_dump(struct pfcp_server *srv, struct pfcp_msg *msg, union addr *addr,
+pfcp_proto_dump(struct pfcp_server *srv, struct pfcp_msg *msg, union sa *addr,
 		enum pfcp_direction dir)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;

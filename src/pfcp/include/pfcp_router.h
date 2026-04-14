@@ -49,7 +49,7 @@ enum pfcp_debug_flags {
 struct pfcp_peer_list {
 	char			name[GTP_NAME_MAX_LEN];
 	char			description[GTP_STR_MAX_LEN];
-	union addr		addr[PFCP_PEER_MAX];
+	union sa		addr[PFCP_PEER_MAX];
 	int			nr_addr;
 
 	struct list_head	next;

@@ -258,8 +258,8 @@ _in_rule_set_key_base(struct gtp_bpf_ifrules *bir, struct gtp_if_rule *r, int if
 		break;
 	case GTP_INTERFACE_TUN_GRE:
 	case GTP_INTERFACE_TUN_IPIP:
-		k->tun_local = addr_toip4(&r->from->tunnel_local);
-		k->tun_remote = addr_toip4(&r->from->tunnel_remote);
+		k->tun_local = sa_ip4(&r->from->tunnel_local);
+		k->tun_remote = sa_ip4(&r->from->tunnel_remote);
 		k->flags = r->from->tunnel_mode == GTP_INTERFACE_TUN_GRE ?
 			IF_RULE_FL_TUNNEL_GRE : IF_RULE_FL_TUNNEL_IPIP;
 		break;
@@ -569,12 +569,12 @@ static void
 _rule_set_attr(struct gtp_interface *iface, struct if_rule_attr *a)
 {
 	if (iface->tunnel_mode == GTP_INTERFACE_TUN_GRE) {
-		a->tun_local = addr_toip4(&iface->tunnel_local);
-		a->tun_remote = addr_toip4(&iface->tunnel_remote);
+		a->tun_local = sa_ip4(&iface->tunnel_local);
+		a->tun_remote = sa_ip4(&iface->tunnel_remote);
 		a->flags = IF_RULE_FL_TUNNEL_GRE;
 	} else if (iface->tunnel_mode == GTP_INTERFACE_TUN_IPIP) {
-		a->tun_local = addr_toip4(&iface->tunnel_local);
-		a->tun_remote = addr_toip4(&iface->tunnel_remote);
+		a->tun_local = sa_ip4(&iface->tunnel_local);
+		a->tun_remote = sa_ip4(&iface->tunnel_remote);
 		a->flags = IF_RULE_FL_TUNNEL_IPIP;
 	} else {
 		a->tun_local = 0;

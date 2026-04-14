@@ -285,7 +285,7 @@ DEFUN(gtpu_proxy_tunnel_endpoint,
 	struct gtp_proxy *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpu;
 	const char *bind_addr_str = argv[0];
-	union addr bind_addr;
+	union sa bind_addr;
 	bool ingress = !strcmp(argv[2], "ingress") || !strcmp(argv[2], "both-sides");
 	bool egress = !strcmp(argv[2], "egress") || !strcmp(argv[2], "both-sides");
 	int port = GTP_U_PORT;
@@ -315,12 +315,12 @@ DEFUN(gtpu_proxy_tunnel_endpoint,
 	}
 
 	VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
-	err = addr_parse(bind_addr_str, &bind_addr);
+	err = sa_parse(bind_addr_str, &bind_addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s\n", bind_addr_str);
 		return CMD_WARNING;
 	}
-	addr_set_port(&bind_addr, port);
+	sa_set_port(&bind_addr, port);
 
 	srv->s.addr = bind_addr.ss;
 	__set_bit(GTP_FL_UPF_BIT, &srv->flags);
@@ -331,7 +331,7 @@ DEFUN(gtpu_proxy_tunnel_endpoint,
 	err = gtp_server_init(srv, ctx, gtp_proxy_ingress_init, gtp_proxy_ingress_process);
 	if (err) {
 		vty_out(vty, "%% Error initializing %s GTP-U Proxy listener on %s\n",
-			argv[1], addr_stringify(&bind_addr, buf, sizeof (buf)));
+			argv[1], sa_str(&bind_addr, buf, sizeof (buf)));
 		return CMD_WARNING;
 	}
 
@@ -466,11 +466,11 @@ DEFUN(gtpu_debug_set_teid,
 	struct gtp_proxy *ctx = vty->index;
 	int action = !strcmp(argv[0], "add") ? RULE_ADD : RULE_DEL;
 	struct gtp_teid t = {};
-	union addr a;
+	union sa a;
 
 	t.vid = atoi(argv[1]);
 	t.id = htonl(atoi(argv[2]));
-	addr_parse(argv[3], &a);
+	sa_parse(argv[3], &a);
 	t.ipv4 = a.sin.sin_addr.s_addr;
 	__set_bit(!strcmp(argv[4], "ingress") ?
 		  GTP_TEID_FL_INGRESS : GTP_TEID_FL_EGRESS, &t.flags);

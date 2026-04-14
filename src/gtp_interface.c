@@ -207,16 +207,16 @@ gtp_interface_foreach(int (*hdl) (struct gtp_interface *, void *), void *arg)
 }
 
 void
-gtp_interface_update_direct_tx_lladdr(const union addr *addr, const uint8_t *hw_addr)
+gtp_interface_update_direct_tx_lladdr(const union sa *addr, const uint8_t *hw_addr)
 {
 	struct list_head *l = &daemon_data->interfaces;
 	struct gtp_interface *iface;
-	const union addr *addr_iface;
+	const union sa *addr_iface;
 
 	list_for_each_entry(iface, l, next) {
 		addr_iface = &iface->direct_tx_gw;
 		if (addr_iface->family &&
-		    !addr_cmp_ip(addr, addr_iface) &&
+		    !sa_cmp_ip(addr, addr_iface) &&
 		    memcmp(iface->direct_tx_hw_addr, hw_addr, ETH_ALEN)) {
 			memcpy(iface->direct_tx_hw_addr, hw_addr, ETH_ALEN);
 

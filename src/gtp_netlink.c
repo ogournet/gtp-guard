@@ -533,7 +533,7 @@ netlink_neigh_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct nlm
 {
 	struct ndmsg *r = NLMSG_DATA(h);
 	struct rtattr *tb[NDA_MAX + 1];
-	union addr addr;
+	union sa addr;
 	int len = h->nlmsg_len;
 
 	if (h->nlmsg_type != RTM_NEWNEIGH && h->nlmsg_type != RTM_GETNEIGH)
@@ -549,7 +549,7 @@ netlink_neigh_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct nlm
 	if (!tb[NDA_DST] || !tb[NDA_LLADDR] || RTA_PAYLOAD(tb[NDA_LLADDR]) != ETH_ALEN)
 		return 0;
 
-	addr_zero(&addr);
+	sa_zero(&addr);
 	switch (r->ndm_family) {
 	case AF_INET:
 		addr.sin.sin_addr.s_addr = *(uint32_t *) RTA_DATA(tb[NDA_DST]);
@@ -723,9 +723,9 @@ netlink_if_link_info(struct rtattr *tb, struct gtp_interface *iface)
 
 		iface->tunnel_mode = GTP_INTERFACE_TUN_GRE;
 
-		addr_fromip4(&iface->tunnel_local,
+		sa_from_ip4(&iface->tunnel_local,
 			     *(uint32_t *)RTA_DATA(attr[IFLA_GRE_LOCAL]));
-		addr_fromip4(&iface->tunnel_remote,
+		sa_from_ip4(&iface->tunnel_remote,
 			     *(uint32_t *)RTA_DATA(attr[IFLA_GRE_REMOTE]));
 
 	} else if (!strcmp(kind, "ipip")) {
@@ -742,9 +742,9 @@ netlink_if_link_info(struct rtattr *tb, struct gtp_interface *iface)
 
 		iface->tunnel_mode = GTP_INTERFACE_TUN_IPIP;
 
-		addr_fromip4(&iface->tunnel_local,
+		sa_from_ip4(&iface->tunnel_local,
 			     *(uint32_t *)RTA_DATA(attr[IFLA_IPTUN_LOCAL]));
-		addr_fromip4(&iface->tunnel_remote,
+		sa_from_ip4(&iface->tunnel_remote,
 			     *(uint32_t *)RTA_DATA(attr[IFLA_IPTUN_REMOTE]));
 
 	} else {

@@ -174,7 +174,7 @@ DEFUN(cgn_ip_pool,
       "Add ipv4 address(es) in pool\n")
 {
 	struct cgn_ctx *c = vty->index;
-	union addr addr;
+	union sa addr;
 	uint64_t count;
 	uint32_t base, ns, i;
 
@@ -184,7 +184,7 @@ DEFUN(cgn_ip_pool,
 		return CMD_WARNING;
 	}
 
-	if (addr_parse_ip(argv[0], &addr, NULL, &count, 1)) {
+	if (sa_parse_opt(argv[0], &addr, NULL, &count, 1)) {
 		vty_out(vty, "%% carrier-grade-nat:'%s' cannot "
 			"parse ipv4-pool %s\n", c->name, argv[0]);
 		return CMD_WARNING;
@@ -451,10 +451,10 @@ DEFUN(show_cgn_user_flow,
 	const char *name = argc == 2 ? argv[1] : NULL;
 	struct cgn_ctx *c;
 	char buf[50000];
-	union addr a;
+	union sa a;
 	uint32_t addr;
 
-	if (addr_parse(argv[0], &a))
+	if (sa_parse(argv[0], &a))
 		return CMD_WARNING;
 	addr = ntohl(a.sin.sin_addr.s_addr);
 

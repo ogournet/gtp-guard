@@ -122,7 +122,7 @@ pfcp_session_get_gtp_server_by_interface(struct pfcp_router *r, uint8_t interfac
 	return srv;
 }
 
-union addr *
+union sa *
 pfcp_session_get_addr_by_interface(struct pfcp_router *r, uint8_t interface)
 {
 	struct gtp_server *srv;
@@ -134,7 +134,7 @@ pfcp_session_get_addr_by_interface(struct pfcp_router *r, uint8_t interface)
 		return NULL;
 	}
 
-	return (union addr *)&srv->s.addr;
+	return (union sa *)&srv->s.addr;
 }
 
 static struct pfcp_teid *
@@ -144,7 +144,7 @@ pfcp_session_alloc_teid(struct pfcp_session *s, uint8_t interface, uint32_t *id)
 	struct gtp_cpu_sched_group *grp;
 	struct gtp_range_partition *rp = NULL;
 	struct gtp_range_part *part = NULL;
-	union addr *gtpu_addr = NULL;
+	union sa *gtpu_addr = NULL;
 	struct in_addr *ipv4;
 	struct in6_addr *ipv6;
 	struct pfcp_teid *t;
@@ -870,7 +870,7 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 	struct upf_fwd_rule *u = &r->rule;
 	struct far *f = p->far;
 	struct qer *q = p->qer;
-	union addr *laddr;
+	union sa *laddr;
 
 	/* Rule flags init */
 	u->flags = 0;
@@ -961,7 +961,7 @@ pfcp_session_create_fwd_rules(struct pfcp_session *s)
 
 int
 pfcp_session_create(struct pfcp_session *s, struct pfcp_session_establishment_request *req,
-		    union addr *addr)
+		    union sa *addr)
 {
 	int i, err = 0;
 	uint32_t id = 0;
