@@ -100,7 +100,7 @@ struct cdr_fwd_server
 	uint16_t			flags;
 
 	/* Connection related */
-	union addr			addr;
+	union sa			addr;
 	char				addr_str[64];
 	time_t				try_last;
 	int				try_count;

@@ -294,16 +294,16 @@ DEFUN(mape_border_relay_address,
       "Set ipv6 source address when encapsulating in map-e\n")
 {
 	struct mape_rule *r = vty->index;
-	union addr addr;
+	union sa addr;
 
-	if (addr_parse_ip(argv[0], &addr, NULL, NULL, 1) ||
+	if (sa_parse_opt(argv[0], &addr, NULL, NULL, 1) ||
 	    addr.family != AF_INET6) {
 		vty_out(vty, "%% mape:'%s' cannot parse encap-source %s\n",
 			r->name, argv[0]);
 		return CMD_WARNING;
 	}
 
-	r->r.br_addr = *addr_toip6(&addr);
+	r->r.br_addr = *sa_ip6(&addr);
 
 	mape_bpf_update_map(r);
 
@@ -316,17 +316,17 @@ DEFUN(mape_ipv6_prefix,
       "Set ipv6 prefix\n")
 {
 	struct mape_rule *r = vty->index;
-	union addr addr;
+	union sa addr;
 	uint32_t ns;
 
-	if (addr_parse_ip(argv[0], &addr, &ns, NULL, 1) ||
+	if (sa_parse_opt(argv[0], &addr, &ns, NULL, 1) ||
 	    addr.family != AF_INET6) {
 		vty_out(vty, "%% mape:'%s' cannot parse ipv6-prefix %s\n",
 			r->name, argv[0]);
 		return CMD_WARNING;
 	}
 
-	r->r.v6_prefix = *addr_toip6(&addr);
+	r->r.v6_prefix = *sa_ip6(&addr);
 	r->v6_nslen = ns;
 
 	mape_bpf_update_map(r);
@@ -341,17 +341,17 @@ DEFUN(mape_ipv4_prefix,
       "Set ipv4 prefix\n")
 {
 	struct mape_rule *r = vty->index;
-	union addr addr;
+	union sa addr;
 	uint32_t ns;
 
-	if (addr_parse_ip(argv[0], &addr, &ns, NULL, 1) ||
+	if (sa_parse_opt(argv[0], &addr, &ns, NULL, 1) ||
 	    addr.family != AF_INET) {
 		vty_out(vty, "%% mape:'%s' cannot parse ipv4-prefix %s\n",
 			r->name, argv[0]);
 		return CMD_WARNING;
 	}
 
-	r->v4_prefix = addr_toip4(&addr);
+	r->v4_prefix = sa_ip4(&addr);
 	r->v4_nslen = ns;
 	r->r.v4_suffix_mask = (1 << (32 - ns)) - 1;
 	r->r.v4_suffix_bits = 32 - ns;

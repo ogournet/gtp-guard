@@ -300,7 +300,7 @@ parse_teid_range(const char *str, uint32_t *start, uint32_t *end)
 static int
 parse_ueip4_range(const char *str, uint32_t *start, uint32_t *end)
 {
-	union addr start_addr = {}, end_addr = {};
+	union sa start_addr = {}, end_addr = {};
 	char buf[INET_ADDRSTRLEN * 2 + 2];
 	char *dash;
 
@@ -312,9 +312,9 @@ parse_ueip4_range(const char *str, uint32_t *start, uint32_t *end)
 		return -1;
 
 	*dash = '\0';
-	if (addr_parse(buf, &start_addr) || start_addr.family != AF_INET)
+	if (sa_parse(buf, &start_addr) || start_addr.family != AF_INET)
 		return -1;
-	if (addr_parse(dash + 1, &end_addr) || end_addr.family != AF_INET)
+	if (sa_parse(dash + 1, &end_addr) || end_addr.family != AF_INET)
 		return -1;
 
 	*start = ntohl(start_addr.sin.sin_addr.s_addr);
@@ -326,14 +326,14 @@ struct pfcp_teid_iter_ctx {
 	const char		*action;
 	bool			 is_ingress;
 	bool			 is_fwd;
-	const union addr	*endpt_addr;
-	const union addr	*local;
+	const union sa	*endpt_addr;
+	const union sa	*local;
 	bool			 has_ue;
-	union addr		 ue_addr;
+	union sa		 ue_addr;
 	bool			 ue_is_range;
 	uint32_t		 ue_start;
 	bool			 has_ue2;
-	union addr		 ue2_addr;
+	union sa		 ue2_addr;
 	uint32_t		 rteid_start;
 	uint32_t		 rteid_end;
 };
@@ -382,8 +382,8 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 	}
 
 	if (ctx->local != NULL) {
-		ur->gtpu_local_addr = addr_toip4(ctx->local);
-		ur->gtpu_local_port = htons(addr_get_port(ctx->local));
+		ur->gtpu_local_addr = sa_ip4(ctx->local);
+		ur->gtpu_local_port = sa_portb(ctx->local);
 	}
 
 	if (ctx->has_ue) {
@@ -400,7 +400,7 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 			}
 		} else {
 			ur->gtpu_remote_addr = ctx->ue_addr.sin.sin_addr.s_addr;
-			ur->gtpu_remote_port = htons(addr_get_port(&ctx->ue_addr));
+			ur->gtpu_remote_port = sa_portb(&ctx->ue_addr);
 			if (!ur->gtpu_remote_port)
 				ur->gtpu_remote_port = htons(GTP_U_PORT);
 		}
@@ -440,7 +440,7 @@ DEFUN(pfcp_debug_teid,
 {
 	struct pfcp_router *c = vty->index;
 	struct pfcp_teid_iter_ctx ctx = {};
-	union addr endpt_addr, ue_addr = {}, ue2_addr = {};
+	union sa endpt_addr, ue_addr = {}, ue2_addr = {};
 	uint32_t teid_start, teid_end, range_count;
 	uint32_t ue_start = 0, ue_end = 0;
 	uint32_t rteid_start = 0, rteid_end = 0;
@@ -452,7 +452,7 @@ DEFUN(pfcp_debug_teid,
 	ctx.is_fwd = !strcmp(argv[1], "fwd");
 
 	/* Parse endpoint address */
-	if (addr_parse(argv[3], &endpt_addr) || endpt_addr.family != AF_INET) {
+	if (sa_parse(argv[3], &endpt_addr) || endpt_addr.family != AF_INET) {
 		vty_out(vty, "%% cannot parse endpt addresses %s\n", argv[3]);
 		return CMD_WARNING;
 	}
@@ -481,7 +481,7 @@ DEFUN(pfcp_debug_teid,
 			ue_addr.family = AF_INET;
 			ue_is_range = true;
 		} else {
-			if (addr_parse(argv[4], &ue_addr)) {
+			if (sa_parse(argv[4], &ue_addr)) {
 				vty_out(vty, "%% cannot parse ue addresses %s\n", argv[4]);
 				return CMD_WARNING;
 			}
@@ -516,7 +516,7 @@ DEFUN(pfcp_debug_teid,
 
 	/* Parse secondary UE address for ingress (must differ in address family) */
 	if (ctx.is_ingress && argc >= 6) {
-		if (addr_parse(argv[5], &ue2_addr) ||
+		if (sa_parse(argv[5], &ue2_addr) ||
 		    ue2_addr.family == ue_addr.family) {
 			vty_out(vty, "%% cannot parse secondary ue addresses %s\n", argv[5]);
 			return CMD_WARNING;
@@ -526,7 +526,7 @@ DEFUN(pfcp_debug_teid,
 	}
 
 	/* fixme: works only for 'all' interfaces */
-	ctx.local = (union addr *)pfcp_session_get_addr_by_interface(c, 0);
+	ctx.local = (union sa *)pfcp_session_get_addr_by_interface(c, 0);
 
 	/* Iterate over TEID/UEADDR range */
 	for (i = 0; i < (int)range_count; i++) {
@@ -812,7 +812,7 @@ DEFUN(pfcp_peer,
 		return CMD_WARNING;
 	}
 
-	err = addr_parse(argv[0], &p->addr[p->nr_addr]);
+	err = sa_parse(argv[0], &p->addr[p->nr_addr]);
 	if (err) {
 		vty_out(vty, "%% invalid peer:'%s'%s", argv[0], VTY_NEWLINE);
 		return CMD_WARNING;
@@ -1024,7 +1024,7 @@ config_pfcp_peer_list_write(struct vty *vty)
 				   , p->description, VTY_NEWLINE);
 		for (i = 0; i < p->nr_addr; i++) {
 			vty_out(vty, " peer %s%s"
-				   , addr_stringify(&p->addr[i], addr_str, sizeof(addr_str))
+				   , sa_str(&p->addr[i], addr_str, sizeof(addr_str))
 				   , VTY_NEWLINE);
 		}
 

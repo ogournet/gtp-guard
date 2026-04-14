@@ -117,7 +117,7 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 
 	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 			 &s->remote_seid.addr,
-			 (const union addr *)&s->router->s.s.addr,
+			 (const union sa *)&s->router->s.s.addr,
 			 GTP_CAPTURE_FL_OUTPUT);
 
 	/* Run, Baby, Run */

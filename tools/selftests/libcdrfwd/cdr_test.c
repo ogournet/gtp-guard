@@ -81,12 +81,12 @@ test_ticket_async(void)
 	/* cdrcfg.lb_mode = CDR_FWD_MODE_FAIL_OVER; */
 	e->cfc.lb_mode = CDR_FWD_MODE_ROUND_ROBIN;
 	strcpy(e->cfc.spool_path, "test_spool");
-	e->cfc.remote = calloc(3, sizeof (union addr));
+	e->cfc.remote = calloc(3, sizeof (union sa));
 	e->cfc.remote_n = 2;
 
-	addr_parse("127.0.0.1:1664", &e->cfc.remote[0]);
-	addr_parse("127.0.0.1:1665", &e->cfc.remote[1]);
-	addr_parse("127.0.0.1:1666", &e->cfc.remote[2]);
+	sa_parse("127.0.0.1:1664", &e->cfc.remote[0]);
+	sa_parse("127.0.0.1:1665", &e->cfc.remote[1]);
+	sa_parse("127.0.0.1:1666", &e->cfc.remote[2]);
 	e->ctx = cdr_fwd_ctx_create(&e->cfc);
 	assert(e->ctx != NULL);
 
@@ -185,7 +185,7 @@ static void
 _server_accept(struct thread *ev)
 {
 	struct srv_ctx *srv;
-	union addr ra;
+	union sa ra;
 	socklen_t ral;
 	int afd = ev->u.f.fd;
 	int fd;
@@ -207,12 +207,12 @@ _server_accept(struct thread *ev)
 static void
 fake_server(void)
 {
-	union addr addr;
+	union sa addr;
 	char buf[64];
 	int fd, r, i;
 	int on = 1;
 
-	addr_parse("127.0.0.1", &addr);
+	sa_parse("127.0.0.1", &addr);
 
 	for (i = 0; i < 3; i++) {
 		fd = socket(PF_INET, SOCK_STREAM, 0);
@@ -225,8 +225,8 @@ fake_server(void)
 			close(fd);
 			return;
 		}
-		addr_set_port(&addr, 1664 + i);
-		r = bind(fd, &addr.sa, addr_len(&addr));
+		sa_set_port(&addr, 1664 + i);
+		r = bind(fd, &addr.sa, sa_len(&addr));
 		if (r < 0) {
 			err(cdrlog, "bind: %m");
 			close(fd);
@@ -241,7 +241,7 @@ fake_server(void)
 
 		thread_add_read(master, _server_accept, NULL, fd, TIMER_NEVER, 0);
 
-		debug(cdrlog, "listening on %s", addr_stringify(&addr, buf, sizeof (buf)));
+		debug(cdrlog, "listening on %s", sa_str(&addr, buf, sizeof (buf)));
 	}
 }
 

@@ -341,7 +341,7 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 	struct upf_ingress_key ik = {};
 	struct upf_fwd_rule rule;
 	struct upf_urr c = {};
-	union addr addr, laddr, addr_ue;
+	union sa addr, laddr, addr_ue;
 	char buf1[26], buf2[40], buf3[26], action_str[40];
 	uint32_t key = 0;
 	int err = 0;
@@ -369,18 +369,18 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 				     &c, sizeof(c), 0);
 
 		if (ik.flags & UE_IPV4)
-			addr_fromip4(&addr_ue, ik.ue_addr.ip4);
+			sa_from_ip4(&addr_ue, ik.ue_addr.ip4);
 		else if (ik.flags & UE_IPV6)
-			addr_fromip6b(&addr_ue, ik.ue_addr.ip6.addr);
-		addr_fromip4(&addr, rule.gtpu_remote_addr);
-		addr_set_port(&addr, ntohs(rule.gtpu_remote_port));
-		addr_fromip4(&laddr, rule.gtpu_local_addr);
-		addr_set_port(&laddr, ntohs(rule.gtpu_local_port));
+			sa_from_ip6_bytes(&addr_ue, ik.ue_addr.ip6.addr);
+		sa_from_ip4_port(&addr, rule.gtpu_remote_addr,
+				 ntohs(rule.gtpu_remote_port));
+		sa_from_ip4_port(&laddr, rule.gtpu_local_addr,
+				 ntohs(rule.gtpu_local_port));
 		table_add_row_fmt(tbl, "0x%.8x|%s|%s|%s|%lld|%lld",
 				  ntohl(rule.gtpu_remote_teid),
-				  addr_stringify(&addr_ue, buf2, sizeof (buf2)),
-				  addr_stringify(&addr, buf1, sizeof (buf1)),
-				  addr_stringify(&laddr, buf3, sizeof (buf3)),
+				  sa_str(&addr_ue, buf2, sizeof (buf2)),
+				  sa_str(&addr, buf1, sizeof (buf1)),
+				  sa_str(&laddr, buf3, sizeof (buf3)),
 				  c.dl_pkt, c.dl_bytes);
 	}
 	table_vty_out(tbl, vty);
@@ -414,11 +414,11 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 			snprintf(action_str, sizeof(action_str), "Decap");
 		}
 
-		addr_fromip4(&addr, ek.gtpu_local_addr);
-		addr_set_port(&addr, ntohs(ek.gtpu_local_port));
+		sa_from_ip4(&addr, ek.gtpu_local_addr);
+		sa_set_port(&addr, ntohs(ek.gtpu_local_port));
 		table_add_row_fmt(tbl, "0x%.8x|%s|%s|%lld|%lld",
 				  ntohl(ek.gtpu_local_teid),
-				  addr_stringify(&addr, buf1, sizeof (buf1)),
+				  sa_str(&addr, buf1, sizeof (buf1)),
 				  action_str, c.ul_pkt, c.ul_bytes);
 	}
 	table_vty_out(tbl, vty);
@@ -668,7 +668,7 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 				 &s->pending_addr,
-				 (const union addr *)&s->router->s.s.addr,
+				 (const union sa *)&s->router->s.s.addr,
 				 GTP_CAPTURE_FL_OUTPUT);
 
 		inet_server_snd(&s->router->s.s, s->router->s.s.fd, pbuff,

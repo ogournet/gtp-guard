@@ -254,7 +254,7 @@ cdr_fwd_spool_list_idx_files(struct cdr_fwd_context *ctx)
 {
 	struct dirent **dent;
 	char buf[64];
-	union addr a;
+	union sa a;
 	int n, i, r;
 
 	trace1(ctx->log, "%s: scanning idx_* files", ctx->cfg->spool_path);
@@ -278,7 +278,7 @@ cdr_fwd_spool_list_idx_files(struct cdr_fwd_context *ctx)
 			info(ctx->log, "cannot parse idx filename %s",
 			     dent[i]->d_name);
 		} else {
-			if (addr_parse(buf, &a)) {
+			if (sa_parse(buf, &a)) {
 				info(ctx->log, "cannot parse ip from file %s",
 				     dent[i]->d_name);
 			} else {

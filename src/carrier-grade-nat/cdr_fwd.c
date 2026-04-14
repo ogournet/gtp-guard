@@ -210,12 +210,12 @@ cdr_fwd_remote_select_next(struct cdr_fwd_context *ctx)
 }
 
 bool
-cdr_fwd_remote_select_addr(struct cdr_fwd_context *ctx, const union addr *a)
+cdr_fwd_remote_select_addr(struct cdr_fwd_context *ctx, const union sa *a)
 {
 	struct cdr_fwd_server *sr;
 
 	list_for_each_entry(sr, &ctx->remote_list, list) {
-		if (!addr_cmp(a, &sr->addr)) {
+		if (!sa_cmp(a, &sr->addr)) {
 			debug(ctx->log, "%s: selecting", sr->addr_str);
 			return cdr_fwd_remote_select(ctx, sr);
 		}
@@ -505,14 +505,14 @@ cdr_fwd_send_ticket(struct cdr_fwd_context *ctx, const uint8_t *data, int size)
 /* add remote adjacency.
  * port is mandatory, there's no default. */
 static void
-cdr_fwd_ctx_add_remote(struct cdr_fwd_context *ctx, const union addr *addr)
+cdr_fwd_ctx_add_remote(struct cdr_fwd_context *ctx, const union sa *addr)
 {
 	struct cdr_fwd_server *sr;
 	char buf[CDR_FWD_PATH_MAX + 80];
 
-	if (!addr_is_unicast(addr) || !addr_get_port(addr)) {
+	if (!sa_is_unicast(addr) || !sa_port(addr)) {
 		debug(ctx->log, "cannot add remote, bad addr: %s",
-		      addr_stringify(addr, buf, sizeof (buf)));
+		      sa_str(addr, buf, sizeof (buf)));
 		return;
 	}
 
@@ -520,9 +520,9 @@ cdr_fwd_ctx_add_remote(struct cdr_fwd_context *ctx, const union addr *addr)
 	sr->ctx = ctx;
 	sr->cur_fd = -1;
 
-	addr_copy(&sr->addr, addr);
+	sa_copy(&sr->addr, addr);
 	snprintf(sr->addr_str, sizeof (sr->addr_str), "%s",
-		 addr_stringify(&sr->addr, buf, sizeof (buf)));
+		 sa_str(&sr->addr, buf, sizeof (buf)));
 
 	snprintf(buf, sizeof (buf), "%s/idx_%s",
 		 ctx->cfg->spool_path, sr->addr_str);

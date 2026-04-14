@@ -703,7 +703,7 @@ gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 
 static int
 _build_fake_l2l3_hdr(uint8_t *buffer, size_t buflen, size_t payload_len,
-		     const union addr *remote_addr, const union addr *local_addr,
+		     const union sa *remote_addr, const union sa *local_addr,
 		     uint16_t flags)
 {
 	struct ethhdr *eth;
@@ -748,22 +748,22 @@ _build_fake_l2l3_hdr(uint8_t *buffer, size_t buflen, size_t payload_len,
 	iph->protocol = IPPROTO_UDP;
 	iph->check = 0;
 	if (flags & GTP_CAPTURE_FL_INPUT) {
-		iph->saddr = addr_toip4(remote_addr);
-		iph->daddr = addr_toip4(local_addr);
+		iph->saddr = sa_ip4(remote_addr);
+		iph->daddr = sa_ip4(local_addr);
 	} else {
-		iph->daddr = addr_toip4(remote_addr);
-		iph->saddr = addr_toip4(local_addr);
+		iph->daddr = sa_ip4(remote_addr);
+		iph->saddr = sa_ip4(local_addr);
 	}
 	iph->check = in_csum((uint16_t *) iph, sizeof(*iph), 0);
 
 	/* UDP header */
 	udph = (struct udphdr *)(iph + 1);
 	if (flags & GTP_CAPTURE_FL_INPUT) {
-		udph->source = htons(addr_get_port(remote_addr));
-		udph->dest = htons(addr_get_port(local_addr));
+		udph->source = sa_portb(remote_addr);
+		udph->dest = sa_portb(local_addr);
 	} else {
-		udph->dest = htons(addr_get_port(remote_addr));
-		udph->source = htons(addr_get_port(local_addr));
+		udph->dest = sa_portb(remote_addr);
+		udph->source = sa_portb(local_addr);
 	}
 	udph->len = htons(sizeof(*udph) + payload_len);
 	udph->check = 0;
@@ -826,7 +826,7 @@ gtp_capture_pkt(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
 
 void
 gtp_capture_data(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
-		 const union addr *remote_addr, const union addr *local_addr,
+		 const union sa *remote_addr, const union sa *local_addr,
 		 uint16_t flags)
 {
 	struct iovec pkt_iov[2];

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-/* Copyright (C) 2024, 2025 Olivier Gournet, <gournet.olivier@gmail.com> */
+/* Copyright (C) 2024, 2025, 2026 Olivier Gournet, <gournet.olivier@gmail.com> */
 
 #include <linux/version.h>
 #include <sys/socket.h>
@@ -16,28 +16,36 @@
 #include <net/if.h>
 #include <ifaddrs.h>
 
+#define SA_USE_AF_UNIX
+#define SA_USE_AF_PACKET
 #include "addr.h"
 
 
 socklen_t
-addr_len(const union addr *a)
+sa_len(const union sa *a)
 {
 	switch (a->sa.sa_family) {
 	case AF_INET:
 		return sizeof (a->sin);
 	case AF_INET6:
 		return sizeof (a->sin6);
+#ifdef SA_USE_AF_UNIX
+	case AF_UNIX:
+		return sizeof (a->sun);
+#endif
+#ifdef SA_USE_AF_PACKET
 	case AF_PACKET:
 		return sizeof (a->sll);
+#endif
 	default:
 		return 0;
 	}
 }
 
 void
-addr_copy(union addr *dst, const union addr *src)
+sa_copy(union sa *dst, const union sa *src)
 {
-	socklen_t l = addr_len(src);
+	socklen_t l = sa_len(src);
 
 	if (l > 0)
 		memcpy(&dst->ss, &src->ss, l);
@@ -46,23 +54,55 @@ addr_copy(union addr *dst, const union addr *src)
 }
 
 void
-addr_fromip4(union addr *a, uint32_t ipaddr)
+sa_from_ip4(union sa *a, uint32_t ipaddr)
 {
 	a->family = AF_INET;
 	a->sin.sin_addr.s_addr = ipaddr;
 	a->sin.sin_port = 0;
 }
 
+void
+sa_from_ip4_port(union sa *a, uint32_t ipaddr, uint16_t port)
+{
+	a->family = AF_INET;
+	a->sin.sin_addr.s_addr = ipaddr;
+	a->sin.sin_port = htons(port);
+}
+
+void
+sa_from_ip4h(union sa *a, uint32_t ipaddr_host)
+{
+	a->family = AF_INET;
+	a->sin.sin_addr.s_addr = htonl(ipaddr_host);
+	a->sin.sin_port = 0;
+}
+
+void
+sa_from_ip4h_port(union sa *a, uint32_t ipaddr_host, uint16_t port)
+{
+	a->family = AF_INET;
+	a->sin.sin_addr.s_addr = htonl(ipaddr_host);
+	a->sin.sin_port = htons(port);
+}
+
 uint32_t
-addr_toip4(const union addr *a)
+sa_ip4(const union sa *a)
 {
 	if (a->family == AF_INET)
 		return a->sin.sin_addr.s_addr;
 	return 0;
 }
 
+uint32_t
+sa_ip4h(const union sa *a)
+{
+	if (a->family == AF_INET)
+		return ntohl(a->sin.sin_addr.s_addr);
+	return 0;
+}
+
 void
-addr_fromip6(union addr *a, const struct in6_addr *ipaddr)
+sa_from_ip6(union sa *a, const struct in6_addr *ipaddr)
 {
 	a->family = AF_INET6;
 	memcpy(a->sin6.sin6_addr.s6_addr, ipaddr->s6_addr,
@@ -71,7 +111,16 @@ addr_fromip6(union addr *a, const struct in6_addr *ipaddr)
 }
 
 void
-addr_fromip6b(union addr *a, uint8_t *bytes)
+sa_from_ip6_port(union sa *a, const struct in6_addr *ipaddr, uint16_t port)
+{
+	a->family = AF_INET6;
+	memcpy(a->sin6.sin6_addr.s6_addr, ipaddr->s6_addr,
+	       sizeof (ipaddr->s6_addr));
+	a->sin6.sin6_port = htons(port);
+}
+
+void
+sa_from_ip6_bytes(union sa *a, const uint8_t *bytes)
 {
 	a->family = AF_INET6;
 	memcpy(a->sin6.sin6_addr.s6_addr, bytes, sizeof (a->sin6.sin6_addr));
@@ -81,15 +130,47 @@ addr_fromip6b(union addr *a, uint8_t *bytes)
 }
 
 const struct in6_addr *
-addr_toip6(const union addr *a)
+sa_ip6(const union sa *a)
 {
 	if (a->family == AF_INET6)
 		return &a->sin6.sin6_addr;
 	return NULL;
 }
 
+uint16_t
+sa_port(const union sa *a)
+{
+	switch (a->sa.sa_family) {
+	case AF_INET:
+		return ntohs(a->sin.sin_port);
+	case AF_INET6:
+		return ntohs(a->sin6.sin6_port);
+	default:
+		return 0;
+	}
+}
+
+uint16_t
+sa_portb(const union sa *a)
+{
+	return htons(sa_port(a));
+}
+
+void
+sa_set_port(union sa *a, uint16_t port)
+{
+	switch (a->sa.sa_family) {
+	case AF_INET:
+		a->sin.sin_port = htons(port);
+		break;
+	case AF_INET6:
+		a->sin6.sin6_port = htons(port);
+		break;
+	}
+}
+
 int
-addr_cmp(const union addr *la, const union addr *ra)
+sa_cmp(const union sa *la, const union sa *ra)
 {
 	int r;
 
@@ -121,12 +202,18 @@ addr_cmp(const union addr *la, const union addr *ra)
 			return 1;
 		return 0;
 
+#ifdef SA_USE_AF_UNIX
+	case AF_UNIX:
+		return strcmp(la->sun.sun_path, ra->sun.sun_path);
+#endif
+#ifdef SA_USE_AF_PACKET
 	case AF_PACKET:
 		if (la->sll.sll_ifindex < ra->sll.sll_ifindex)
 			return -1;
 		if (la->sll.sll_ifindex > ra->sll.sll_ifindex)
 			return 1;
 		return 0;
+#endif
 
 	default:
 		return 0;
@@ -134,7 +221,7 @@ addr_cmp(const union addr *la, const union addr *ra)
 }
 
 int
-addr_cmp_ip(const union addr *la, const union addr *ra)
+sa_cmp_ip(const union sa *la, const union sa *ra)
 {
 	if (la->sa.sa_family < ra->sa.sa_family)
 		return -1;
@@ -154,7 +241,7 @@ addr_cmp_ip(const union addr *la, const union addr *ra)
 }
 
 int
-addr_cmp_port(const union addr *la, const union addr *ra)
+sa_cmp_port(const union sa *la, const union sa *ra)
 {
 	if (la->sa.sa_family < ra->sa.sa_family)
 		return -1;
@@ -172,39 +259,13 @@ addr_cmp_port(const union addr *la, const union addr *ra)
 }
 
 int
-addr_cmp_ss(const union addr *la, const union addr *ra)
+sa_cmp_ss(const union sa *la, const union sa *ra)
 {
 	return ss_cmp(&la->ss, &ra->ss);
 }
 
-uint16_t
-addr_get_port(const union addr *a)
-{
-	switch (a->sa.sa_family) {
-	case AF_INET:
-		return ntohs(a->sin.sin_port);
-	case AF_INET6:
-		return ntohs(a->sin6.sin6_port);
-	default:
-		return 0;
-	}
-}
-
-void
-addr_set_port(union addr *a, uint16_t port)
-{
-	switch (a->sa.sa_family) {
-	case AF_INET:
-		a->sin.sin_port = htons(port);
-		break;
-	case AF_INET6:
-		a->sin6.sin6_port = htons(port);
-		break;
-	}
-}
-
 bool
-addr_is_unicast(const union addr *a)
+sa_is_unicast(const union sa *a)
 {
 	uint32_t addr;
 	uint8_t last;
@@ -238,12 +299,82 @@ addr_is_unicast(const union addr *a)
 	}
 }
 
+bool
+sa_is_any(const union sa *a)
+{
+	if (a == NULL)
+		return false;
+
+	switch (a->sa.sa_family) {
+	case AF_INET:
+		return a->sin.sin_addr.s_addr == INADDR_ANY;
+	case AF_INET6:
+		return !memcmp(&a->sin6.sin6_addr, &in6addr_any,
+			       sizeof (in6addr_any));
+	default:
+		return false;
+	}
+}
+
+bool
+sa_is_loopback(const union sa *a)
+{
+	if (a == NULL)
+		return false;
+
+	switch (a->sa.sa_family) {
+	case AF_INET:
+		return (ntohl(a->sin.sin_addr.s_addr) >> 24) == 127;
+	case AF_INET6:
+		return !memcmp(&a->sin6.sin6_addr, &in6addr_loopback,
+			       sizeof (in6addr_loopback));
+	default:
+		return false;
+	}
+}
+
+bool
+sa_is_multicast(const union sa *a)
+{
+	if (a == NULL)
+		return false;
+
+	switch (a->sa.sa_family) {
+	case AF_INET:
+		return (ntohl(a->sin.sin_addr.s_addr) >> 28) == 0xe;
+	case AF_INET6:
+		return a->sin6.sin6_addr.s6_addr[0] == 0xff;
+	default:
+		return false;
+	}
+}
+
+bool
+sa_is_linklocal(const union sa *a)
+{
+	uint32_t addr;
+
+	if (a == NULL)
+		return false;
+
+	switch (a->sa.sa_family) {
+	case AF_INET:
+		addr = ntohl(a->sin.sin_addr.s_addr);
+		return (addr >> 16) == 0xa9fe;  /* 169.254.0.0/16 */
+	case AF_INET6:
+		return (a->sin6.sin6_addr.s6_addr[0] == 0xfe &&
+			(a->sin6.sin6_addr.s6_addr[1] & 0xc0) == 0x80);
+	default:
+		return false;
+	}
+}
+
 
 /*
  * sockaddr -> ipv4:port or [ipv6]:port
  */
 char *
-addr_stringify(const union addr *a, char *buf, size_t buf_size)
+sa_str(const union sa *a, char *buf, size_t buf_size)
 {
 	char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 
@@ -265,7 +396,7 @@ addr_stringify(const union addr *a, char *buf, size_t buf_size)
  * sockaddr -> ipv4 or ipv6
  */
 char *
-addr_stringify_ip(const union addr *a, char *buf, size_t buf_size)
+sa_str_ip(const union sa *a, char *buf, size_t buf_size)
 {
 	if (getnameinfo(&a->sa, sizeof (*a),
 			buf, buf_size, NULL, 0,
@@ -278,12 +409,12 @@ addr_stringify_ip(const union addr *a, char *buf, size_t buf_size)
 }
 
 /*
- * sockaddr -> ipv4 or ipv6
+ * sockaddr -> port
  */
 char *
-addr_stringify_port(const union addr *a, char *buf, size_t buf_size)
+sa_str_port(const union sa *a, char *buf, size_t buf_size)
 {
-	uint16_t port = addr_get_port(a);
+	uint16_t port = sa_port(a);
 
 	if (port)
 		snprintf(buf, buf_size, "%d", port);
@@ -293,20 +424,47 @@ addr_stringify_port(const union addr *a, char *buf, size_t buf_size)
 	return buf;
 }
 
+/*
+ * thread-local buffer stringify variants
+ */
+char *
+sa_sstr(const union sa *a)
+{
+	static __thread char buf[NI_MAXHOST + NI_MAXSERV + 2];
+
+	return sa_str(a, buf, sizeof (buf));
+}
+
+char *
+sa_sstr_ip(const union sa *a)
+{
+	static __thread char buf[NI_MAXHOST];
+
+	return sa_str_ip(a, buf, sizeof (buf));
+}
+
+char *
+sa_sstr_port(const union sa *a)
+{
+	static __thread char buf[NI_MAXSERV];
+
+	return sa_str_port(a, buf, sizeof (buf));
+}
+
 
 /*
  * parse ipv4:port or [ipv6]:port
  */
 int
-addr_parse(const char *str, union addr *a)
+sa_parse(const char *addr, union sa *out)
 {
 	struct addrinfo *res, hints;
-	char buf[strlen(str) + 1];
+	char buf[strlen(addr) + 1];
 	unsigned int port;
 	char *paddr, *pport, *end;
 	int ret;
 
-	strcpy(buf, str);
+	strcpy(buf, addr);
 	paddr = buf;
 
 	memset(&hints, 0, sizeof (hints));
@@ -335,9 +493,9 @@ addr_parse(const char *str, union addr *a)
 
 	ret = getaddrinfo(paddr, NULL, &hints, &res);
 	if (ret || !res)
-		return 1;
+		return -1;
 
-	memcpy(a, res->ai_addr, res->ai_addrlen);
+	memcpy(out, res->ai_addr, res->ai_addrlen);
 	freeaddrinfo(res);
 
 	if (!pport)
@@ -345,79 +503,20 @@ addr_parse(const char *str, union addr *a)
 
 	port = strtoul(pport, &end, 10);
 	if (port > 65535 || *end)
-		return 1;
+		return -1;
 
-	switch (a->sa.sa_family) {
+	switch (out->sa.sa_family) {
 	case AF_INET:
 	default:
-		a->sin.sin_port = htons(port);
+		out->sin.sin_port = htons(port);
 		break;
 	case AF_INET6:
-		a->sin6.sin6_port = htons(port);
+		out->sin6.sin6_port = htons(port);
 		break;
 	}
 
 	return 0;
 }
-
-int
-addr_parse_iface(const char *iface_name, union addr *a)
-{
-	int idx;
-
-	idx = if_nametoindex(iface_name);
-	if (!idx)
-		return 1;
-
-	memset(a, 0x00, sizeof (a->sll));
-	a->sll.sll_family = AF_PACKET;
-	a->sll.sll_protocol = SOCK_RAW;
-	a->sll.sll_ifindex = idx;
-	return 0;
-}
-
-int
-addr_get_ifindex(const union addr *a)
-{
-	struct ifaddrs *ifaddr, *ifa;
-	int family, ifindex;
-
-	if (getifaddrs(&ifaddr) == -1)
-		return 0;
-
-	for (ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
-		if (!ifa->ifa_addr)
-			continue;
-
-		family = ifa->ifa_addr->sa_family;
-		if (family != a->family)
-			continue;
-
-		if (family == AF_INET6) {
-			struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) a;
-			struct sockaddr_in6 *ifa_addr6 = (struct sockaddr_in6 *) ifa->ifa_addr;
-
-			if (__addr_ip6_equal(&addr6->sin6_addr, &ifa_addr6->sin6_addr))
-				goto match;
-			continue;
-		}
-
-		struct sockaddr_in *addr4 = (struct sockaddr_in *) a;
-		struct sockaddr_in *ifa_addr4 = (struct sockaddr_in *) ifa->ifa_addr;
-
-		if (addr4->sin_addr.s_addr == ifa_addr4->sin_addr.s_addr)
-			goto match;
-	}
-
-	freeifaddrs(ifaddr);
-	return 0;
-
-  match:
-	ifindex = if_nametoindex(ifa->ifa_name);
-	freeifaddrs(ifaddr);
-	return ifindex;
-}
-
 
 /*
  * parse ipv4 or ipv6, with optional netmask and range. ex:
@@ -431,15 +530,15 @@ addr_get_ifindex(const union addr *a)
  * first_ip is true    10.13.26.16/8 => 10.0.0.0
  */
 int
-addr_parse_ip(const char *paddr, union addr *a,
-	      uint32_t *out_netmask, uint64_t *out_count,
-	      bool first_ip)
+sa_parse_opt(const char *paddr, union sa *a,
+	     uint32_t *out_netmask, uint64_t *out_count,
+	     bool first_ip)
 {
 	struct addrinfo *res, hints;
 	char buf[strlen(paddr) + 1];
 	uint32_t mask_max, mask;
 	char *nmask, *end, *srange;
-	union addr aend;
+	union sa aend;
 	int ret;
 
 	strcpy(buf, paddr);
@@ -450,8 +549,8 @@ addr_parse_ip(const char *paddr, union addr *a,
 		srange = strchr(buf, '-');
 		if (srange != NULL) {
 			*srange = 0;
-			if (addr_parse_ip(srange + 1, &aend, NULL, NULL, 0))
-				return 1;
+			if (sa_parse_opt(srange + 1, &aend, NULL, NULL, 0))
+				return -1;
 		}
 	}
 
@@ -465,7 +564,7 @@ addr_parse_ip(const char *paddr, union addr *a,
 
 	ret = getaddrinfo(buf, NULL, &hints, &res);
 	if (ret || !res)
-		return 1;
+		return -1;
 
 	memcpy(a, res->ai_addr, res->ai_addrlen);
 	freeaddrinfo(res);
@@ -477,7 +576,7 @@ addr_parse_ip(const char *paddr, union addr *a,
 	if (nmask) {
 		mask = strtoul(nmask, &end, 10);
 		if (mask > mask_max || *end)
-			return 1;
+			return -1;
 
 		switch (a->family) {
 		case AF_INET:
@@ -509,7 +608,7 @@ addr_parse_ip(const char *paddr, union addr *a,
 
 	if (aend.family != AF_UNSPEC) {
 		if (aend.family != a->family)
-			return 1;
+			return -1;
 		switch (a->family) {
 		case AF_INET:
 			if (ntohl(aend.sin.sin_addr.s_addr) >
@@ -533,11 +632,35 @@ addr_parse_ip(const char *paddr, union addr *a,
 }
 
 /*
+ *	Fast hash function for union sa
+ */
+uint32_t
+sa_hash(const union sa *a)
+{
+	uint32_t hash;
+
+	switch (a->sa.sa_family) {
+	case AF_INET:
+		hash = a->sin.sin_addr.s_addr;
+		hash ^= hash >> 16;
+		hash *= 0x85ebca6b;
+		hash ^= hash >> 13;
+		hash *= 0xc2b2ae35;
+		hash ^= hash >> 16;
+		return hash;
+	case AF_INET6:
+		return sa_hash_in6_addr(&a->sin6.sin6_addr);
+	default:
+		return 0;
+	}
+}
+
+/*
  *	Fast hash function for IPv6 addresses (struct in6_addr)
  *	Optimized for 128-bit IPv6 addresses using 32-bit operations
  */
 uint32_t
-addr_hash_in6_addr(const struct in6_addr *addr)
+sa_hash_in6_addr(const struct in6_addr *addr)
 {
 	const uint32_t *p;
 	uint32_t hash;

@@ -27,7 +27,7 @@ struct gtp_bpf_prog;
 struct gtp_bpf_capture_ctx;
 struct gtp_capture_file;
 struct gtp_capture_entry;
-union addr;
+union sa;
 
 #define GTP_CAPTURE_DEFAULT_SNAPLEN		96
 
@@ -65,7 +65,7 @@ struct gtp_capture_entry
 void gtp_capture_pkt(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
 		     uint16_t flags);
 void gtp_capture_data(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
-		      const union addr *remote_addr, const union addr *local_addr,
+		      const union sa *remote_addr, const union sa *local_addr,
 		      uint16_t flags);
 int gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 		      const char *name);
