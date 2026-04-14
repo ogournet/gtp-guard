@@ -41,9 +41,35 @@ struct {
 	__type(value, struct upf_urr);
 } upf_urr SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+	__uint(max_entries, 512);
+	__type(key, int);
+	__type(value, __u32);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} upf_li_perf SEC(".maps");
+
 
 #include "upf_urr.h"
 
+static __always_inline void
+upf_li_pkt(struct xdp_md *ctx, struct upf_fwd_rule *u, __u16 offset, __u16 dir_fl)
+{
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data = (void *)(long)ctx->data;
+
+	struct upf_li_entry le = {
+		.id = u->li_id,
+		.flags = dir_fl,
+		.payload_len = (__u16)(data_end - data),
+		.offset = offset,
+	};
+
+	UPF_DBG("li: fwd %d bytes (off:%d)", le.payload_len, offset);
+	bpf_perf_event_output(ctx, &upf_li_perf,
+			      ((__u64)le.payload_len << 32) | BPF_F_CURRENT_CPU,
+			      &le, sizeof(le));
+}
 
 static __always_inline int
 _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
@@ -56,7 +82,7 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
 	int adjust_sz, pkt_len;
 	__u32 csum = 0;
 
-	capture_xdp_to_userspc_in(ctx, &u->capture,  BPF_CAPTURE_EFL_INPUT |
+	capture_xdp_to_userspc_in(ctx, &u->capture, BPF_CAPTURE_EFL_INPUT |
 				  BPF_CAPTURE_EFL_CORE);
 
 	uu = bpf_map_lookup_elem(&upf_urr, &u->urr_idx);
@@ -65,6 +91,9 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
 
 	if (uu->flags & UPF_FL_QUOTA_REACHED)
 		goto drop;
+
+	if (u->li_id)
+		upf_li_pkt(ctx, u, d->pl_off, UPF_LI_FL_DIR_INGRESS);
 
 	/* encap in gtp-u, make room */
 	adjust_sz = sizeof(*iph) + sizeof(*udph) + sizeof(*gtph);
@@ -318,6 +347,9 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	uu->ul_bytes += pkt_len - adjust_sz;
 
 	upf_urr_check_ul(uu);
+
+	if (u->li_id)
+		upf_li_pkt(ctx, u, d->pl_off, UPF_LI_FL_DIR_EGRESS);
 
 	return XDP_IFR_FORWARD;
 
