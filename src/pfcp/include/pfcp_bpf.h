@@ -40,6 +40,7 @@ struct pfcp_bpf_data
 
 	struct bpf_map		*user_egress;
 	struct bpf_map		*user_ingress;
+	struct bpf_map		*upf_li_perf;
 
 	/* urr */
 	struct bpf_map		*upf_urr;
