@@ -25,7 +25,7 @@
 #include "lease_pool.h"
 
 struct ip_pool {
-	union addr		prefix;
+	union sa		prefix;
 	uint32_t		prefix_bits;
 	struct lease_pool	pool;
 	uint64_t		seed;

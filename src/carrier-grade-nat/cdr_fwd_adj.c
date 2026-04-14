@@ -358,7 +358,7 @@ _server_connect(struct thread *ev)
 	/* local bind */
 	if (sr->ctx->cfg->addr_ip_bound.sa.sa_family) {
 		if (bind(fd, &sr->ctx->cfg->addr_ip_bound.sa,
-			 addr_len(&sr->ctx->cfg->addr_ip_bound)) != 0) {
+			 sa_len(&sr->ctx->cfg->addr_ip_bound)) != 0) {
 			err(sr->ctx->log, "bind: %m");
 			close(fd);
 			_server_reconnect(sr);
@@ -367,7 +367,7 @@ _server_connect(struct thread *ev)
 	}
 
 	/* connect */
-	r = connect(fd, &sr->addr.sa, addr_len(&sr->addr));
+	r = connect(fd, &sr->addr.sa, sa_len(&sr->addr));
 	if (r && errno != EINPROGRESS) {
 		err(sr->ctx->log, "%s: connect: %m", sr->addr_str);
 		close(fd);

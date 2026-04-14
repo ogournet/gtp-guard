@@ -285,7 +285,7 @@ int main(int argc, char **argv)
 	const char *ip6_pfx_str = "1234:abcd:1330::/44";
 	const char *ip4_pfx_str = "10.0.0.0/12";
 	char addr_str[INET6_ADDRSTRLEN];
-	union addr pfx, pfx6;
+	union sa pfx, pfx6;
 	uint32_t pfx_len, pfx6_len;
 	struct ip_pool *p4, *p6, *ptest;
 	struct in_addr *addr4;
@@ -310,7 +310,7 @@ int main(int argc, char **argv)
 	printf("╚═══════════════════════════════════════════════════════════╝\n");
 
 	/* IPv6 playground */
-	err = addr_parse_ip(ip6_pfx_str, &pfx6, &pfx6_len, NULL, false);
+	err = sa_parse_opt(ip6_pfx_str, &pfx6, &pfx6_len, NULL, false);
 	if (err) {
 		fprintf(stderr, "Error allocating ip6_pfx\n");
 		exit(-1);
@@ -345,7 +345,7 @@ int main(int argc, char **argv)
 	ip_pool_destroy(p6);
 
 	/* IPv4 playground */
-	err = addr_parse_ip(ip4_pfx_str, &pfx, &pfx_len, NULL, false);
+	err = sa_parse_opt(ip4_pfx_str, &pfx, &pfx_len, NULL, false);
 	if (err) {
 		fprintf(stderr, "Error allocating ip6_pfx\n");
 		exit(-1);

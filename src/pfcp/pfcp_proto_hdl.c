@@ -48,7 +48,7 @@
 /* Heartbeat */
 static int
 pfcp_heartbeat_request(struct pfcp_msg *msg, struct pfcp_server *srv,
-		       union addr *addr)
+		       union sa *addr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
@@ -74,7 +74,7 @@ pfcp_heartbeat_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 /* pfd management */
 static int
 pfcp_pfd_management_request(struct pfcp_msg *msg, struct pfcp_server *srv,
-			    union addr *addr)
+			    union sa *addr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
@@ -101,7 +101,7 @@ pfcp_pfd_management_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 /* Association setup */
 static int
 pfcp_assoc_setup_request(struct pfcp_msg *msg, struct pfcp_server *srv,
-			 union addr *addr)
+			 union sa *addr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
@@ -147,7 +147,7 @@ pfcp_assoc_setup_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 
 static int
 pfcp_assoc_setup_response(struct pfcp_msg *msg, struct pfcp_server *srv,
-			  union addr *addr)
+			  union sa *addr)
 {
 	struct pfcp_association_setup_response *rsp;
 	struct pfcp_assoc *assoc;
@@ -259,7 +259,7 @@ pfcp_session_get_apn(struct pfcp_ie_apn_dnn *apn_dnn)
 
 static int
 pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv,
-				   union addr *addr)
+				   union sa *addr)
 {
 	struct pkt_buffer *rcv_pbuff = srv->s.pbuff;
 	struct pkt_buffer *pbuff;
@@ -334,7 +334,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	}
 
 	gtp_capture_data(&s->sig_cap, rcv_pbuff->head, pkt_buffer_len(rcv_pbuff),
-			 addr, (const union addr *)&srv->s.addr,
+			 addr, (const union sa *)&srv->s.addr,
 			 GTP_CAPTURE_FL_INPUT);
 
 	ret = pfcp_session_create(s, req, addr);
@@ -393,7 +393,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	srv->s.pbuff = pbuff;
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const union addr *)&srv->s.addr,
+				 addr, (const union sa *)&srv->s.addr,
 				 GTP_CAPTURE_FL_OUTPUT);
 	return ret;
 }
@@ -401,7 +401,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 /* Session modification */
 static int
 pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
-				  union addr *addr)
+				  union sa *addr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
@@ -425,7 +425,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		goto reply_now;
 	}
 	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-			 addr, (const union addr *)&srv->s.addr,
+			 addr, (const union sa *)&srv->s.addr,
 			 GTP_CAPTURE_FL_INPUT);
 	pfcph->seid = s->remote_seid.id;
 
@@ -461,7 +461,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 				    , __FUNCTION__);
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const union addr *)&srv->s.addr,
+				 addr, (const union sa *)&srv->s.addr,
 				 GTP_CAPTURE_FL_OUTPUT);
 
 	return ret;
@@ -470,7 +470,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 /* Session deletion */
 static int
 pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
-			      union addr *addr)
+			      union sa *addr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
@@ -494,7 +494,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		goto reply_now;
 	}
 	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-			 addr, (const union addr *)&srv->s.addr,
+			 addr, (const union sa *)&srv->s.addr,
 			 GTP_CAPTURE_FL_INPUT);
 	pfcph->seid = s->remote_seid.id;
 
@@ -525,7 +525,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 				    , __FUNCTION__);
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const union addr *)&srv->s.addr,
+				 addr, (const union sa *)&srv->s.addr,
 				 GTP_CAPTURE_FL_OUTPUT);
 
 	return ret;
@@ -534,7 +534,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 /* Session Report Response */
 static int
 pfcp_session_report_response(struct pfcp_msg *msg, struct pfcp_server *srv,
-			      union addr *addr)
+			      union sa *addr)
 {
 	struct pfcp_session_report_response *rsp = msg->session_report_response;
 	struct pkt_buffer *pbuff = srv->s.pbuff;
@@ -551,7 +551,7 @@ pfcp_session_report_response(struct pfcp_msg *msg, struct pfcp_server *srv,
 		s = pfcp_session_get(be64toh(pfcph->seid));
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const union addr *)&srv->s.addr,
+				 addr, (const union sa *)&srv->s.addr,
 				 GTP_CAPTURE_FL_INPUT);
 
 	return -1;
@@ -562,7 +562,7 @@ pfcp_session_report_response(struct pfcp_msg *msg, struct pfcp_server *srv,
  *	PFCP FSM
  */
 static const struct {
-	int (*hdl) (struct pfcp_msg *, struct pfcp_server *, union addr *);
+	int (*hdl) (struct pfcp_msg *, struct pfcp_server *, union sa *);
 } pfcp_msg_hdl[1 << 8] = {
 	/* PFCP Node related */
 	[PFCP_HEARTBEAT_REQUEST]		= { pfcp_heartbeat_request },
@@ -590,7 +590,7 @@ pfcp_proto_hdl(struct pfcp_server *srv, struct sockaddr_storage *raddr)
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
 	struct pfcp_msg *msg = srv->msg;
-	union addr *addr = (union addr *)raddr;
+	union sa *addr = (union sa *)raddr;
 	int err;
 
 	err = pfcp_msg_parse(msg, srv->s.pbuff);
@@ -646,7 +646,7 @@ gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 }
 
 static int
-gtpu_echo_request_hdl(struct gtp_server *srv, union addr *addr)
+gtpu_echo_request_hdl(struct gtp_server *srv, union sa *addr)
 {
 	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
 	struct gtp1_ie_recovery *rec;
@@ -666,20 +666,20 @@ gtpu_echo_request_hdl(struct gtp_server *srv, union addr *addr)
 }
 
 static int
-gtpu_error_indication_hdl(struct gtp_server *s, union addr *addr)
+gtpu_error_indication_hdl(struct gtp_server *s, union sa *addr)
 {
 	return 0;
 }
 
 static int
-gtpu_end_marker_hdl(struct gtp_server *s, union addr *addr)
+gtpu_end_marker_hdl(struct gtp_server *s, union sa *addr)
 {
 	/* TODO: Release related TEID */
 	return 0;
 }
 
 static const struct {
-	int (*hdl) (struct gtp_server *, union addr *);
+	int (*hdl) (struct gtp_server *, union sa *);
 } gtpu_msg_hdl[1 << 8] = {
 	[GTPU_ECHO_REQ_TYPE]			= { gtpu_echo_request_hdl },
 	[GTPU_ERR_IND_TYPE]			= { gtpu_error_indication_hdl },
@@ -690,7 +690,7 @@ int
 pfcp_gtpu_hdl(struct gtp_server *srv, struct sockaddr_storage *raddr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
-	union addr *addr = (union addr *)raddr;
+	union sa *addr = (union sa *)raddr;
 	ssize_t len;
 
 	len = gtpu_get_header_len(srv->s.pbuff);

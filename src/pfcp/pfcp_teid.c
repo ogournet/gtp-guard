@@ -54,7 +54,7 @@ pfcp_teid_hashkey(struct hlist_head *h, uint32_t id, struct in_addr *ipv4,
 		  struct in6_addr *ipv6)
 {
 	uint32_t hkey = jhash_3words(id, (ipv4) ? ipv4->s_addr : 0
-				       , (ipv6) ? addr_hash_in6_addr(ipv6) : 0
+				       , (ipv6) ? sa_hash_in6_addr(ipv6) : 0
 				       , 0);
 	return h + (hkey & TEID_HASHTAB_MASK);
 }
@@ -78,10 +78,10 @@ pfcp_teid_cmp(struct pfcp_teid *a, uint32_t id, struct in_addr *ipv4,
 	if (ip6_cmp && ip6_cmp != 2)
 		return -1;
 
-	if (ip4_cmp && !__addr_ip4_equal(&a->ipv4, ipv4))
+	if (ip4_cmp && !__sa_ip4_equal(&a->ipv4, ipv4))
 		return -1;
 
-	if (ip6_cmp && !__addr_ip6_equal(&a->ipv6, ipv6))
+	if (ip6_cmp && !__sa_ip6_equal(&a->ipv6, ipv6))
 		return -1;
 
 	return 0;

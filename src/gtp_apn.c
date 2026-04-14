@@ -345,7 +345,7 @@ gtp_apn_ip_pool_get_by_family(struct gtp_apn *apn, sa_family_t af)
 {
 	struct list_head *l = &apn->ip_pool;
 	struct gtp_apn_ip_pool *ap;
-	union addr *pfx;
+	union sa *pfx;
 
 	list_for_each_entry(ap, l, next) {
 		pfx = &ap->p->pool->prefix;

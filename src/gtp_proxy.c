@@ -198,8 +198,8 @@ _set_tun_rules(struct gtp_proxy *ctx, bool add, bool ingress, uint32_t addr)
 	gtp_bpf_ifrules_set(&ifr, add);
 
 	/* rules from tunnel */
-	k.b.tun_local = addr_toip4(&tun->tunnel_local);
-	k.b.tun_remote = addr_toip4(&tun->tunnel_remote);
+	k.b.tun_local = sa_ip4(&tun->tunnel_local);
+	k.b.tun_remote = sa_ip4(&tun->tunnel_remote);
 	k.b.flags = IF_RULE_FL_TUNNEL_IPIP;
 
 	if (!xlat_before) {

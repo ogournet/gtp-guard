@@ -234,7 +234,7 @@ DEFUN(show_ip_pool,
 		pool = p->pool;
 		table_add_row_fmt(tbl, "%s|%s/%d|%u|%u|%.2f%%|%.2f%%"
 				     , p->name
-				     , addr_stringify(&pool->prefix, addr_str, INET6_ADDRSTRLEN)
+				     , sa_str(&pool->prefix, addr_str, INET6_ADDRSTRLEN)
 				     , pool->prefix_bits
 				     , pool->pool.used
 				     , pool->pool.size
@@ -263,7 +263,7 @@ gtp_config_write(struct vty *vty)
 	   			   , p->description, VTY_NEWLINE);
 		if (p->pool)
 			vty_out(vty, " prefix %s/%d%s"
-				   , addr_stringify_ip(&p->pool->prefix, addr_str,
+				   , sa_str_ip(&p->pool->prefix, addr_str,
 						       INET6_ADDRSTRLEN)
 				   , p->pool->prefix_bits
 				   , VTY_NEWLINE);

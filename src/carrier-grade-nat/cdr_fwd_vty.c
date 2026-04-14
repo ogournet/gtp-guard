@@ -178,7 +178,7 @@ DEFUN(cdr_bind_addr,
 		return CMD_WARNING;
 	}
 
-	if (addr_parse(argv[0], &e->cfc.addr_ip_bound))
+	if (sa_parse(argv[0], &e->cfc.addr_ip_bound))
 		return CMD_WARNING;
 
 	return CMD_SUCCESS;
@@ -193,7 +193,7 @@ DEFUN(cdr_remote_addr,
 {
 	struct cdr_fwd_entry *e = vty->index;
 	struct cdr_fwd_config *c = &e->cfc;
-	union addr a;
+	union sa a;
 	int i;
 
 	if (e->ctx != NULL) {
@@ -202,7 +202,7 @@ DEFUN(cdr_remote_addr,
 		return CMD_WARNING;
 	}
 
-	if (addr_parse(argv[0], &a) || !addr_get_port(&a)) {
+	if (sa_parse(argv[0], &a) || !sa_port(&a)) {
 		vty_out(vty, "%% cannot parse remote '%s', must be ipv4/ipv6 "
 			"address with port\n", argv[0]);
 		return CMD_WARNING;
@@ -215,7 +215,7 @@ DEFUN(cdr_remote_addr,
 	}
 
 	for (i = 0; i < c->remote_n; i++)
-		if (!addr_cmp(&c->remote[i], &a))
+		if (!sa_cmp(&c->remote[i], &a))
 			return CMD_SUCCESS;
 
 	c->remote[c->remote_n++] = a;
@@ -323,12 +323,12 @@ cdr_fwd_config_cdr_write(struct vty *vty)
 			vty_out(vty, " rr-roll-period %d\n", e->cfc.rr_roll_period);
 		if (e->cfc.instance_id)
 			vty_out(vty, " instance-id %d\n", e->cfc.instance_id);
-		if (addr_len(&e->cfc.addr_ip_bound))
+		if (sa_len(&e->cfc.addr_ip_bound))
 			vty_out(vty, " bind-addr %s\n",
-				addr_stringify_ip(&e->cfc.addr_ip_bound, buf, 64));
+				sa_str_ip(&e->cfc.addr_ip_bound, buf, 64));
 		for (i = 0; i < e->cfc.remote_n; i++) {
 			vty_out(vty, " remote %s\n",
-				addr_stringify(&e->cfc.remote[i], buf, 64));
+				sa_str(&e->cfc.remote[i], buf, 64));
 		}
 		vty_out(vty, " %sshutdown\n"
 			   , e->ctx == NULL ? "" : "no ");
