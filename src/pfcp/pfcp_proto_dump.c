@@ -552,11 +552,10 @@ pfcp_proto_buffer_format(union sa *addr, struct pkt_buffer *pbuff,
 	size_t pos = 0;
 	int i;
 
-	snprintf(title, sizeof(title), " %s packet %s [%s]:%d len:%d ",
+	snprintf(title, sizeof(title), " %s packet %s %s len:%d ",
 		 (dir == PFCP_DIR_INGRESS) ? "ingress" : "egress",
 		 (dir == PFCP_DIR_INGRESS) ? "from" : "to",
-		 inet_sockaddrtos(&addr->ss), ntohs(inet_sockaddrport(&addr->ss)),
-		 pkt_buffer_len(pbuff));
+		 sa_sstr(addr), pkt_buffer_len(pbuff));
 	text_len = strlen(title) + 2;
 	padding_left = (width - text_len) / 2;
 	padding_right = width - text_len - padding_left;

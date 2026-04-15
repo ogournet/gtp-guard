@@ -45,7 +45,6 @@ gtp_request_json_parse_cmd(struct inet_cnx *c, struct json_node *json)
 	struct gtp_apn *apn;
 	struct gtp_conn *conn;
 	char *cmd_str = NULL, *apn_str = NULL, *imsi_str = NULL;
-	char addr_str[INET6_ADDRSTRLEN];
 	uint8_t imsi_swap[8];
 	uint64_t imsi;
 
@@ -91,12 +90,11 @@ gtp_request_json_parse_cmd(struct inet_cnx *c, struct json_node *json)
 	jsonw_string_field_fmt(jwriter, "sgw-ip-address", "%u.%u.%u.%u"
 					 , NIPQUAD(conn->sgw_addr.sin_addr.s_addr));
 
-	log_message(LOG_INFO, "%s(): imsi_info:={imsi:%s sgw-ip-address:%u.%u.%u.%u} with peer [%s]:%d"
+	log_message(LOG_INFO, "%s(): imsi_info:={imsi:%s sgw-ip-address:%u.%u.%u.%u} with peer %s"
 			    , __FUNCTION__
 			    , imsi_str
 			    ,  NIPQUAD(conn->sgw_addr.sin_addr.s_addr)
-			    , inet_sockaddrtos2(&c->addr, addr_str)
-			    , ntohs(inet_sockaddrport(&c->addr)));
+			    , sa_sstr(&c->addr));
 
   end:
 	jsonw_end_object(jwriter);

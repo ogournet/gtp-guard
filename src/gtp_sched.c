@@ -41,7 +41,7 @@ gtp_sched_pgw_wlc(struct gtp_naptr *naptr, struct sockaddr_in *addr_skip)
 
 	/* Second stage: wlc over lower priority */
 	list_for_each_entry(pgw, &naptr->pgw, next) {
-		paddr = (struct sockaddr_in *) &pgw->addr;
+		paddr = &pgw->addr.sin;
 		if (paddr->sin_addr.s_addr == addr_skip->sin_addr.s_addr)
 			continue;
 
@@ -136,7 +136,7 @@ gtp_sched_generic(struct gtp_apn *apn, struct list_head *l, const char *service_
 
 		pgw = __gtp_sched_naptr(l, service_str, addr_skip);
 		if (pgw) {
-			*addr = *(struct sockaddr_in *) &pgw->addr;
+			*addr = *&pgw->addr.sin;
 			pthread_mutex_unlock(&apn->mutex);
 			return 0;
 		}
@@ -182,7 +182,7 @@ gtp_sched_or_fallback(struct gtp_apn *apn, struct list_head *l,
 	pthread_mutex_lock(&apn->mutex);
 	pgw = __gtp_sched_naptr(l, service_base, addr_skip);
 	if (pgw) {
-		*addr = *(struct sockaddr_in *) &pgw->addr;
+		*addr = *&pgw->addr.sin;
 		pthread_mutex_unlock(&apn->mutex);
 		return 0;
 	}

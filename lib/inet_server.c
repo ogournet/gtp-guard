@@ -16,8 +16,10 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
+
+#define SA_USE_AF_UNIX
 
 /* system includes */
 #include <unistd.h>
@@ -44,8 +46,8 @@ inet_server_vty(struct vty *vty, const char *type_str, struct inet_server *srv)
 {
 	vty_out(vty, "%s %s port %d"
 		   , type_str
-		   , inet_sockaddrtos(&srv->addr)
-		   , ntohs(inet_sockaddrport(&srv->addr)));
+		   , sa_sstr_ip(&srv->addr)
+		   , sa_port(&srv->addr));
 	if (srv->if_boundto[0])
 		vty_out(vty, " bind %s", srv->if_boundto);
 	vty_out(vty, "%s", VTY_NEWLINE);
@@ -56,17 +58,17 @@ ssize_t
 inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
 		struct sockaddr_in *addr)
 {
+	char buf1[64], buf2[64];
+
 	ssize_t nbytes = sendto(fd, pbuff->head
 				  , pkt_buffer_len(pbuff)
 				  , 0, addr, sizeof(*addr));
 	/* metrics */
 	if (nbytes < 0) {
-		log_message(LOG_INFO, "%s(): error sending from %u.%u.%u.%u:%d to %u.%u.%u.%u:%d (%m)"
+		log_message(LOG_INFO, "%s(): error sending from %s to %s (%m)"
 				    , __FUNCTION__
-				    , NIPQUAD(((struct sockaddr_in *) &s->addr)->sin_addr.s_addr)
-				    , ntohs(((struct sockaddr_in *) &s->addr)->sin_port)
-				    , NIPQUAD(addr->sin_addr.s_addr)
-				    , ntohs(addr->sin_port));
+				    , sa_str((union sa *)&s->addr, buf1, sizeof (buf1))
+				    , sa_str((union sa *)addr, buf2, sizeof (buf2)));
 		s->tx_errors++;
 		return -1;
 	}
@@ -79,12 +81,13 @@ inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
 }
 
 static ssize_t
-inet_server_rcv(struct inet_server *s, struct sockaddr *addr, socklen_t *addrlen)
+inet_server_rcv(struct inet_server *s, union sa *remote)
 {
-	ssize_t nbytes = recvfrom(s->fd, s->pbuff->head
-				       , pkt_buffer_size(s->pbuff)
-				       , 0, addr, addrlen);
-	/* metrics */
+	socklen_t remote_len = sizeof (*remote);
+	ssize_t nbytes;
+
+	nbytes = recvfrom(s->fd, s->pbuff->head, pkt_buffer_size(s->pbuff),
+			  0, &remote->sa, &remote_len);
 	if (nbytes < 0) {
 		s->rx_errors++;
 		return -1;
@@ -104,36 +107,31 @@ inet_server_rcv(struct inet_server *s, struct sockaddr *addr, socklen_t *addrlen
 static int
 inet_server_udp_init(struct inet_server *s)
 {
-	struct sockaddr_storage *addr = &s->addr;
 	const char *ifname = s->if_boundto[0] ? s->if_boundto : NULL;
-	socklen_t addrlen;
+	union sa *addr = &s->addr;
 	int fd, err;
 
 	/* Create UDP Listener */
-	fd = socket(addr->ss_family, SOCK_DGRAM, 0);
+	fd = socket(addr->family, SOCK_DGRAM, 0);
 	err = inet_setsockopt_reuseaddr(fd, 1);
 	err = (err) ? : inet_setsockopt_reuseport(fd, 1);
 	err = (err) ? : inet_setsockopt_rcvbuf(fd, INET_SOCKBUF_SIZE);
 	err = (err) ? : inet_setsockopt_sndbuf(fd, INET_SOCKBUF_SIZE);
 	err = (err) ? : (ifname) ? inet_setsockopt_bindtodevice(fd, ifname) : err;
 	if (err) {
-		log_message(LOG_INFO, "%s(): error creating UDP [%s]:%d socket"
+		log_message(LOG_INFO, "%s(): error creating UDP %s socket"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(addr));
 		close(fd);
 		return -1;
 	}
 
 	/* Bind listening channel */
-	addrlen = (addr->ss_family == AF_INET) ? sizeof(struct sockaddr_in) :
-						 sizeof(struct sockaddr_in6);
-	err = bind(fd, (struct sockaddr *) addr, addrlen);
+	err = bind(fd, &addr->sa, sa_len(addr));
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error binding to [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): Error binding to %s (%m)"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(addr));
 		close(fd);
 		return -1;
 	}
@@ -145,9 +143,8 @@ void
 inet_server_udp_async_recv_thread(struct thread *t)
 {
 	struct inet_server *s = THREAD_ARG(t);
-	struct sockaddr_storage *addr = &s->addr;
-	struct sockaddr_storage addr_from;
-	socklen_t addrlen = sizeof (*addr);
+	union sa *addr = &s->addr;
+	union sa addr_from;
 	ssize_t nbytes;
 
 	if (t->type == THREAD_READ_TIMEOUT)
@@ -157,7 +154,7 @@ inet_server_udp_async_recv_thread(struct thread *t)
 		s->pbuff = pkt_buffer_alloc(DEFAULT_PKT_BUFFER_SIZE);
 
 	/* Perform ingress packet handling */
-	nbytes = inet_server_rcv(s, (struct sockaddr *) &addr_from, &addrlen);
+	nbytes = inet_server_rcv(s, &addr_from);
 	if (nbytes == -1) {
 		if (errno == EAGAIN || errno == EINTR)
 			goto next_read;
@@ -168,10 +165,9 @@ inet_server_udp_async_recv_thread(struct thread *t)
 		close(s->fd);
 		s->fd = inet_server_udp_init(s);
 		if (s->fd < 0) {
-			log_message(LOG_INFO, "%s(): Error creating UDP on [%s]:%d...dying..."
+			log_message(LOG_INFO, "%s(): Error creating UDP on %s...dying..."
 					    , __FUNCTION__
-					    , inet_sockaddrtos(addr)
-					    , ntohs(inet_sockaddrport(addr)));
+					    , sa_sstr(addr));
 			return;
 		}
 		goto next_read;
@@ -247,7 +243,7 @@ inet_server_thread(void *arg)
 	int old_type, err;
 
 	/* Out identity */
-	snprintf(identity, 63, "%s", inet_sockaddrtos(&c->addr));
+	snprintf(identity, 63, "%s", sa_sstr_ip(&c->addr));
 	prctl(PR_SET_NAME, identity, 0, 0, 0, 0);
 
 	/* Set Cancel type */
@@ -291,16 +287,15 @@ end:
 static void
 inet_server_accept(struct thread *t)
 {
-	struct sockaddr_storage addr;
+	union sa addr;
 	socklen_t addrlen = sizeof (addr);
 	struct inet_worker *w;
 	struct inet_cnx *c;
-	int fd, accept_fd, err = 0, family;
+	int fd, accept_fd, err = 0;
 
 	/* Fetch thread elements */
 	fd = THREAD_FD(t);
 	w = THREAD_ARG(t);
-	family = w->server->addr.ss_family;
 
 	/* Terminate event */
 	if (__test_bit(INET_FL_STOP_BIT, &w->flags)) {
@@ -313,42 +308,39 @@ inet_server_accept(struct thread *t)
 		goto next_accept;
 
 	/* Accept incoming connection */
-	accept_fd = accept(fd, (struct sockaddr *) &addr, &addrlen);
+	accept_fd = accept(fd, &addr.sa, &addrlen);
 	if (accept_fd < 0) {
-		log_message(LOG_INFO, "%s(): #%d Error accepting connection from peer [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): #%d Error accepting connection from peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , inet_sockaddrtos(&addr)
-				    , ntohs(inet_sockaddrport(&addr)));
+				    , sa_sstr(&addr));
 		goto next_accept;
 	}
 
 	/* remote client session allocation */
 	PMALLOC(c);
 	c->fd = accept_fd;
-	c->addr = addr;
+	sa_copy(&c->addr, &addr);
 	c->worker = w;
 	c->fp = fdopen(accept_fd, "w");
 	if (!c->fp) {
-		log_message(LOG_INFO, "%s(): #%d cant fdopen on accept socket with peer [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): #%d cant fdopen on accept socket with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , inet_sockaddrtos(&addr)
-				    , ntohs(inet_sockaddrport(&addr)));
+				    , sa_sstr(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
 
 	/* Register reader on accept_sd */
-	if (family == AF_INET || family == AF_INET6) {
+	if (w->server->addr.family == AF_INET || w->server->addr.family == AF_INET6) {
 		err = inet_setsockopt_nodelay(c->fd, 1);
 		err = (err) ? : inet_setsockopt_nolinger(c->fd, 1);
 	}
 	if (err) {
-		log_message(LOG_INFO, "%s(): error creating TCP connection with [%s]:%d"
+		log_message(LOG_INFO, "%s(): error creating TCP connection with %s"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(&addr)
-				    , ntohs(inet_sockaddrport(&addr)));
+				    , sa_sstr(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
@@ -357,33 +349,30 @@ inet_server_accept(struct thread *t)
 	* simply handle requests synchronously */
 	err = pthread_attr_init(&c->task_attr);
 	if (err) {
-		log_message(LOG_INFO, "%s(): #%d cant init pthread_attr for session with peer [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): #%d cant init pthread_attr for session with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , inet_sockaddrtos(&addr)
-				    , ntohs(inet_sockaddrport(&addr)));
+				    , sa_sstr(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
 
 	err = pthread_attr_setdetachstate(&c->task_attr, PTHREAD_CREATE_DETACHED);
 	if (err) {
-		log_message(LOG_INFO, "%s(): #%d cant set pthread detached for session with peer [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): #%d cant set pthread detached for session with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , inet_sockaddrtos(&addr)
-				    , ntohs(inet_sockaddrport(&addr)));
+				    , sa_sstr(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
 
 	err = pthread_create(&c->task, &c->task_attr, inet_server_thread, c);
 	if (err) {
-		log_message(LOG_INFO, "%s(): #%d cant create pthread for session with peer [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): #%d cant create pthread for session with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , inet_sockaddrtos(&addr)
-				    , ntohs(inet_sockaddrport(&addr)));
+				    , sa_sstr(&addr));
 		inet_cnx_destroy(c);
 	}
 
@@ -402,60 +391,47 @@ inet_server_tcp_listen(struct inet_worker *w)
 {
 	mode_t old_mask;
 	struct inet_server *s = w->server;
-	struct sockaddr_storage *addr = &s->addr;
-	socklen_t addrlen;
+	union sa *bind_addr = &s->addr;
+	socklen_t addrlen = sa_len(bind_addr);
 	int err, fd = -1;
+
+	if (!addrlen) {
+		log_message(LOG_INFO, "%s(): unknown socket family %d"
+				    , __FUNCTION__
+				    , bind_addr->family);
+		return -1;
+	}
 
 	/* Mask */
 	old_mask = umask(0077);
 
 	/* Create socket */
-	fd = socket(addr->ss_family, SOCK_STREAM, 0);
+	fd = socket(bind_addr->family, SOCK_STREAM, 0);
 	err = inet_setsockopt_reuseaddr(fd, 1);
 	err = (err) ? : inet_setsockopt_reuseport(fd, 1);
 	if (err) {
-		log_message(LOG_INFO, "%s(): error creating [%s]:%d socket"
+		log_message(LOG_INFO, "%s(): error creating %s socket"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(bind_addr));
 		close(fd);
 		return -1;
 	}
 
 	/* Bind listening channel */
-	switch (addr->ss_family) {
-	case AF_UNIX:
-		addrlen = SUN_LEN((struct sockaddr_un *) addr);
-		break;
-	case AF_INET:
-		addrlen = sizeof(struct sockaddr_in);
-		break;
-	case AF_INET6:
-		addrlen = sizeof(struct sockaddr_in6);
-		break;
-	default:
-		log_message(LOG_INFO, "%s(): unknown socket family %d"
-				    , __FUNCTION__
-				    , addr->ss_family);
-		goto error;
-	}
-
-	err = bind(fd, (struct sockaddr *) addr, addrlen);
+	err = bind(fd, &bind_addr->sa, addrlen);
 	if (err < 0) {
-		log_message(LOG_INFO, "%s(): Error binding to [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): Error binding to %s (%m)"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(bind_addr));
 		goto error;
 	}
 
 	/* Init listening channel */
 	err = listen(fd, 5);
 	if (err < 0) {
-		log_message(LOG_INFO, "%s(): Error listening on [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): Error listening on %s (%m)"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(bind_addr));
 		goto error;
 	}
 
@@ -513,10 +489,9 @@ inet_server_worker_task(void *arg)
 	prctl(PR_SET_NAME, pname, 0, 0, 0, 0);
 
 	/* Welcome message */
-	log_message(LOG_INFO, "%s(): Starting Listener Server[%s:%d]/Worker[%d]"
+	log_message(LOG_INFO, "%s(): Starting Listener Server[%s]/Worker[%d]"
 			    , __FUNCTION__
-			    , inet_sockaddrtos(&s->addr)
-			    , ntohs(inet_sockaddrport(&s->addr))
+			    , sa_sstr(&s->addr)
 			    , w->id);
 	__set_bit(INET_FL_RUNNING_BIT, &w->flags);
 
@@ -533,10 +508,9 @@ inet_server_worker_task(void *arg)
 	launch_thread_scheduler(w->master);
 
 	/* Release Master stuff */
-	log_message(LOG_INFO, "%s(): Stopping Listener Server[%s:%d]/Worker[%d]"
+	log_message(LOG_INFO, "%s(): Stopping Listener Server[%s]/Worker[%d]"
 			    , __FUNCTION__
-			    , inet_sockaddrtos(&s->addr)
-			    , ntohs(inet_sockaddrport(&s->addr))
+			    , sa_sstr(&s->addr)
 			    , w->id);
 	__clear_bit(INET_FL_RUNNING_BIT, &w->flags);
 	return NULL;

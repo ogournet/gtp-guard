@@ -91,14 +91,14 @@ gtpc_retransmit_detected(struct gtp_server *srv)
  *	GTP-C Message handle
  */
 static const struct {
-	struct gtp_teid * (*hdl) (struct gtp_server *, struct sockaddr_storage *);
+	struct gtp_teid * (*hdl) (struct gtp_server *, union sa *);
 } gtpc_msg_hdl[7] = {
 	[1]	= { gtpc_proxy_handle_v1 },
 	[2]	= { gtpc_proxy_handle_v2 },
 };
 
 struct gtp_teid *
-gtpc_proxy_handle(struct gtp_server *srv, struct sockaddr_storage *addr)
+gtpc_proxy_handle(struct gtp_server *srv, union sa *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 
@@ -107,11 +107,10 @@ gtpc_proxy_handle(struct gtp_server *srv, struct sockaddr_storage *addr)
 		return (*(gtpc_msg_hdl[gtph->version].hdl)) (srv, addr);
 
 	log_message(LOG_INFO, "%s(): GTP Version %d not supported."
-			      " Ignoring ingress datagram from [%s]:%d"
+			      " Ignoring ingress datagram from %s"
 			    , __FUNCTION__
 			    , gtph->version
-			    , inet_sockaddrtos(addr)
-			    , ntohs(inet_sockaddrport(addr)));
+			    , sa_sstr(addr));
 
 	return NULL;
 }
@@ -143,7 +142,7 @@ gtpc_proxy_handle_post(struct gtp_server *srv, struct gtp_teid *teid)
  *	GTP-U Message handle
  */
 static struct gtp_teid *
-gtpu_echo_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
+gtpu_echo_request_hdl(struct gtp_server *srv, union sa *addr)
 {
 	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
 	struct gtp1_ie_recovery *rec;
@@ -164,7 +163,7 @@ gtpu_echo_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
 }
 
 static struct gtp_teid *
-gtpu_error_indication_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
+gtpu_error_indication_hdl(struct gtp_server *srv, union sa *addr)
 {
 	struct gtp_proxy *ctx = srv->ctx;
 	struct gtp_teid *teid = NULL, *pteid = NULL;
@@ -202,16 +201,16 @@ gtpu_error_indication_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
 
 	/* xlat TEID */
 	*f_teid.teid_grekey = htonl(teid->vid);
-	*f_teid.ipv4 = ((struct sockaddr_in *) &srv->s.addr)->sin_addr.s_addr;
+	*f_teid.ipv4 = sa_ip4(&srv->s.addr);
 
 	/* Finaly set addr back to linked peer */
-	((struct sockaddr_in *) addr)->sin_addr.s_addr = pteid->ipv4;
+	addr->sin.sin_addr.s_addr = pteid->ipv4;
 
 	return teid;
 }
 
 static struct gtp_teid *
-gtpu_end_marker_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
+gtpu_end_marker_hdl(struct gtp_server *srv, union sa *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -221,7 +220,7 @@ gtpu_end_marker_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
 
 	/* TEID playground */
 	f_teid.teid_grekey = &field;
-	f_teid.ipv4 = &((struct sockaddr_in *) addr)->sin_addr.s_addr;
+	f_teid.ipv4 = &addr->sin.sin_addr.s_addr;
 
 	teid = gtp_teid_get(ctx->gtpu_teid_tab, &f_teid);
 	if (!teid) {
@@ -245,13 +244,13 @@ gtpu_end_marker_hdl(struct gtp_server *srv, struct sockaddr_storage *addr)
 	gtph->teid = htonl(teid->vid);
 
 	/* Peer address xlat */
-	((struct sockaddr_in *) addr)->sin_addr.s_addr = pteid->ipv4;
+	addr->sin.sin_addr.s_addr = pteid->ipv4;
 
 	return teid;
 }
 
 static const struct {
-	struct gtp_teid * (*hdl) (struct gtp_server *, struct sockaddr_storage *);
+	struct gtp_teid * (*hdl) (struct gtp_server *, union sa *);
 } gtpu_msg_hdl[0xff + 1] = {
 	[GTPU_ECHO_REQ_TYPE]			= { gtpu_echo_request_hdl },
 	[GTPU_ERR_IND_TYPE]			= { gtpu_error_indication_hdl },
@@ -259,7 +258,7 @@ static const struct {
 };
 
 struct gtp_teid *
-gtpu_proxy_handle(struct gtp_server *srv, struct sockaddr_storage *addr)
+gtpu_proxy_handle(struct gtp_server *srv, union sa *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 	ssize_t len;
@@ -276,6 +275,6 @@ gtpu_proxy_handle(struct gtp_server *srv, struct sockaddr_storage *addr)
 	log_message(LOG_INFO, "%s(): GTP-U/path-mgt msg_type:0x%.2x from %s not supported..."
 			    , __FUNCTION__
 			    , gtph->type
-			    , inet_sockaddrtos(addr));
+			    , sa_sstr_ip(addr));
 	return NULL;
 }

@@ -112,7 +112,7 @@ DEFUN(apn_realm,
       "Set Global PDN Realm\n"
       "name\n")
 {
-        struct gtp_apn *apn = vty->index;
+	struct gtp_apn *apn = vty->index;
 
 	if (argc < 1) {
 		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
@@ -130,7 +130,7 @@ DEFUN(apn_realm_dynamic,
       "realm-dynamic",
       "Enable dynamic resolution\n")
 {
-        struct gtp_apn *apn = vty->index;
+	struct gtp_apn *apn = vty->index;
 
 	__set_bit(GTP_APN_FL_REALM_DYNAMIC, &apn->flags);
 	return CMD_SUCCESS;
@@ -145,7 +145,7 @@ DEFUN(apn_nameserver,
       "IPv6 Address\n")
 {
 	struct gtp_apn *apn = vty->index;
-	struct sockaddr_storage *addr = &apn->nameserver;
+	union sa *addr = &apn->nameserver;
 	int ret;
 
 	if (argc < 1) {
@@ -153,12 +153,13 @@ DEFUN(apn_nameserver,
 		return CMD_WARNING;
 	}
 
-	ret = inet_stosockaddr(argv[0], 53, addr);
+	ret = sa_parse(argv[0], addr);
 	if (ret < 0) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, 53);
 
 	gtp_resolv_init();
 
@@ -177,7 +178,7 @@ DEFUN(apn_nameserver_bind,
       "Persistent connection\n")
 {
 	struct gtp_apn *apn = vty->index;
-	struct sockaddr_storage *addr = &apn->nameserver_bind;
+	union sa *addr = &apn->nameserver_bind;
 	int ret, port;
 
 	if (argc < 2) {
@@ -187,12 +188,13 @@ DEFUN(apn_nameserver_bind,
 
 	VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	ret = inet_stosockaddr(argv[0], port, addr);
+	ret = sa_parse(argv[0], addr);
 	if (ret < 0) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	if (argc == 3) {
 		if (strstr(argv[2], "persistent"))
@@ -645,7 +647,7 @@ DEFUN(apn_pco_ipcp_primary_ns,
 {
 	struct gtp_apn *apn = vty->index;
 	struct gtp_pco *pco = gtp_apn_pco(apn);
-	struct sockaddr_storage *addr = &pco->ipcp_primary_ns;
+	union sa *addr = &pco->ipcp_primary_ns;
 	int ret;
 
 	if (argc < 1) {
@@ -659,12 +661,13 @@ DEFUN(apn_pco_ipcp_primary_ns,
 		return CMD_WARNING;
 	}
 
-	ret = inet_stosockaddr(argv[0], 53, addr);
+	ret = sa_parse(argv[0], addr);
 	if (ret < 0) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, 53);
 
 	__set_bit(GTP_PCO_IPCP_PRIMARY_NS, &pco->flags);
 	return CMD_SUCCESS;
@@ -682,7 +685,7 @@ DEFUN(apn_pco_ipcp_secondary_ns,
 {
 	struct gtp_apn *apn = vty->index;
 	struct gtp_pco *pco = gtp_apn_pco(apn);
-	struct sockaddr_storage *addr = &pco->ipcp_secondary_ns;
+	union sa *addr = &pco->ipcp_secondary_ns;
 	int ret;
 
 	if (argc < 1) {
@@ -696,12 +699,13 @@ DEFUN(apn_pco_ipcp_secondary_ns,
 		return CMD_WARNING;
 	}
 
-	ret = inet_stosockaddr(argv[0], 53, addr);
+	ret = sa_parse(argv[0], addr);
 	if (ret < 0) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, 53);
 
 	__set_bit(GTP_PCO_IPCP_SECONDARY_NS, &pco->flags);
 	return CMD_SUCCESS;
@@ -715,7 +719,7 @@ apn_pco_ip_ns_config_write(struct vty *vty, struct list_head *l)
 
 	list_for_each_entry(ns, l, next) {
 		vty_out(vty, " protocol-configuration-option ip nameserver %s%s"
-			   , inet_sockaddrtos(&ns->addr)
+			   , sa_sstr_ip(&ns->addr)
 			   , VTY_NEWLINE);
 	}
 
@@ -730,11 +734,11 @@ apn_pco_config_write(struct vty *vty, struct gtp_pco *pco)
 
 	if (__test_bit(GTP_PCO_IPCP_PRIMARY_NS, &pco->flags))
 		vty_out(vty, " protocol-configuration-option ipcp primary-nameserver %s%s"
-			   , inet_sockaddrtos(&pco->ipcp_primary_ns)
+			   , sa_sstr_ip(&pco->ipcp_primary_ns)
 			   , VTY_NEWLINE);
 	if (__test_bit(GTP_PCO_IPCP_SECONDARY_NS, &pco->flags))
 		vty_out(vty, " protocol-configuration-option ipcp secondary-nameserver %s%s"
-			   , inet_sockaddrtos(&pco->ipcp_secondary_ns)
+			   , sa_sstr_ip(&pco->ipcp_secondary_ns)
 			   , VTY_NEWLINE);
 	if (__test_bit(GTP_PCO_IP_NS, &pco->flags))
 		apn_pco_ip_ns_config_write(vty, &pco->ns);
@@ -778,12 +782,13 @@ DEFUN(apn_pco_ip_ns,
 
 	PMALLOC(new);
 	INIT_LIST_HEAD(&new->next);
-	ret = inet_stosockaddr(argv[0], 53, &new->addr);
+	ret = sa_parse(argv[0], &new->addr);
 	if (ret < 0) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
 		FREE(new);
 		return CMD_WARNING;
 	}
+	sa_set_port(&new->addr, 53);
 
 	list_add_tail(&new->next, &pco->ns);
 
@@ -1181,12 +1186,12 @@ DEFUN(show_apn,
 static int
 apn_config_imsi_match(struct vty *vty, struct gtp_apn *apn)
 {
-        struct list_head *l = &apn->imsi_match;
+	struct list_head *l = &apn->imsi_match;
 	struct gtp_rewrite_rule *rule;
 	char match_str[32], rewrite_str[32];
 	char match[8], rewrite[8];
 
-        list_for_each_entry(rule, l, next) {
+	list_for_each_entry(rule, l, next) {
 		memset(match_str, 0, 32);
 		memset(match, 0, 8);
 		memset(rewrite_str, 0, 32);
@@ -1236,19 +1241,19 @@ apn_config_local_ip_pool(struct vty *vty, struct gtp_apn *apn)
 static int
 apn_config_write(struct vty *vty)
 {
-        struct list_head *l = &daemon_data->gtp_apn;
-        struct gtp_apn *apn;
+	struct list_head *l = &daemon_data->gtp_apn;
+	struct gtp_apn *apn;
 
-        list_for_each_entry(apn, l, next) {
+	list_for_each_entry(apn, l, next) {
         	vty_out(vty, "access-point-name %s%s", apn->name, VTY_NEWLINE);
-		if (apn->nameserver.ss_family)
+		if (apn->nameserver.family)
 			vty_out(vty, " nameserver %s%s"
-				   , inet_sockaddrtos(&apn->nameserver)
+				   , sa_sstr_ip(&apn->nameserver)
 				   , VTY_NEWLINE);
-		if (apn->nameserver_bind.ss_family)
+		if (apn->nameserver_bind.family)
 			vty_out(vty, " nameserver-bind %s port %d %s%s"
-				   , inet_sockaddrtos(&apn->nameserver_bind)
-				   , ntohs(inet_sockaddrport(&apn->nameserver_bind))
+				   , sa_sstr_ip(&apn->nameserver_bind)
+				   , sa_port(&apn->nameserver_bind)
 				   , __test_bit(GTP_RESOLV_FL_CNX_PERSISTENT, &apn->flags) ?
 				     "persistent" : ""
 				   , VTY_NEWLINE);
@@ -1302,7 +1307,7 @@ apn_config_write(struct vty *vty)
 		gtp_apn_hplmn_vty(vty, apn);
 
         	vty_out(vty, "!%s", VTY_NEWLINE);
-        }
+	}
 
 	return CMD_SUCCESS;
 }

@@ -628,7 +628,7 @@ vty_forward_word(struct vty *vty)
 {
 	while (vty->cp != vty->length && vty->buf[vty->cp] != ' ')
 		vty_forward_char(vty);
-  
+
 	while (vty->cp != vty->length && vty->buf[vty->cp] == ' ')
 		vty_forward_char(vty);
 }
@@ -703,7 +703,7 @@ vty_delete_char(struct vty *vty)
 	vty->length--;
 	memmove(&vty->buf[vty->cp], &vty->buf[vty->cp + 1], size - 1);
 	vty->buf[vty->length] = '\0';
-  
+
 	if (vty->node == AUTH_NODE || vty->node == AUTH_ENABLE_NODE)
 		return;
 
@@ -732,7 +732,7 @@ vty_kill_line(struct vty *vty)
 	int i, size;
 
 	size = vty->length - vty->cp;
-  
+
 	if (size == 0)
 		return;
 
@@ -823,7 +823,7 @@ vty_complete_command(struct vty *vty)
 		vector_set(vline, NULL);
 
 	matched = cmd_complete_command(vline, vty, &ret);
-  
+
 	cmd_free_strvec(vline);
 
 	vty_out(vty, "%s", VTY_NEWLINE);
@@ -949,7 +949,7 @@ vty_describe_command(struct vty *vty)
 		vty_out(vty, "%% There is no matched command.%s", VTY_NEWLINE);
 		goto out;
 		break;
-	}  
+	}
 
 	/* Get width of command string. */
 	width = 0;
@@ -977,7 +977,7 @@ vty_describe_command(struct vty *vty)
 		if ((desc = vector_slot(describe, i)) != NULL) {
 			if (desc->cmd[0] == '\0')
 				continue;
-	
+
 			if (strcmp(desc->cmd, command_cr) == 0) {
 				desc_cr = desc;
 				continue;
@@ -1095,7 +1095,7 @@ vty_telnet_option(struct vty *vty, unsigned char *buf, __attribute__((unused)) i
 		vty->iac_sb_in_progress = 1;
 		return 0;
 		break;
-	case SE: 
+	case SE:
 	{
 		if (!vty->iac_sb_in_progress)
 			return 0;
@@ -1246,7 +1246,7 @@ vty_read(struct thread *t)
 				vty->iac = 0;
 			}
 		}
-      
+
 		if (vty->iac_sb_in_progress && !vty->iac) {
 			if (vty->sb_len < sizeof(vty->sb_buf))
 				vty->sb_buf[vty->sb_len] = buf[i];
@@ -1263,7 +1263,7 @@ vty_read(struct thread *t)
 			i += ret;
 			continue;
 		}
-	        
+
 		if (vty->status == VTY_MORE) {
 			switch (buf[i]) {
 			case CONTROL('C'):
@@ -1472,7 +1472,7 @@ vty_flush(struct thread *t)
 
 /* Create new vty structure. */
 static struct vty *
-vty_create(struct thread_master *m, int vty_sock, struct sockaddr_storage *addr)
+vty_create(struct thread_master *m, int vty_sock, union sa *addr)
 {
 	struct vty *vty;
 
@@ -1548,55 +1548,52 @@ vty_create(struct thread_master *m, int vty_sock, struct sockaddr_storage *addr)
 static void
 vty_accept(struct thread *t)
 {
-	struct sockaddr_storage sock;
-	struct sockaddr *saddr = (struct sockaddr *) THREAD_ARG(t);
+	union sa *bind_addr = THREAD_ARG(t);
+	union sa sock;
 	socklen_t len;
 	int vty_sock, ret;
-	unsigned int on = 1;
 	int accept_sock = THREAD_FD(t);
 
 	/* Re-arm the listener for the next connection. */
 	vty_event(t->master, VTY_SERV, accept_sock, t->arg);
 
 	/* We can handle IPv4 or IPv6 socket. */
-	memset(&sock, 0, sizeof(struct sockaddr_storage));
-	len = sizeof(struct sockaddr_storage);
-	vty_sock = accept4(accept_sock, (struct sockaddr *) &sock, &len, SOCK_NONBLOCK);
+	sa_zero(&sock);
+	len = sizeof(union sa);
+	vty_sock = accept4(accept_sock, &sock.sa, &len, SOCK_NONBLOCK);
 	if (vty_sock < 0) {
 		log_message(LOG_WARNING, "can't accept vty socket : %s"
 				       , strerror(errno));
 		return;
 	}
 
-	if (saddr->sa_family == AF_UNIX) {
+	if (bind_addr->family == AF_UNIX) {
 		log_message(LOG_INFO, "Vty unix connection accepted");
-		goto end;
+
+	} else {
+		ret = inet_setsockopt_nodelay(vty_sock, 1);
+		if (ret < 0)
+			log_message(LOG_INFO, "can't set sockopt to vty_sock : %m");
+		log_message(LOG_INFO, "Vty connection from %s", sa_sstr_ip(&sock));
 	}
 
-	ret = setsockopt(vty_sock, IPPROTO_TCP, TCP_NODELAY,
-			 (char *) &on, sizeof(on));
-	if (ret < 0)
-		log_message(LOG_INFO, "can't set sockopt to vty_sock : %m");
-	log_message(LOG_INFO, "Vty connection from %s", inet_sockaddrtos(&sock));
-
-end:
 	vty_create(t->master, vty_sock, &sock);
 }
 
 /* Start listener thread */
 int
-vty_listen(struct thread_master *m, struct sockaddr_storage *addr)
+vty_listen(struct thread_master *m, union sa *addr)
 {
 	int ret, accept_sock, on = 1;
 	mode_t old_mask;
 
 	old_mask = umask(0077);
 
-	accept_sock = socket(addr->ss_family, SOCK_STREAM, 0);
+	accept_sock = socket(addr->family, SOCK_STREAM, 0);
 	if (accept_sock < 0) {
 		log_message(LOG_INFO, "Vty error creating listening socket on [%s]:%d (%m)"
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr_ip(addr)
+				    , sa_port(addr));
 		umask(old_mask);
 		return -1;
 	}
@@ -1608,26 +1605,26 @@ vty_listen(struct thread_master *m, struct sockaddr_storage *addr)
 		goto err;
 	}
 
-	ret = bind(accept_sock, (struct sockaddr *) addr, sizeof(*addr));
+	ret = bind(accept_sock, &addr->sa, sizeof(*addr));
 	if (ret < 0) {
 		log_message(LOG_INFO, "Vty error cant bind to [%s]:%d (%m)"
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr_ip(addr)
+				    , sa_port(addr));
 		goto err;
 	}
 
 	ret = listen(accept_sock, 16);
 	if (ret < 0) {
 		log_message(LOG_INFO, "Vty error cant listen to [%s]:%d (%m)"
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr_ip(addr)
+				    , sa_port(addr));
 		goto err;
 	}
 
 	umask(old_mask);
 	log_message(LOG_INFO, "Vty start listening on [%s]:%d"
-			    , inet_sockaddrtos(addr)
-			    , ntohs(inet_sockaddrport(addr)));
+			    , sa_sstr_ip(addr)
+			    , sa_port(addr));
 	vty_event(m, VTY_SERV, accept_sock, addr);
 	return accept_sock;
 
@@ -1798,7 +1795,7 @@ vty_read_file(FILE *confp)
 	vty->fd = 0;			/* stdout */
 	vty->type = VTY_TERM;
 	vty->node = CONFIG_NODE;
-  
+
 	/* Execute configuration file */
 	ret = config_from_file(vty, confp);
 
@@ -1830,7 +1827,7 @@ vty_use_backup_config(char *fullpath)
 	int tmp, sav;
 	int c, retval, len;
 	char buffer[512];
-  
+
 	len = strlen(fullpath) + strlen(CONF_BACKUP_EXT) + 1;
 	fullpath_sav = MALLOC(len);
 	bsd_strlcpy(fullpath_sav, fullpath, len);
@@ -1840,10 +1837,10 @@ vty_use_backup_config(char *fullpath)
 		FREE(fullpath_sav);
 		return NULL;
 	}
-  
+
 	fullpath_tmp = MALLOC(strlen(fullpath) + 8);
 	sprintf(fullpath_tmp, "%s.XXXXXX", fullpath);
-  
+
 	/* Open file to configuration write. */
 	tmp = mkstemp(fullpath_tmp);
 	if (tmp < 0) {
@@ -1868,22 +1865,22 @@ vty_use_backup_config(char *fullpath)
 			written += retval;
 		}
 	}
-  
+
 	close(sav);
 	close(tmp);
-  
+
 	if (chmod(fullpath_tmp, 0600) != 0) {
 		unlink(fullpath_tmp);
 		FREE(fullpath_sav);
 		FREE(fullpath_tmp);
 		return NULL;
 	}
-  
+
 	if (link(fullpath_tmp, fullpath) == 0)
 		ret = fopen(fullpath, "r");
 
 	unlink(fullpath_tmp);
-  
+
 	FREE(fullpath_sav);
 	FREE(fullpath_tmp);
 	return ret;
@@ -2025,7 +2022,7 @@ DEFUN(config_who,
 		if ((v = vector_slot(vtyvec, i)) != NULL) {
 			vty_out(vty, "%svty[%d] connected from %s.%s"
 				   , v->config ? "*" : " "
-				   , i, inet_sockaddrtos2(&v->address, ipaddr)
+				   , i, sa_str_ip(&v->address, ipaddr, sizeof(ipaddr))
 				   , VTY_NEWLINE);
 		}
 	}
@@ -2127,7 +2124,7 @@ DEFUN(vty_line_listen,
       "IPv6 Address\n"
       "TCP Port\n")
 {
-	struct sockaddr_storage *vty_listen_addr;
+	union sa *vty_listen_addr;
 	uint16_t port = 0;
 	int ret;
 
@@ -2138,13 +2135,14 @@ DEFUN(vty_line_listen,
 
 	VTY_GET_INTEGER_RANGE("TCP Port", port, argv[1], 1024, 65535);
 
-	vty_listen_addr = (struct sockaddr_storage *) MALLOC(sizeof(struct sockaddr_storage));
-	ret = inet_stosockaddr(argv[0], port, vty_listen_addr);
+	vty_listen_addr = (union sa *) MALLOC(sizeof(union sa));
+	ret = sa_parse(argv[0], vty_listen_addr);
 	if (ret < 0) {
 		vty_out(vty, "%% Invalid IP Address%s", VTY_NEWLINE);
 		FREE(vty_listen_addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(vty_listen_addr, port);
 
 	ret = vty_listen(master, vty_listen_addr);
 	if (ret < 0) {
@@ -2165,8 +2163,8 @@ DEFUN(no_vty_line_listen,
       "IPv6 Address\n"
       "TCP Port\n")
 {
-	struct sockaddr_storage *vty_listen_addr;
-	struct sockaddr_storage addr;
+	union sa *vty_listen_addr;
+	union sa addr;
 	struct thread *vty_serv_thread;
 	uint16_t port = 0;
 	unsigned int i;
@@ -2179,22 +2177,23 @@ DEFUN(no_vty_line_listen,
 
 	VTY_GET_INTEGER_RANGE("TCP Port", port, argv[1], 1024, 65535);
 
-	memset(&addr, 0, sizeof(struct sockaddr_storage));
-	ret = inet_stosockaddr(argv[0], port, &addr);
+	sa_zero(&addr);
+	ret = sa_parse(argv[0], &addr);
 	if (ret < 0) {
 		vty_out(vty, "%% Invalid IP Address%s", VTY_NEWLINE);
 		return CMD_WARNING;
 	}
+	sa_set_port(vty_listen_addr, port);
 
 	for (i = 0; i < vector_active(Vvty_serv_thread); i++) {
 		if ((vty_serv_thread = vector_slot(Vvty_serv_thread, i)) != NULL) {
 			vty_listen_addr = THREAD_ARG(vty_serv_thread);
-			if (memcmp(vty_listen_addr, &addr, sizeof(struct sockaddr_storage)) == 0) {
+			if (memcmp(vty_listen_addr, &addr, sizeof(union sa)) == 0) {
 				thread_del(vty_serv_thread);
 				vector_slot(Vvty_serv_thread, i) = NULL;
 				log_message(LOG_INFO, "Vty stop listener on [%s]:%d"
-						    , inet_sockaddrtos(vty_listen_addr)
-						    , ntohs(inet_sockaddrport(vty_listen_addr)));
+						    , sa_sstr_ip(vty_listen_addr)
+						    , sa_port(vty_listen_addr));
 				FREE(vty_listen_addr);
 				close(i);
 			}
@@ -2356,7 +2355,7 @@ DEFUN(show_history,
 static int
 vty_config_write(struct vty *vty)
 {
-	struct sockaddr_storage *addr;
+	union sa *addr;
 	struct thread *vty_serv_thread;
 	unsigned int i;
 
@@ -2364,7 +2363,7 @@ vty_config_write(struct vty *vty)
 
 	/* exec-timeout */
 	if (vty_timeout_val != VTY_TIMEOUT_DEFAULT) {
-		vty_out(vty, " exec-timeout %ld %ld%s", 
+		vty_out(vty, " exec-timeout %ld %ld%s",
 			vty_timeout_val / 60,
 			vty_timeout_val % 60, VTY_NEWLINE);
 	}
@@ -2402,10 +2401,10 @@ vty_config_write(struct vty *vty)
 			}
 			vty_out(vty, "%s", VTY_NEWLINE);
 		} else {
-			addr = (struct sockaddr_storage *)sa;
+			addr = (union sa *)sa;
 			vty_out(vty, " listen %s %d%s"
-				   , inet_sockaddrtos(addr)
-				   , ntohs(inet_sockaddrport(addr))
+				   , sa_sstr_ip(addr)
+				   , sa_port(addr)
 				   , VTY_NEWLINE);
 		}
 	}
@@ -2430,7 +2429,7 @@ vty_reset(void)
 	unsigned int i;
 	struct vty *vty;
 	struct thread *vty_serv_thread;
-	struct sockaddr_storage *addr;
+	union sa *addr;
 
 	for (i = 0; i < vector_active(vtyvec); i++) {
 		if ((vty = vector_slot(vtyvec, i)) != NULL) {
@@ -2455,10 +2454,10 @@ vty_reset(void)
 					    , usock->addr.sun_path);
 			unlink(usock->addr.sun_path);
 		} else {
-			addr = (struct sockaddr_storage *)sa;
+			addr = (union sa *)sa;
 			log_message(LOG_INFO, "Vty stop listener on [%s]:%d"
-					    , inet_sockaddrtos(addr)
-					    , ntohs(inet_sockaddrport(addr)));
+					    , sa_sstr_ip(addr)
+					    , sa_port(addr));
 		}
 		FREE(sa);
 		close(i);

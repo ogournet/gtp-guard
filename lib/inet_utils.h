@@ -69,17 +69,6 @@ uint16_t udp_csum(const void *buffer, size_t len,
 ssize_t inet_str2fqdn(uint8_t *dst, size_t dsize, const char *src);
 char *inet_fqdn2str(char *dst, size_t dsize, const uint8_t *fqdn, size_t fsize);
 char *inet_ntoa2(uint32_t addr, char *buffer);
-int inet_stosockaddr(const char *str, const uint16_t port,
-		     struct sockaddr_storage *addr);
-int inet_ip4tosockaddr(uint32_t addr_ip,
-		       struct sockaddr_storage *addr);
-char *inet_sockaddrtos2(struct sockaddr_storage *addr,
-			char *addr_str);
-char *inet_sockaddrtos(struct sockaddr_storage *addr);
-uint16_t inet_sockaddrport(struct sockaddr_storage *addr);
-uint32_t inet_sockaddrip4(struct sockaddr_storage *addr);
-int inet_sockaddrip6(struct sockaddr_storage *addr,
-		     struct in6_addr *ip6);
 int inet_ston(const char *str, uint32_t *addr);
 uint32_t inet_broadcast(uint32_t network, uint32_t netmask);
 uint32_t inet_bits_to_mask(uint8_t cidr);

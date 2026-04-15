@@ -69,8 +69,8 @@ gtp_create_teid(uint8_t type, int direction, struct gtp_server *srv,
 	/* Determine if this is related to an existing VTEID.
 	 * If so need to restore original TEID related, otherwise
 	 * create a new VTEID */
-	if ((*f_teid->ipv4 == ((struct sockaddr_in *) &srv_gtpc_ingress->s.addr)->sin_addr.s_addr) ||
-	    (*f_teid->ipv4 == ((struct sockaddr_in *) &srv_gtpc_egress->s.addr)->sin_addr.s_addr)) {
+	if ((*f_teid->ipv4 == sa_ip4(&srv_gtpc_ingress->s.addr)) ||
+	    (*f_teid->ipv4 == sa_ip4(&srv_gtpc_egress->s.addr))) {
 		teid = gtp_vteid_get(ctx->vteid_tab, ntohl(*f_teid->teid_grekey));
 		if (!teid)
 			return NULL;
@@ -193,7 +193,7 @@ gtpc_session_xlat(struct gtp_server *srv, struct gtp_session *s, int direction)
  *	GTP-C Protocol helpers
  */
 static struct gtp_teid *
-gtpc_echo_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_echo_request_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_ie_recovery *rec;
@@ -211,7 +211,7 @@ gtpc_echo_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int
 }
 
 static struct gtp_teid *
-gtpc_create_session_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_create_session_request_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_ie_imsi *ie_imsi;
 	struct gtp_ie_apn *ie_apn;
@@ -332,7 +332,7 @@ gtpc_create_session_request_hdl(struct gtp_server *srv, struct sockaddr_storage 
 	/* ULI tag */
 	if (__test_bit(GTP_APN_FL_TAG_ULI_WITH_SERVING_NODE_IP4, &apn->flags) &&
 	    __test_bit(GTP_SESSION_FL_ROAMING_OUT, &s->flags))
-		gtp_ie_uli_update(srv->s.pbuff, &apn->egci_plmn, (struct sockaddr_in *) addr);
+		gtp_ie_uli_update(srv->s.pbuff, &apn->egci_plmn, &addr->sin);
 
 	log_message(LOG_INFO, "Create-Session-Req:={IMSI:%ld APN:%s F-TEID:0x%.8x Roaming-Status:%s}%s"
 			    , imsi, apn_str, ntohl(teid->id)
@@ -351,11 +351,11 @@ gtpc_create_session_request_hdl(struct gtp_server *srv, struct sockaddr_storage 
 	gtp_teid_update_sgw(teid, addr);
 
 	/* Update last sGW visited */
-	c->sgw_addr = *((struct sockaddr_in *) addr);
+	c->sgw_addr = addr->sin;
 
 	/* pGW selection */
 	if (__test_bit(GTP_FL_FORCE_PGW_BIT, &ctx->flags)) {
-		teid->pgw_addr = *(struct sockaddr_in *) &ctx->pgw_addr;
+		teid->pgw_addr = *&ctx->pgw_addr.sin;
 		goto end;
 	}
 
@@ -392,7 +392,7 @@ gtpc_create_session_request_hdl(struct gtp_server *srv, struct sockaddr_storage 
 }
 
 static struct gtp_teid *
-gtpc_create_session_response_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_create_session_response_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_ie_cause *ie_cause = NULL;
@@ -469,8 +469,7 @@ gtpc_create_session_response_hdl(struct gtp_server *srv, struct sockaddr_storage
 	gtp_sqn_restore(srv, teid->peer_teid);
 
 	/* Set addr tunnel endpoint */
-	inet_ip4tosockaddr(teid->ipv4, (struct sockaddr_storage *) &teid->pgw_addr);
-	teid->pgw_addr.sin_port = htons(GTP_C_PORT);
+	sa_from_ip4_port((union sa *)&teid->pgw_addr, teid->ipv4, GTP_C_PORT);
 	teid->sgw_addr = t->sgw_addr;
 
 	/* Test cause code, destroy if <> success.
@@ -489,7 +488,7 @@ gtpc_create_session_response_hdl(struct gtp_server *srv, struct sockaddr_storage
 }
 
 static struct gtp_teid *
-gtpc_delete_session_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_delete_session_request_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -539,7 +538,7 @@ gtpc_delete_session_request_hdl(struct gtp_server *srv, struct sockaddr_storage 
 }
 
 static struct gtp_teid *
-gtpc_delete_session_response_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_delete_session_response_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_ie_cause *ie_cause = NULL;
@@ -608,7 +607,7 @@ gtpc_delete_session_response_hdl(struct gtp_server *srv, struct sockaddr_storage
 }
 
 static struct gtp_teid *
-gtpc_modify_bearer_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_modify_bearer_request_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_ie_serving_network *ie_serving_network;
@@ -665,7 +664,7 @@ gtpc_modify_bearer_request_hdl(struct gtp_server *srv, struct sockaddr_storage *
 	/* ULI tag */
 	if (__test_bit(GTP_APN_FL_TAG_ULI_WITH_SERVING_NODE_IP4, &s->apn->flags) &&
 	    __test_bit(GTP_SESSION_FL_ROAMING_OUT, &s->flags))
-		gtp_ie_uli_update(srv->s.pbuff, &s->apn->egci_plmn, (struct sockaddr_in *) addr);
+		gtp_ie_uli_update(srv->s.pbuff, &s->apn->egci_plmn, &addr->sin);
 
 	log_message(LOG_INFO, "Modify-Bearer-Req:={F-TEID:0x%.8x Roaming-Status:%s}%s"
 			    , ntohl(teid->id)
@@ -709,7 +708,7 @@ gtpc_modify_bearer_request_hdl(struct gtp_server *srv, struct sockaddr_storage *
 }
 
 static struct gtp_teid *
-gtpc_modify_bearer_response_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_modify_bearer_response_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_ie_cause *ie_cause = NULL;
@@ -803,7 +802,7 @@ gtpc_modify_bearer_response_hdl(struct gtp_server *srv, struct sockaddr_storage 
 }
 
 static struct gtp_teid *
-gtpc_delete_bearer_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_delete_bearer_request_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -858,7 +857,7 @@ gtpc_delete_bearer_request_hdl(struct gtp_server *srv, struct sockaddr_storage *
 }
 
 static struct gtp_teid *
-gtpc_delete_bearer_response_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_delete_bearer_response_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -907,7 +906,7 @@ gtpc_delete_bearer_response_hdl(struct gtp_server *srv, struct sockaddr_storage 
 }
 
 static int
-gtpc_generic_setaddr(struct sockaddr_storage *addr, int direction, struct gtp_teid *teid, struct gtp_teid *t)
+gtpc_generic_setaddr(union sa *addr, int direction, struct gtp_teid *teid, struct gtp_teid *t)
 {
 	if (direction == GTP_INGRESS) {
 		if (!t->sgw_addr.sin_addr.s_addr)
@@ -925,7 +924,7 @@ gtpc_generic_setaddr(struct sockaddr_storage *addr, int direction, struct gtp_te
 }
 
 static int
-gtpc_generic_updateaddr(int direction, struct gtp_teid *teid, struct sockaddr_storage *addr)
+gtpc_generic_updateaddr(int direction, struct gtp_teid *teid, union sa *addr)
 {
 	if (direction == GTP_INGRESS) {
 		gtp_teid_update_sgw(teid, addr);
@@ -939,7 +938,7 @@ gtpc_generic_updateaddr(int direction, struct gtp_teid *teid, struct sockaddr_st
 }
 
 static struct gtp_teid *
-gtpc_generic_xlat_request_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_generic_xlat_request_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -996,7 +995,7 @@ gtpc_generic_xlat_request_hdl(struct gtp_server *srv, struct sockaddr_storage *a
 }
 
 static struct gtp_teid *
-gtpc_generic_xlat_command_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_generic_xlat_command_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -1046,7 +1045,7 @@ gtpc_generic_xlat_command_hdl(struct gtp_server *srv, struct sockaddr_storage *a
 }
 
 static struct gtp_teid *
-gtpc_generic_xlat_response_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_generic_xlat_response_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -1103,7 +1102,7 @@ gtpc_generic_xlat_response_hdl(struct gtp_server *srv, struct sockaddr_storage *
 }
 
 static struct gtp_teid *
-gtpc_generic_xlat_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int direction)
+gtpc_generic_xlat_hdl(struct gtp_server *srv, union sa *addr, int direction)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -1149,7 +1148,7 @@ gtpc_generic_xlat_hdl(struct gtp_server *srv, struct sockaddr_storage *addr, int
 static const struct {
 	uint8_t family;	/* GTP_INIT : Initial | GTP_TRIG : Triggered*/
 	int direction;	/* GTP_INGRESS : sGW -> pGW | GTP_EGRESS  : pGW -> sGW */
-	struct gtp_teid * (*hdl) (struct gtp_server *, struct sockaddr_storage *, int);
+	struct gtp_teid * (*hdl) (struct gtp_server *, union sa *, int);
 } gtpc_msg_hdl[0xff + 1] = {
 	[GTP_ECHO_REQUEST_TYPE]			= { GTP_INIT, GTP_INGRESS, gtpc_echo_request_hdl },
 	[GTP_CREATE_SESSION_REQUEST_TYPE]	= { GTP_INIT, GTP_INGRESS, gtpc_create_session_request_hdl },
@@ -1182,7 +1181,7 @@ static const struct {
 };
 
 struct gtp_teid *
-gtpc_proxy_handle_v2(struct gtp_server *srv, struct sockaddr_storage *addr)
+gtpc_proxy_handle_v2(struct gtp_server *srv, union sa *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_teid *teid;

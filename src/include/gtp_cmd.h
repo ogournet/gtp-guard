@@ -33,8 +33,8 @@ enum {
 
 struct gtp_cmd_args {
 	int			type;
-	struct sockaddr_storage src_addr;
-	struct sockaddr_storage dst_addr;
+	union sa		src_addr;
+	union sa		 dst_addr;
 	int			ifindex;
 	struct vty		*vty;
 	int			version;

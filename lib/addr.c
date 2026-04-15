@@ -29,14 +29,10 @@ sa_len(const union sa *a)
 		return sizeof (a->sin);
 	case AF_INET6:
 		return sizeof (a->sin6);
-#ifdef SA_USE_AF_UNIX
 	case AF_UNIX:
-		return sizeof (a->sun);
-#endif
-#ifdef SA_USE_AF_PACKET
+		return SUN_LEN(&a->sun);
 	case AF_PACKET:
 		return sizeof (a->sll);
-#endif
 	default:
 		return 0;
 	}
@@ -202,18 +198,15 @@ sa_cmp(const union sa *la, const union sa *ra)
 			return 1;
 		return 0;
 
-#ifdef SA_USE_AF_UNIX
 	case AF_UNIX:
 		return strcmp(la->sun.sun_path, ra->sun.sun_path);
-#endif
-#ifdef SA_USE_AF_PACKET
+
 	case AF_PACKET:
 		if (la->sll.sll_ifindex < ra->sll.sll_ifindex)
 			return -1;
 		if (la->sll.sll_ifindex > ra->sll.sll_ifindex)
 			return 1;
 		return 0;
-#endif
 
 	default:
 		return 0;
@@ -378,6 +371,8 @@ sa_str(const union sa *a, char *buf, size_t buf_size)
 			NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
 		if (sbuf[0] == '0' && !sbuf[1])
 			snprintf(buf, buf_size, "%s", hbuf);
+		else if (a->family == AF_INET6)
+			snprintf(buf, buf_size, "[%s]:%s", hbuf, sbuf);
 		else
 			snprintf(buf, buf_size, "%s:%s", hbuf, sbuf);
 	} else {
@@ -448,7 +443,7 @@ sa_sstr_port(const union sa *a)
 
 
 /*
- * parse ipv4:port or [ipv6]:port
+ * parse ipv4, ipv6, ipv4:port, [ipv6]:port or /tmp/unixsock
  */
 int
 sa_parse(const char *addr, union sa *out)
@@ -458,6 +453,12 @@ sa_parse(const char *addr, union sa *out)
 	unsigned int port;
 	char *paddr, *pport, *end;
 	int ret;
+
+	if (*addr == '/') {
+		out->family = AF_UNIX;
+		snprintf(out->sun.sun_path, sizeof(out->sun.sun_path), "%s", addr);
+		return 0;
+	}
 
 	strcpy(buf, addr);
 	paddr = buf;

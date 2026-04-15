@@ -82,10 +82,9 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 
 	p = __pkt_queue_get(&srv->pkt_q);
 	if (!p) {
-		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server [%s]:%d"
+		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server %s"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(&srv->s.addr)
-				    , ntohs(inet_sockaddrport(&srv->s.addr)));
+				    , sa_sstr(&srv->s.addr));
 		return;
 	}
 
@@ -108,10 +107,9 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	err = (err) ? : pfcp_ie_put_additional_usage_reports_info(pbuff, false,
 								  nr_report_urr);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error building report pkt for server [%s]:%d"
+		log_message(LOG_INFO, "%s(): Error building report pkt for server %s"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(&srv->s.addr)
-				    , ntohs(inet_sockaddrport(&srv->s.addr)));
+				    , sa_sstr(&srv->s.addr));
 		goto end;
 	}
 

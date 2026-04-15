@@ -61,8 +61,8 @@ gtp_bpf_mirror_load_maps(struct gtp_bpf_prog *p, void *udata, bool reload)
 static int
 gtp_bpf_mirror_rule_set(struct gtp_bpf_mirror_rule *r,  struct gtp_mirror_rule *m)
 {
-	r->addr = ((struct sockaddr_in *) &m->addr)->sin_addr.s_addr;
-	r->port = ((struct sockaddr_in *) &m->addr)->sin_port;
+	r->addr = sa_ip4(&m->addr);
+	r->port = sa_port(&m->addr);
 	r->protocol = m->protocol;
 	r->ifindex = m->ifindex;
 	return 0;
@@ -108,11 +108,10 @@ gtp_bpf_mirror_action(int action, void *arg, struct gtp_bpf_prog *p)
 
 	if (err) {
 		libbpf_strerror(err, errmsg, GTP_XDP_STRERR_BUFSIZE);
-		log_message(LOG_INFO, "%s(): Cant %s mirror_rule for [%s]:%d (%s)"
+		log_message(LOG_INFO, "%s(): Cant %s mirror_rule for %s (%s)"
 				    , __FUNCTION__
 				    , (action) ? "del" : "add"
-				    , inet_sockaddrtos(&m->addr)
-				    , ntohs(inet_sockaddrport(&m->addr))
+				    , sa_sstr_ip(&m->addr)
 				    , errmsg);
 		return -1;
 	}
@@ -123,8 +122,8 @@ gtp_bpf_mirror_action(int action, void *arg, struct gtp_bpf_prog *p)
 			      "{addr:%s port:%u, protocol:%s, ifindex:%d}"
 			    , __FUNCTION__
 			    , action_str
-			    , inet_sockaddrtos(&m->addr)
-			    , ntohs(inet_sockaddrport(&m->addr))
+			    , sa_sstr_ip(&m->addr)
+			    , sa_port(&m->addr)
 			    , (m->protocol == IPPROTO_UDP) ? "UDP" : "TCP"
 			    , m->ifindex);
 	return 0;
