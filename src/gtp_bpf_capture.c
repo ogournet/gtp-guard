@@ -759,11 +759,11 @@ _build_fake_l2l3_hdr(uint8_t *buffer, size_t buflen, size_t payload_len,
 	/* UDP header */
 	udph = (struct udphdr *)(iph + 1);
 	if (flags & GTP_CAPTURE_FL_INPUT) {
-		udph->source = sa_portb(remote_addr);
-		udph->dest = sa_portb(local_addr);
+		udph->source = sa_portn(remote_addr);
+		udph->dest = sa_portn(local_addr);
 	} else {
-		udph->dest = sa_portb(remote_addr);
-		udph->source = sa_portb(local_addr);
+		udph->dest = sa_portn(remote_addr);
+		udph->source = sa_portn(local_addr);
 	}
 	udph->len = htons(sizeof(*udph) + payload_len);
 	udph->check = 0;

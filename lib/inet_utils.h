@@ -107,3 +107,20 @@ int inet_setsockopt_sndbuf(int fd, int optval );
 int inet_setsockopt_sndbufforce(int fd, int optval);
 int inet_setsockopt_bindtodevice(int fd, const char *ifname);
 int inet_setsockopt_priority(int fd, int family);
+
+static inline int inet_ip4_equal(const struct in_addr *a1,
+				 const struct in_addr *a2)
+{
+	return (a1->s_addr == a2->s_addr);
+}
+
+static inline int inet_ip6_equal(const struct in6_addr *a1,
+				 const struct in6_addr *a2)
+{
+	return (((a1->s6_addr32[0] ^ a2->s6_addr32[0]) |
+		 (a1->s6_addr32[1] ^ a2->s6_addr32[1]) |
+		 (a1->s6_addr32[2] ^ a2->s6_addr32[2]) |
+		 (a1->s6_addr32[3] ^ a2->s6_addr32[3])) == 0);
+}
+
+uint32_t inet_hash_ip6(const struct in6_addr *addr);

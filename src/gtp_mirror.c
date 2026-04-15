@@ -42,7 +42,7 @@ gtp_mirror_rule_get(struct gtp_mirror *m, const struct sockaddr_storage *addr,
 	struct gtp_mirror_rule *r;
 
 	list_for_each_entry(r, l, next) {
-		if (!ss_cmp(addr, &r->addr) &&
+		if (!sa_cmp((const union sa *)addr, (const union sa *)&r->addr) &&
 		    r->protocol == protocol &&
 		    r->ifindex == ifindex) {
 			return r;

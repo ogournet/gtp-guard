@@ -61,7 +61,7 @@ uint32_t sa_ip4(const union sa *a);
 uint32_t sa_ip4h(const union sa *a);
 const struct in6_addr *sa_ip6(const union sa *a);
 uint16_t sa_port(const union sa *a);
-uint16_t sa_portb(const union sa *a);
+uint16_t sa_portn(const union sa *a);
 
 /* stringify. sstr returns from static buffer */
 char *sa_str(const union sa *a, char *buf, size_t buf_size);
@@ -79,17 +79,11 @@ bool sa_is_loopback(const union sa *a);
 bool sa_is_multicast(const union sa *a);
 bool sa_is_linklocal(const union sa *a);
 
-/* comparison */
+/* comparison. returns, like strcmp, -1 less, 0 equal or 1 greater  */
 int sa_cmp(const union sa *la, const union sa *ra);
 int sa_cmp_ip(const union sa *la, const union sa *ra);
 int sa_cmp_port(const union sa *la, const union sa *ra);
-int sa_cmp_ss(const union sa *la, const union sa *ra);
-static bool sa_equal(const union sa *la, const union sa *ra);
-static bool sa_equal_ip(const union sa *la, const union sa *ra);
 
-/* hashing */
-uint32_t sa_hash(const union sa *a);
-uint32_t sa_hash_in6_addr(const struct in6_addr *addr);
 
 
 
@@ -107,59 +101,4 @@ static inline sa_family_t
 sa_family(const union sa *a)
 {
 	return a->family;
-}
-
-static inline bool
-sa_equal(const union sa *la, const union sa *ra)
-{
-	return sa_cmp(la, ra) == 0;
-}
-
-static inline bool
-sa_equal_ip(const union sa *la, const union sa *ra)
-{
-	return sa_cmp_ip(la, ra) == 0;
-}
-
-static inline int __sa_ip4_equal(const struct in_addr *a1,
-				 const struct in_addr *a2)
-{
-	return (a1->s_addr == a2->s_addr);
-}
-
-static inline int __sa_ip6_equal(const struct in6_addr *a1,
-				 const struct in6_addr *a2)
-{
-	return (((a1->s6_addr32[0] ^ a2->s6_addr32[0]) |
-		 (a1->s6_addr32[1] ^ a2->s6_addr32[1]) |
-		 (a1->s6_addr32[2] ^ a2->s6_addr32[2]) |
-		 (a1->s6_addr32[3] ^ a2->s6_addr32[3])) == 0);
-}
-
-static inline int __attribute__((pure))
-ss_cmp(const struct sockaddr_storage *s1, const struct sockaddr_storage *s2)
-{
-	if (s1->ss_family < s2->ss_family)
-		return -1;
-	if (s1->ss_family > s2->ss_family)
-		return 1;
-
-	if (s1->ss_family == AF_INET6) {
-		const struct sockaddr_in6 *a1 = (const struct sockaddr_in6 *) s1;
-		const struct sockaddr_in6 *a2 = (const struct sockaddr_in6 *) s2;
-
-		if (__sa_ip6_equal(&a1->sin6_addr, &a2->sin6_addr) &&
-		    (a1->sin6_port == a2->sin6_port))
-			return 0;
-	} else if (s1->ss_family == AF_INET) {
-		const struct sockaddr_in *a1 = (const struct sockaddr_in *) s1;
-		const struct sockaddr_in *a2 = (const struct sockaddr_in *) s2;
-
-		if (__sa_ip4_equal(&a1->sin_addr, &a2->sin_addr) &&
-		    (a1->sin_port == a2->sin_port))
-			return 0;
-	} else if (s1->ss_family == AF_UNSPEC)
-		return 0;
-
-	return -1;
 }

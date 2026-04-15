@@ -383,7 +383,7 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 
 	if (ctx->local != NULL) {
 		ur->gtpu_local_addr = sa_ip4(ctx->local);
-		ur->gtpu_local_port = sa_portb(ctx->local);
+		ur->gtpu_local_port = sa_portn(ctx->local);
 	}
 
 	if (ctx->has_ue) {
@@ -399,8 +399,8 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 					memcpy(&ue.v6, &ctx->ue_addr.sin6.sin6_addr, sizeof(ue.v6));
 			}
 		} else {
-			ur->gtpu_remote_addr = ctx->ue_addr.sin.sin_addr.s_addr;
-			ur->gtpu_remote_port = sa_portb(&ctx->ue_addr);
+			ur->gtpu_remote_addr = sa_ip4(&ctx->ue_addr);
+			ur->gtpu_remote_port = sa_portn(&ctx->ue_addr);
 			if (!ur->gtpu_remote_port)
 				ur->gtpu_remote_port = htons(GTP_U_PORT);
 		}
