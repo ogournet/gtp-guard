@@ -125,8 +125,8 @@ gtp_cmd_build_udp(struct gtp_cmd_args *args, char *buffer)
 {
 	struct udphdr *udph = (struct udphdr *) buffer;
 
-	udph->source = ((struct sockaddr_in *) &args->src_addr)->sin_port;
-	udph->dest = ((struct sockaddr_in *) &args->dst_addr)->sin_port;
+	udph->source = sa_portn(&args->src_addr);
+	udph->dest = sa_portn(&args->dst_addr);
 	udph->len = htons(sizeof(struct udphdr));
 	udph->check = 0;
 
@@ -158,8 +158,8 @@ gtp_cmd_build_ip(struct gtp_cmd_args *args, char *buffer)
 	iph->frag_off = 0;
 	iph->ttl = 64;
 	iph->protocol = IPPROTO_UDP;
-	iph->saddr = ((struct sockaddr_in *) &args->src_addr)->sin_addr.s_addr;
-	iph->daddr = ((struct sockaddr_in *) &args->dst_addr)->sin_addr.s_addr;
+	iph->saddr = sa_ip4(&args->src_addr);
+	iph->daddr = sa_ip4(&args->dst_addr);
 	iph->check = 0;
 	iph->check = in_csum((uint16_t *) iph, sizeof(struct iphdr), 0);
 
@@ -182,7 +182,7 @@ gtp_cmd_build_pkt(struct gtp_cmd_args *args)
 static int
 gtp_cmd_sendmsg(struct gtp_cmd_args *args)
 {
-	struct sockaddr_storage *addr = &args->dst_addr;
+	union sa *addr = &args->dst_addr;
 	struct msghdr msg;
 	struct iovec iov;
 	int fd;
@@ -219,7 +219,7 @@ static void
 gtp_cmd_read_thread(struct thread *t)
 {
 	struct gtp_cmd_args *args = THREAD_ARG(t);
-	struct sockaddr_storage addr_from;
+	union sa addr_from;
 	socklen_t addrlen = sizeof(addr_from);
 	struct vty *vty = args->vty;
 	struct gtp_hdr *gtph;
@@ -235,17 +235,16 @@ gtp_cmd_read_thread(struct thread *t)
 		log_message(LOG_INFO, "%s(): Timeout receiving GTPv%d Echo-Response from remote-peer [%s]:%d"
 				    , __FUNCTION__
 				    , args->version
-				    , inet_sockaddrtos(&args->dst_addr)
-				    , ntohs(inet_sockaddrport(&args->dst_addr)));
+				    , sa_sstr_ip(&args->dst_addr)
+				    , sa_port(&args->dst_addr));
 		goto end;
 	}
 
 	ret = recvfrom(args->fd_in, args->buffer, GTP_CMD_BUFFER_SIZE, 0
 				  , (struct sockaddr *) &addr_from, &addrlen);
 	if (ret < 0) {
-		vty_out(vty, "%% Error receiving msg from [%s]:%d (%m)%s"
-			   , inet_sockaddrtos(&addr_from)
-			   , ntohs(inet_sockaddrport(&addr_from))
+		vty_out(vty, "%% Error receiving msg from %s (%m)%s"
+			   , sa_sstr(&addr_from)
 			   , VTY_NEWLINE);
 		goto end;
 	}
@@ -258,11 +257,10 @@ gtp_cmd_read_thread(struct thread *t)
 	gtph = (struct gtp_hdr *) (args->buffer + offset);
 	vty_send_out(vty, "%s", (gtph->type == GTP_ECHO_RESPONSE_TYPE) ? "!" : "?");
 
-	log_message(LOG_INFO, "%s(): Receiving GTPv%d Echo-Response from remote-peer [%s]:%d"
+	log_message(LOG_INFO, "%s(): Receiving GTPv%d Echo-Response from remote-peer %s"
 			    , __FUNCTION__
 			    , args->version
-			    , inet_sockaddrtos(&addr_from)
-			    , ntohs(inet_sockaddrport(&addr_from)));
+			    , sa_sstr(&addr_from));
 
 end:
 	if (!--args->count) {
@@ -280,7 +278,7 @@ static void
 gtp_cmd_write_thread(struct thread *t)
 {
 	struct gtp_cmd_args *args = THREAD_ARG(t);
-	struct sockaddr_storage *addr = &args->dst_addr;
+	union sa *addr = &args->dst_addr;
 	struct vty *vty = args->vty;
 	int ret = 0;
 
@@ -308,9 +306,8 @@ gtp_cmd_write_thread(struct thread *t)
 	/* Warm the road */
 	ret = gtp_cmd_sendmsg(args);
 	if (ret < 0) {
-		vty_send_out(vty, "%% Error sending msg to [%s]:%d (%m)%s"
-				, inet_sockaddrtos(addr)
-				, ntohs(inet_sockaddrport(addr))
+		vty_send_out(vty, "%% Error sending msg to %s (%m)%s"
+				, sa_sstr(addr)
 				, VTY_NEWLINE);
 		vty_prompt_restore(vty);
 		close(args->fd_in);
@@ -318,11 +315,10 @@ gtp_cmd_write_thread(struct thread *t)
 		return;
 	}
 
-	log_message(LOG_INFO, "%s(): Sending GTPv%d Echo-Request to remote-peer [%s]:%d"
+	log_message(LOG_INFO, "%s(): Sending GTPv%d Echo-Request to remote-peer %s"
 			    , __FUNCTION__
 			    , args->version
-			    , inet_sockaddrtos(addr)
-			    , ntohs(inet_sockaddrport(addr)));
+			    , sa_sstr(addr));
 
 	/* Register async read thread */
 	args->t_read = thread_add_read(master, gtp_cmd_read_thread, args, args->fd_in, 3 * TIMER_HZ, 0);
@@ -426,9 +422,9 @@ gtp_cmd_echo_request_cbpf_ingress_init(struct gtp_cmd_args *args)
 	}
 
 	/* Prepare filter */
-	bpfcode[3].k = ntohl(((struct sockaddr_in *) &args->src_addr)->sin_addr.s_addr);
-	bpfcode[5].k = ntohl(((struct sockaddr_in *) &args->dst_addr)->sin_addr.s_addr);
-	bpfcode[12].k = ntohs(((struct sockaddr_in *) &args->src_addr)->sin_port);
+	bpfcode[3].k = sa_ip4h(&args->src_addr);
+	bpfcode[5].k = sa_ip4h(&args->dst_addr);
+	bpfcode[12].k = sa_port(&args->src_addr);
 	bpfcode[16].k = args->version;
 
 	/* Attach filter */
@@ -472,7 +468,7 @@ gtp_cmd_echo_request(struct gtp_cmd_args *args)
 
 	/* Unnumbered init */
 	if (args->type == GTP_CMD_ECHO_REQUEST) {
-		args->fd_in = socket(args->dst_addr.ss_family, SOCK_DGRAM, 0);
+		args->fd_in = socket(args->dst_addr.family, SOCK_DGRAM, 0);
 		if (args->fd_in < 0) {
 			vty_out(vty, "%% error creating UDP socket (%m)%s", VTY_NEWLINE);
 			FREE(args);

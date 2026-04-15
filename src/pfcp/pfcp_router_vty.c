@@ -204,7 +204,7 @@ DEFUN(pfcp_listen,
 {
 	struct pfcp_router *c = vty->index;
 	struct pfcp_server *srv = &c->s;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	union sa *addr = &srv->s.addr;
 	int port = PFCP_PORT, err = 0;
 
 	if (argc < 1) {
@@ -221,12 +221,13 @@ DEFUN(pfcp_listen,
 	if (argc >= 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = inet_stosockaddr(argv[0], port, addr);
+	err = sa_parse(argv[0], addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	if (argc >= 3)
 		bsd_strlcpy(srv->s.if_boundto, argv[2], GTP_NAME_MAX_LEN);
@@ -239,9 +240,8 @@ DEFUN(pfcp_listen,
 		return CMD_WARNING;
 	}
 
-	log_message(LOG_INFO, "PFCP start listening on [%s]:%d"
-			    , inet_sockaddrtos(addr)
-			    , ntohs(inet_sockaddrport(addr)));
+	log_message(LOG_INFO, "PFCP start listening on %s"
+			    , sa_sstr(addr));
 	__set_bit(PFCP_ROUTER_FL_LISTEN, &c->flags);
 	return CMD_SUCCESS;
 }
@@ -317,8 +317,8 @@ parse_ueip4_range(const char *str, uint32_t *start, uint32_t *end)
 	if (sa_parse(dash + 1, &end_addr) || end_addr.family != AF_INET)
 		return -1;
 
-	*start = ntohl(start_addr.sin.sin_addr.s_addr);
-	*end = ntohl(end_addr.sin.sin_addr.s_addr);
+	*start = sa_ip4h(&start_addr);
+	*end = sa_ip4h(&end_addr);
 	return (*start <= *end) ? 0 : -1;
 }
 
@@ -377,7 +377,7 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 		ur->flags = UPF_FWD_FL_INGRESS | UPF_FWD_FL_ACT_CREATE_OUTER_HEADER |
 			    UPF_FWD_FL_ACT_FWD;
 		ur->gtpu_remote_teid = htonl(teid);
-		ur->gtpu_remote_addr = ctx->endpt_addr->sin.sin_addr.s_addr;
+		ur->gtpu_remote_addr = sa_ip4(ctx->endpt_addr);
 		ur->gtpu_remote_port = htons(GTP_U_PORT);
 	}
 
@@ -486,7 +486,7 @@ DEFUN(pfcp_debug_teid,
 				return CMD_WARNING;
 			}
 			if (ctx.is_ingress && ue_addr.family == AF_INET)
-				ue_start = ue_end = ntohl(ue_addr.sin.sin_addr.s_addr);
+				ue_start = ue_end = sa_ip4h(&ue_addr);
 		}
 		ctx.has_ue = true;
 		ctx.ue_addr = ue_addr;
@@ -580,8 +580,8 @@ DEFUN(pfcp_gtpu_tunnel_endpoint,
 	const char *addr_str = argv[1];
 	struct gtp_server *srv;
 	unsigned int fl;
-	int port = GTP_U_PORT;
-	int err = 0;
+	int port;
+	int err;
 
 	/* protocol interface */
 	if (!strcmp(ifname_3gpp, "all")) {
@@ -632,12 +632,13 @@ DEFUN(pfcp_gtpu_tunnel_endpoint,
 
 	/* endpoint ip address */
 	VTY_GET_INTEGER_RANGE("UDP Port", port, argv[2], 1024, 65535);
-	err = inet_stosockaddr(addr_str, port, &srv->s.addr);
+	err = sa_parse(addr_str, &srv->s.addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s\n", addr_str);
-		memset(&srv->s.addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(&srv->s.addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(&srv->s.addr, port);
 
 	if (argc >= 4)
 		bsd_strlcpy(srv->s.if_boundto, argv[3], GTP_NAME_MAX_LEN);
@@ -645,9 +646,9 @@ DEFUN(pfcp_gtpu_tunnel_endpoint,
 	err = gtp_server_init(srv, c, pfcp_gtpu_ingress_init,
 			      pfcp_gtpu_ingress_process);
 	if (err) {
-		vty_out(vty, "%% Error initializing GTP-U listener on [%s]:%d%s"
-			   , addr_str, port, VTY_NEWLINE);
-		memset(&srv->s.addr, 0, sizeof(struct sockaddr_storage));
+		vty_out(vty, "%% Error initializing GTP-U listener on %s\n",
+			sa_sstr(&srv->s.addr));
+		sa_zero(&srv->s.addr);
 		return CMD_WARNING;
 	}
 
@@ -824,14 +825,8 @@ DEFUN(pfcp_peer,
 		return CMD_WARNING;
 	}
 
-	switch (p->addr[p->nr_addr].family) {
-	case AF_INET:
-		if (!p->addr[p->nr_addr].sin.sin_port)
-			p->addr[p->nr_addr].sin.sin_port = htons(PFCP_PORT);
-	case AF_INET6:
-		if (!p->addr[p->nr_addr].sin6.sin6_port)
-			p->addr[p->nr_addr].sin6.sin6_port = htons(PFCP_PORT);
-	}
+	if (!sa_port(&p->addr[p->nr_addr]))
+		sa_set_port(&p->addr[p->nr_addr], PFCP_PORT);
 
 	p->nr_addr++;
 

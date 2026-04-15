@@ -152,52 +152,46 @@ ns_log_error(const char *dn, int error)
 static int
 ns_bind_connect(struct gtp_apn *apn, int type)
 {
-	struct sockaddr_storage *addr = &apn->nameserver_bind;
-	socklen_t addrlen;
+	union sa *bind_addr = &apn->nameserver_bind;
 	int fd, err;
 
-	if (!apn->nameserver_bind.ss_family)
+	if (!bind_addr->family)
 		return -1;
 
 	/* Create UDP Client socket */
-	fd = socket(addr->ss_family, type | SOCK_CLOEXEC, 0);
+	fd = socket(bind_addr->family, type | SOCK_CLOEXEC, 0);
 	err = inet_setsockopt_reuseaddr(fd, 1);
 	err = (err) ? : inet_setsockopt_nolinger(fd, 1);
 	err = (err) ? : inet_setsockopt_rcvtimeo(fd, 2000);
 	err = (err) ? : inet_setsockopt_sndtimeo(fd, 2000);
 	if (err) {
-		log_message(LOG_INFO, "%s(): error creating TCP [%s]:%d socket"
+		log_message(LOG_INFO, "%s(): error creating TCP %s socket"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(bind_addr));
 		close(fd);
 		return -1;
 	}
 
 	/* Bind listening channel */
-	addrlen = (addr->ss_family == AF_INET) ? sizeof(struct sockaddr_in) :
-						 sizeof(struct sockaddr_in6);
-	err = bind(fd, (struct sockaddr *) addr, addrlen);
+	err = bind(fd, &bind_addr->sa, sa_len(bind_addr));
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error binding to [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): Error binding to %s (%m)"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(bind_addr));
 		close(fd);
 		return -1;
 	}
 
-	err = connect(fd, (struct sockaddr *) &apn->nameserver, addrlen);
+	err = connect(fd, &apn->nameserver.sa, sa_len(&apn->nameserver));
 	if (err) {
 		if (__test_bit(GTP_RESOLV_FL_CNX_PERSISTENT, &apn->flags) &&
 		    errno == EADDRNOTAVAIL)
 			goto err;
 
-		log_message(LOG_INFO, "%s(): Error(%d) connecting to [%s]:%d (%m)"
+		log_message(LOG_INFO, "%s(): Error(%d) connecting to %s (%m)"
 				    , __FUNCTION__
 				    , errno
-				    , inet_sockaddrtos(&apn->nameserver)
-				    , ntohs(inet_sockaddrport(&apn->nameserver)));
+				    , sa_sstr(&apn->nameserver));
 		goto err;
 	}
 
@@ -211,14 +205,14 @@ static int
 ns_ctx_init(struct gtp_resolv_ctx *ctx)
 {
 	struct gtp_apn *apn = ctx->apn;
-	struct sockaddr_storage *addr;
+	union sa *addr;
 	int fd;
 
 	fd = ns_bind_connect(apn, SOCK_STREAM);
 	if (fd < 0)
 		return -1;
 
-	addr = (apn->nameserver.ss_family) ? &apn->nameserver : &daemon_data->nameserver;
+	addr = (apn->nameserver.family) ? &apn->nameserver : &daemon_data->nameserver;
 
 	/* glibc resolver is providing extension to set remote nameserver.
 	 * We are using this facility to set pre-allocated/pre-initialized
@@ -231,7 +225,7 @@ ns_ctx_init(struct gtp_resolv_ctx *ctx)
 		ctx->ns_rs.options |= RES_STAYOPEN;
 	ctx->ns_rs._u._ext.nssocks[0] = fd;
 	ctx->ns_rs._u._ext.nsaddrs[0] = MALLOC(sizeof(struct sockaddr_in6));
-	*ctx->ns_rs._u._ext.nsaddrs[0] = *((struct sockaddr_in6 *) addr);
+	*ctx->ns_rs._u._ext.nsaddrs[0] = addr->sin6;
 	ctx->ns_rs._u._ext.nscount = 1;
 	return 0;
 }
@@ -258,15 +252,6 @@ retry:
 }
 
 static int
-gtp_pgw_set(struct gtp_pgw *pgw, const u_char *rdata, size_t rdlen)
-{
-	struct sockaddr_in *addr4 = (struct sockaddr_in *) &pgw->addr;
-	pgw->addr.ss_family = AF_INET;
-	addr4->sin_addr.s_addr = *(uint32_t *) rdata;
-	return 0;
-}
-
-static int
 gtp_resolv_srv_a(struct gtp_resolv_ctx *ctx, struct gtp_pgw *pgw)
 {
 	int ret, i, err;
@@ -290,8 +275,8 @@ gtp_resolv_srv_a(struct gtp_resolv_ctx *ctx, struct gtp_pgw *pgw)
 		if (ns_rr_type(ctx->rr) != ns_t_a)
 			continue;
 
-		gtp_pgw_set(pgw, ns_rr_rdata(ctx->rr), ns_rr_rdlen(ctx->rr));
-        }
+		sa_from_ip4(&pgw->addr, *(uint32_t *)ns_rr_rdata(ctx->rr));
+	}
 
 	return 0;
 }
@@ -323,7 +308,6 @@ static int
 gtp_pgw_append(struct gtp_naptr *naptr, char *name, size_t len)
 {
 	struct gtp_pgw *new;
-	struct sockaddr_in *addr4;
 
 	PMALLOC(new);
 	INIT_LIST_HEAD(&new->next);
@@ -331,8 +315,7 @@ gtp_pgw_append(struct gtp_naptr *naptr, char *name, size_t len)
 	strncpy(new->srv_name, name, GTP_DISPLAY_SRV_LEN);
 
 	/* Some default hard-coded value */
-	addr4 = (struct sockaddr_in *) &new->addr;
-	addr4->sin_port = htons(2123);
+	sa_from_ip4_port(&new->addr, 0, 2123);
 	new->priority = 10;
 	new->weight = 20;
 
@@ -346,20 +329,18 @@ gtp_pgw_alloc(struct gtp_naptr *naptr, const u_char *rdata, size_t rdlen)
 {
 	struct gtp_pgw *new;
 	const u_char *edata = rdata + rdlen;
-	struct sockaddr_in *addr4;
 	uint16_t port;
 
 	PMALLOC(new);
 	INIT_LIST_HEAD(&new->next);
 	new->naptr = naptr;
-	addr4 = (struct sockaddr_in *) &new->addr;
 
 	new->priority = ns_get16(rdata);
 	rdata += NS_INT16SZ;
 	new->weight = ns_get16(rdata);
 	rdata += NS_INT16SZ;
 	port = ns_get16(rdata);
-	addr4->sin_port = htons(port);
+	sa_from_ip4_port(&new->addr, 0, port);
 	rdata += NS_INT16SZ;
 	gtp_naptr_name_strncat(new->srv_name, GTP_DISPLAY_SRV_LEN, rdata, edata);
 
@@ -376,15 +357,15 @@ gtp_resolv_naptr_srv(struct gtp_resolv_ctx *ctx, struct gtp_naptr *naptr)
 	/* Perform Query */
 	snprintf(ctx->nsdisp, GTP_DISPLAY_BUFFER_LEN - 1, "%s", naptr->server);
 	ret = ns_res_nquery_retry(ctx, ns_c_in, ns_t_srv);
-        if (ret < 0) {
+	if (ret < 0) {
 		res_nclose(&ctx->ns_rs);
 		return -1;
 	}
 
-        ns_initparse(ctx->nsbuffer, ret, &ctx->msg);
-        ret = ns_msg_count(ctx->msg, ns_s_an);
-        for (i = 0; i < ret; i++) {
-                err = ns_parserr(&ctx->msg, ns_s_an, i, &ctx->rr);
+	ns_initparse(ctx->nsbuffer, ret, &ctx->msg);
+	ret = ns_msg_count(ctx->msg, ns_s_an);
+	for (i = 0; i < ret; i++) {
+		err = ns_parserr(&ctx->msg, ns_s_an, i, &ctx->rr);
 		if (err < 0)
 			continue;
 
@@ -393,7 +374,7 @@ gtp_resolv_naptr_srv(struct gtp_resolv_ctx *ctx, struct gtp_naptr *naptr)
 			continue;
 
 		gtp_pgw_alloc(naptr, ns_rr_rdata(ctx->rr), ns_rr_rdlen(ctx->rr));
-        }
+	}
 
 	return 0;
 }
@@ -505,7 +486,7 @@ gtp_resolv_naptr(struct gtp_resolv_ctx *ctx, struct list_head *l, const char *fo
 			continue;
 
 		gtp_naptr_alloc(l, ns_rr_rdata(ctx->rr), ns_rr_rdlen(ctx->rr));
-        }
+	}
 
 	return 0;
 }
@@ -515,7 +496,7 @@ struct gtp_resolv_ctx *
 gtp_resolv_ctx_alloc(struct gtp_apn *apn)
 {
 	struct gtp_resolv_ctx *ctx;
-	struct sockaddr_storage *addr;
+	union sa *addr;
 
 	PMALLOC(ctx);
 	if (!ctx)
@@ -523,8 +504,8 @@ gtp_resolv_ctx_alloc(struct gtp_apn *apn)
 
 	ctx->apn = apn;
 	ctx->max_retry = apn->resolv_max_retry;
-	addr = (apn->nameserver.ss_family) ? &apn->nameserver : &daemon_data->nameserver;
-	if (!addr->ss_family) {
+	addr = (apn->nameserver.family) ? &apn->nameserver : &daemon_data->nameserver;
+	if (!addr->family) {
 		log_message(LOG_INFO, "%s(): No nameserver configured... Ignoring..."
 				    , __FUNCTION__);
 		FREE(ctx);
@@ -534,7 +515,7 @@ gtp_resolv_ctx_alloc(struct gtp_apn *apn)
 	ctx->realm = (strlen(apn->realm)) ? apn->realm : daemon_data->realm;
 
 	res_ninit(&ctx->ns_rs);
-	ctx->ns_rs.nsaddr_list[0] = *((struct sockaddr_in *) addr);
+	ctx->ns_rs.nsaddr_list[0] = addr->sin;
 	ctx->ns_rs.nscount = 1;
 	ctx->ns_rs.retrans = (apn->nameserver_timeout) ? apn->nameserver_timeout : 0;
 
@@ -571,10 +552,9 @@ gtp_pgw_show(struct vty *vty, struct list_head *l)
 	struct gtp_pgw *pgw;
 
 	list_for_each_entry(pgw, l, next) {
-		vty_out(vty, "  %s\t\t[%s]:%d\tPrio:%d Weight:%d%s"
+		vty_out(vty, "  %s\t\t%s\tPrio:%d Weight:%d%s"
 			   , pgw->srv_name
-			   , inet_sockaddrtos(&pgw->addr)
-			   , ntohs(inet_sockaddrport(&pgw->addr))
+			   , sa_sstr(&pgw->addr)
 			   , pgw->priority
 			   , pgw->weight
 			   , VTY_NEWLINE);
@@ -589,10 +569,9 @@ gtp_pgw_dump(struct list_head *l)
 	struct gtp_pgw *pgw;
 
 	list_for_each_entry(pgw, l, next) {
-		printf(" %s\t\t[%s]:%d\tPrio:%d Weight:%d\n",
+		printf(" %s\t\t%s\tPrio:%d Weight:%d\n",
 			pgw->srv_name,
-			inet_sockaddrtos(&pgw->addr),
-			ntohs(inet_sockaddrport(&pgw->addr)),
+			sa_sstr(&pgw->addr),
 			pgw->priority,
 			pgw->weight);
 	}

@@ -42,13 +42,13 @@ static void
 gtp_bpf_teid_rule_set(struct gtp_proxy *p, struct gtp_teid_rule *r, struct gtp_teid *t)
 {
 	unsigned int nr_cpus = bpf_num_possible_cpus();
-	uint32_t local = ~0;
+	uint32_t local = 0;
 	int i;
 
 	if (__test_bit(GTP_TEID_FL_INGRESS, &t->flags))
-		local = inet_sockaddrip4(&p->gtpu_egress.s.addr);
-	if (local == ~0)
-		local = inet_sockaddrip4(&p->gtpu.s.addr);
+		local = sa_ip4(&p->gtpu_egress.s.addr);
+	if (!local)
+		local = sa_ip4(&p->gtpu.s.addr);
 
 	for (i = 0; i < nr_cpus; i++) {
 		r[i].vteid = t->vid;

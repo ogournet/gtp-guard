@@ -160,7 +160,7 @@ DEFUN(gtpc_proxy_tunnel_endpoint,
 {
 	struct gtp_proxy *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpc;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	union sa *addr = &srv->s.addr;
 	int port = 2123, err = 0;
 
 	if (argc < 1) {
@@ -176,12 +176,13 @@ DEFUN(gtpc_proxy_tunnel_endpoint,
 	if (argc == 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = inet_stosockaddr(argv[0], port, addr);
+	err = sa_parse(argv[0], addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	__set_bit(GTP_FL_CTL_BIT, &srv->flags);
 	__set_bit(GTP_FL_GTPC_INGRESS_BIT, &srv->flags);
@@ -206,7 +207,7 @@ DEFUN(gtpc_proxy_egress_tunnel_endpoint,
 {
 	struct gtp_proxy *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpc_egress;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	union sa *addr = &srv->s.addr;
 	int port = 2123, err = 0;
 
 	if (argc < 1) {
@@ -222,12 +223,13 @@ DEFUN(gtpc_proxy_egress_tunnel_endpoint,
 	if (argc == 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = inet_stosockaddr(argv[0], port, addr);
+	err = sa_parse(argv[0], addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	__set_bit(GTP_FL_CTL_BIT, &srv->flags);
 	__set_bit(GTP_FL_GTPC_EGRESS_BIT, &srv->flags);
@@ -249,7 +251,7 @@ DEFUN(gtpc_force_pgw_selection,
       "IPv6 Address\n")
 {
 	struct gtp_proxy *ctx = vty->index;
-	struct sockaddr_storage *addr = &ctx->pgw_addr;
+	union sa *addr = &ctx->pgw_addr;
 	int ret;
 
 	if (argc < 1) {
@@ -257,12 +259,13 @@ DEFUN(gtpc_force_pgw_selection,
 		return CMD_WARNING;
 	}
 
-	ret = inet_stosockaddr(argv[0], 2123, addr);
+	ret = sa_parse(argv[0], addr);
 	if (ret < 0) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, 2123);
 
 	__set_bit(GTP_FL_FORCE_PGW_BIT, &ctx->flags);
 	return CMD_SUCCESS;
@@ -322,7 +325,7 @@ DEFUN(gtpu_proxy_tunnel_endpoint,
 	}
 	sa_set_port(&bind_addr, port);
 
-	srv->s.addr = bind_addr.ss;
+	srv->s.addr = bind_addr;
 	__set_bit(GTP_FL_UPF_BIT, &srv->flags);
 	if (ingress)
 		__set_bit(GTP_FL_GTPU_INGRESS_BIT, &srv->flags);
@@ -471,7 +474,7 @@ DEFUN(gtpu_debug_set_teid,
 	t.vid = atoi(argv[1]);
 	t.id = htonl(atoi(argv[2]));
 	sa_parse(argv[3], &a);
-	t.ipv4 = a.sin.sin_addr.s_addr;
+	t.ipv4 = sa_ip4(&a);
 	__set_bit(!strcmp(argv[4], "ingress") ?
 		  GTP_TEID_FL_INGRESS : GTP_TEID_FL_EGRESS, &t.flags);
 
@@ -516,34 +519,34 @@ gtp_config_write(struct vty *vty)
 		srv = &ctx->gtpc;
 		if (__test_bit(GTP_FL_GTPC_INGRESS_BIT, &srv->flags)) {
 			vty_out(vty, " gtpc-tunnel-endpoint %s port %d%s"
-				   , inet_sockaddrtos(&srv->s.addr)
-				   , ntohs(inet_sockaddrport(&srv->s.addr))
+				   , sa_sstr_ip(&srv->s.addr)
+				   , sa_port(&srv->s.addr)
 				   , VTY_NEWLINE);
 		}
 		srv = &ctx->gtpc_egress;
 		if (__test_bit(GTP_FL_GTPC_EGRESS_BIT, &srv->flags)) {
 			vty_out(vty, " gtpc-egress-tunnel-endpoint %s port %d%s"
-				   , inet_sockaddrtos(&srv->s.addr)
-				   , ntohs(inet_sockaddrport(&srv->s.addr))
+				   , sa_sstr_ip(&srv->s.addr)
+				   , sa_port(&srv->s.addr)
 				   , VTY_NEWLINE);
 		}
 		srv = &ctx->gtpu;
 		if (__test_bit(GTP_FL_GTPU_INGRESS_BIT, &srv->flags)) {
-			port = ntohs(inet_sockaddrport(&srv->s.addr));
+			port = sa_port(&srv->s.addr);
 			vty_out(vty, " gtpu-tunnel-endpoint %s port %d %s",
-				inet_sockaddrtos(&srv->s.addr), port,
+				sa_sstr_ip(&srv->s.addr), port,
 				ctx->gtpu_egress.s.type ? "both-sides" : "ingress");
 		}
 		srv = &ctx->gtpu_egress;
-		port = ntohs(inet_sockaddrport(&srv->s.addr));
+		port = sa_port(&srv->s.addr);
 		if (__test_bit(GTP_FL_GTPU_EGRESS_BIT, &srv->flags) && port) {
 			vty_out(vty, " gtpu-tunnel-endpoint %s port %d egress",
-				inet_sockaddrtos(&srv->s.addr), port);
+				sa_sstr_ip(&srv->s.addr), port);
 		}
 
 		if (__test_bit(GTP_FL_FORCE_PGW_BIT, &ctx->flags))
 			vty_out(vty, " pgw-force-selection %s%s"
-				   , inet_sockaddrtos(&ctx->pgw_addr)
+				   , sa_sstr_ip(&ctx->pgw_addr)
 				   , VTY_NEWLINE);
 		if (ctx->ipip_iface) {
 			vty_out(vty, " gtpu-ipip interface %s view %s\n"

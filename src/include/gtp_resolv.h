@@ -44,7 +44,7 @@ struct gtp_pgw {
 	uint16_t		weight;
 	char			srv_name[GTP_DISPLAY_SRV_LEN];
 	struct gtp_naptr	*naptr;	  /* Back-pointer */
-	struct sockaddr_storage	addr;
+	union sa		addr;
 	uint64_t		cnt;
 	time_t			last_resp;
 

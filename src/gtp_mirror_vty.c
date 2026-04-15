@@ -183,7 +183,7 @@ DEFUN(mirror_no_shutdown,
 
 static int
 mirror_prepare(int argc, const char **argv, struct vty *vty,
-	       struct sockaddr_storage *addr, uint8_t *protocol, int *ifindex)
+	       union sa *addr, uint8_t *protocol, int *ifindex)
 {
 	int err, port;
 
@@ -194,14 +194,15 @@ mirror_prepare(int argc, const char **argv, struct vty *vty,
 
 	VTY_GET_INTEGER_RANGE("Port", port, argv[1], 1024, 65535);
 
-	err = inet_stosockaddr(argv[0], port, addr);
+	err = sa_parse(argv[0], addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	/* FIXME: complete support to IPv6 mirroring */
-	if (addr->ss_family != AF_INET) {
+	if (addr->family != AF_INET) {
 		vty_out(vty, "%% shame on me, only IPv4 is currently supported%s"
 			   , VTY_NEWLINE);
 		return CMD_WARNING;
@@ -242,7 +243,7 @@ DEFUN(mirror_rule,
 {
 	struct gtp_mirror *m = vty->index;
 	struct gtp_mirror_rule *r;
-	struct sockaddr_storage addr;
+	union sa addr;
 	uint8_t protocol;
 	int ifindex, err;
 
@@ -298,7 +299,7 @@ DEFUN(mirror_no_rule,
 {
 	struct gtp_mirror *m = vty->index;
 	struct gtp_mirror_rule *r;
-	struct sockaddr_storage addr;
+	union sa addr;
 	uint8_t protocol;
 	int ifindex, err;
 
@@ -357,8 +358,8 @@ mirror_config_rules_write(struct vty *vty, struct gtp_mirror *m)
 
 	list_for_each_entry(r, l, next) {
 		vty_out(vty, " ip-src-dst %s port %d protocol %s interface %s%s"
-			   , inet_sockaddrtos2(&r->addr, addr_str)
-			   , ntohs(inet_sockaddrport(&r->addr))
+			   , sa_str_ip(&r->addr, addr_str, sizeof(addr_str))
+			   , sa_port(&r->addr)
 			   , (r->protocol == IPPROTO_UDP) ? "UDP" : "TCP"
 			   , if_indextoname(r->ifindex, ifname)
 			   , VTY_NEWLINE);

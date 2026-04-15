@@ -390,28 +390,20 @@ pkt_queue_mput(struct pkt_queue *q, struct mpkt *mp)
  *	Pkt buffer helpers
  */
 ssize_t
-pkt_buffer_send(int fd, struct pkt_buffer *b, struct sockaddr_storage *addr)
+pkt_buffer_send(int fd, struct pkt_buffer *b, union sa *addr)
 {
 	struct iovec iov = { .iov_base = b->head, .iov_len = pkt_buffer_len(b) };
 	struct msghdr msg = {
 		.msg_iov = &iov,
 		.msg_iovlen = 1,
 		.msg_control = NULL,
-		.msg_controllen = 0
+		.msg_controllen = 0,
+		.msg_name = &addr->sa,
+		.msg_namelen = sa_len(addr),
 	};
 
-	switch (addr->ss_family) {
-	case AF_INET:
-		msg.msg_name = (struct sockaddr_in *) addr;
-		msg.msg_namelen = sizeof(struct sockaddr_in);
-		break;
-	case AF_INET6:
-		msg.msg_name = (struct sockaddr_in6 *) addr;
-		msg.msg_namelen = sizeof(struct sockaddr_in6);
-		break;
-	default:
+	if (msg.msg_namelen == 0)
 		return -1;
-	}
 
 	return sendmsg(fd, &msg, 0);
 }

@@ -887,7 +887,7 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 		laddr = pfcp_session_get_addr_by_interface(s->router,
 							   f->dst_interface_type);
 		if (laddr && laddr->family == AF_INET)
-			u->gtpu_local_addr = laddr->sin.sin_addr.s_addr;
+			u->gtpu_local_addr = sa_ip4(laddr);
 		u->gtpu_local_port = htons(GTP_U_PORT);
 	}
 

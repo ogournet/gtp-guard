@@ -85,7 +85,7 @@ gtp_bpf_ppp_rule_set(struct gtp_rt_rule *r, struct gtp_teid *t, struct spppoe *s
 
 		/* TEID related */
 		r[i].teid = t->id;
-		r[i].saddr = inet_sockaddrip4(&srv->s.addr);
+		r[i].saddr = sa_ip4(&srv->s.addr);
 		r[i].daddr = t->ipv4;
 		r[i].vlan_id = vlan_id;
 		r[i].ifindex = spppoe->pppoe->ifindex;

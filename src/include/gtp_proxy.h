@@ -69,7 +69,7 @@ struct gtp_proxy {
 	uint32_t		seqnum;		/* Global context Seqnum */
 
 	struct gtp_naptr	*pgw;
-	struct sockaddr_storage	pgw_addr;
+	union sa		pgw_addr;
 
 	struct gtp_iptnl	iptnl;
 
@@ -85,7 +85,7 @@ int gtp_proxy_gtpc_teid_destroy(struct gtp_teid *teid);
 int gtp_proxy_gtpu_teid_destroy(struct gtp_teid *teid);
 int gtp_proxy_ingress_init(struct inet_server *srv);
 int gtp_proxy_ingress_process(struct inet_server *srv,
-			      struct sockaddr_storage *addr_from);
+			      union sa *addr_from);
 void gtp_proxy_iface_tun_event_cb(struct gtp_interface *iface,
 				  enum gtp_interface_event type,
 				  void *ud, void *arg);

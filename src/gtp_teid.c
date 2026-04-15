@@ -295,10 +295,10 @@ gtp_teid_bind(struct gtp_teid *teid, struct gtp_teid *t)
 }
 
 int
-gtp_teid_masq(struct gtp_f_teid *f_teid, struct sockaddr_storage *addr, uint32_t vid)
+gtp_teid_masq(struct gtp_f_teid *f_teid, union sa *addr, uint32_t vid)
 {
 	*f_teid->teid_grekey = htonl(vid);
-	*f_teid->ipv4 = ((struct sockaddr_in *) addr)->sin_addr.s_addr;
+	*f_teid->ipv4 = sa_ip4(addr);
 	return 0;
 }
 
@@ -311,22 +311,22 @@ gtp_teid_restore(struct gtp_teid *teid, struct gtp_f_teid *f_teid)
 }
 
 int
-gtp_teid_update_sgw(struct gtp_teid *teid, struct sockaddr_storage *addr)
+gtp_teid_update_sgw(struct gtp_teid *teid, union sa *addr)
 {
 	if (!teid)
 		return -1;
 
-	teid->sgw_addr = *((struct sockaddr_in *) addr);
+	teid->sgw_addr = addr->sin;
 	return 0;
 }
 
 int
-gtp_teid_update_pgw(struct gtp_teid *teid, struct sockaddr_storage *addr)
+gtp_teid_update_pgw(struct gtp_teid *teid, union sa *addr)
 {
 	if (!teid)
 		return -1;
 
-	teid->pgw_addr = *((struct sockaddr_in *) addr);
+	teid->pgw_addr = addr->sin;
 	return 0;
 }
 

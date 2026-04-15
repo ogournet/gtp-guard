@@ -190,7 +190,7 @@ DEFUN(cgn_ip_pool,
 		return CMD_WARNING;
 	}
 
-	base = ntohl(addr.sin.sin_addr.s_addr);
+	base = sa_ip4h(&addr);
 	for (i = 0; i < c->cgn_addr_n; i++) {
 		if (c->cgn_addr[i] == base) {
 			vty_out(vty, "%% carrier-grade-nat:'%s' skip "
@@ -456,7 +456,7 @@ DEFUN(show_cgn_user_flow,
 
 	if (sa_parse(argv[0], &a))
 		return CMD_WARNING;
-	addr = ntohl(a.sin.sin_addr.s_addr);
+	addr = sa_ip4h(&a);
 
 	list_for_each_entry(c, &daemon_data->cgn, next) {
 		if (name != NULL && strcmp(c->name, name))

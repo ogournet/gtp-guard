@@ -73,11 +73,9 @@ gtp_proxy_gtpu_teid_destroy(struct gtp_teid *teid)
 }
 
 static void
-gtp_proxy_fwd_addr_get(struct gtp_teid *teid, struct sockaddr_storage *from, struct sockaddr_in *to)
+gtp_proxy_fwd_addr_get(struct gtp_teid *teid, union sa *from, struct sockaddr_in *to)
 {
-	struct sockaddr_in *addr4 = (struct sockaddr_in *) from;
-
-	if (addr4->sin_addr.s_addr == teid->sgw_addr.sin_addr.s_addr) {
+	if (sa_ip4(from) == teid->sgw_addr.sin_addr.s_addr) {
 		*to = teid->pgw_addr;
 	} else {
 		*to = teid->sgw_addr;
@@ -94,7 +92,7 @@ gtp_proxy_ingress_init(struct inet_server *srv)
 }
 
 int
-gtp_proxy_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr_from)
+gtp_proxy_ingress_process(struct inet_server *srv, union sa *addr_from)
 {
 	struct gtp_server *s = srv->ctx;
 	struct gtp_proxy *ctx = s->ctx;
@@ -109,7 +107,7 @@ gtp_proxy_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr
 		if (!teid)
 			return -1;
 
-		inet_server_snd(srv, srv->fd, srv->pbuff, (struct sockaddr_in *) addr_from);
+		inet_server_snd(srv, srv->fd, srv->pbuff, &addr_from->sin);
 		return 0;
 	}
 
@@ -130,7 +128,7 @@ gtp_proxy_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr
 	/* Set destination address */
 	gtp_proxy_fwd_addr_get(teid, addr_from, &addr_to);
 	inet_server_snd(srv, TEID_IS_DUMMY(teid) ? srv->fd : fd, srv->pbuff,
-			TEID_IS_DUMMY(teid) ? (struct sockaddr_in *) addr_from : &addr_to);
+			TEID_IS_DUMMY(teid) ? &addr_from->sin : &addr_to);
 	gtpc_proxy_handle_post(s, teid);
 
 	return 0;
@@ -178,8 +176,8 @@ _set_tun_rules(struct gtp_proxy *ctx, bool add, bool ingress, uint32_t addr)
 	    ctx->ipip_xlat == 3)
 		xlat_after = true;
 
-	if (ingress || (local = inet_sockaddrip4(&ctx->gtpu_egress.s.addr)) == (uint32_t)-1)
-		local = inet_sockaddrip4(&ctx->gtpu.s.addr);
+	if (ingress || !(local = sa_ip4(&ctx->gtpu_egress.s.addr)))
+		local = sa_ip4(&ctx->gtpu.s.addr);
 
 	/* rule to put into tunnel */
 	struct if_rule_key k = {

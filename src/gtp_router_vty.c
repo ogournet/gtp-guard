@@ -129,7 +129,7 @@ DEFUN(gtpc_router_tunnel_endpoint,
 {
 	struct gtp_router *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpc;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	union sa *addr = &srv->s.addr;
 	int port = 2123, err = 0;
 
 	if (argc < 1) {
@@ -145,12 +145,13 @@ DEFUN(gtpc_router_tunnel_endpoint,
 	if (argc >= 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = inet_stosockaddr(argv[0], port, addr);
+	err = sa_parse(argv[0], addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	if (argc >= 3)
 		bsd_strlcpy(srv->s.if_boundto, argv[2], GTP_NAME_MAX_LEN);
@@ -188,7 +189,7 @@ DEFUN(gtpu_router_tunnel_endpoint,
 {
 	struct gtp_router *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpu;
-	struct sockaddr_storage *addr = &srv->s.addr;
+	union sa *addr = &srv->s.addr;
 	int port = GTP_U_PORT, err = 0;
 
 	if (argc < 1) {
@@ -204,12 +205,13 @@ DEFUN(gtpu_router_tunnel_endpoint,
 	if (argc >= 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = inet_stosockaddr(argv[0], port, addr);
+	err = sa_parse(argv[0], addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	if (argc >= 3)
 		bsd_strlcpy(srv->s.if_boundto, argv[2], GTP_NAME_MAX_LEN);
@@ -218,7 +220,7 @@ DEFUN(gtpu_router_tunnel_endpoint,
 	if (err) {
 		vty_out(vty, "%% Error initializing GTP-U listener on [%s]:%d%s"
 			   , argv[0], port, VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
 
@@ -281,8 +283,8 @@ vty_server(struct vty *vty, struct gtp_server *srv, const char *gtplane)
 		     "   flags:0x%lx (%s)%s"
 		     "   rx:%"PRIu64"packets %"PRIu64"bytes | tx:%"PRIu64"packets %"PRIu64"bytes%s"
 		   , gtplane
-		   , inet_sockaddrtos(&srv->s.addr)
-		   , ntohs(inet_sockaddrport(&srv->s.addr))
+		   , sa_sstr_ip(&srv->s.addr)
+		   , sa_port(&srv->s.addr)
 		   , VTY_NEWLINE
 		   , srv->flags, gtp_flags2str(flags2str, sizeof(flags2str), srv->flags)
 		   , VTY_NEWLINE

@@ -289,7 +289,7 @@ gtp_bpf_rt_rule_set(struct gtp_rt_rule *r, struct gtp_teid *t)
 
 	for (i = 0; i < nr_cpus; i++) {
 		r[i].teid = t->id;
-		r[i].saddr = inet_sockaddrip4(&srv->s.addr);
+		r[i].saddr = sa_ip4(&srv->s.addr);
 		r[i].daddr = t->ipv4;
 		r[i].dst_key = dst_key;
 		r[i].vlan_id = vlan_id;
@@ -309,7 +309,7 @@ gtp_bpf_rt_key_set(struct gtp_teid *t, struct ip_rt_key *rt_key)
 	/* egress (upstream) : GTP TEID + pGW GTP Tunnel endpoint */
 	if (__test_bit(GTP_TEID_FL_EGRESS, &t->flags)) {
 		rt_key->id = t->id;
-		rt_key->addr = inet_sockaddrip4(&srv->s.addr);
+		rt_key->addr = sa_ip4(&srv->s.addr);
 		return 0;
 	}
 
