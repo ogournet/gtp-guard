@@ -73,7 +73,7 @@ DEFUN(pdn_nameserver,
       "IPv4 Address\n"
       "IPv6 Address\n")
 {
-	struct sockaddr_storage *addr = &daemon_data->nameserver;
+	union sa *addr = &daemon_data->nameserver;
 	int ret;
 
 	if (argc < 1) {
@@ -81,12 +81,13 @@ DEFUN(pdn_nameserver,
 		return CMD_WARNING;
 	}
 
-	ret = inet_stosockaddr(argv[0], 53, addr);
+	ret = sa_parse(argv[0], addr);
 	if (ret < 0) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, 53);
 
 	gtp_resolv_init();
 
@@ -126,7 +127,7 @@ DEFUN(restart_counter_file,
 static int
 pdn_channel_prepare(int argc, const char **argv, struct vty *vty, struct inet_server *srv)
 {
-	struct sockaddr_storage *addr = &srv->addr;
+	union sa *addr = &srv->addr;
 	int port = 0, err = 0;
 
 	if (argc < 1) {
@@ -146,12 +147,13 @@ pdn_channel_prepare(int argc, const char **argv, struct vty *vty, struct inet_se
 	VTY_GET_INTEGER_RANGE("TCP Port", port, argv[1], 1024, 65535);
 
   end:
-	err = inet_stosockaddr(argv[0], port, addr);
+	err = sa_parse(argv[0], addr);
 	if (err) {
 		vty_out(vty, "%% malformed address %s%s", argv[0], VTY_NEWLINE);
-		memset(addr, 0, sizeof(struct sockaddr_storage));
+		sa_zero(addr);
 		return CMD_WARNING;
 	}
+	sa_set_port(addr, port);
 
 	return CMD_SUCCESS;
 }
@@ -234,12 +236,13 @@ DEFUN(gtp_send_echo_request_standard,
 
 	VTY_GET_INTEGER_RANGE("remote-port", port, argv[2], 1024, 65535);
 
-	err = inet_stosockaddr(argv[1], port, &gtp_cmd_args->dst_addr);
+	err = sa_parse(argv[1], &gtp_cmd_args->dst_addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[1], VTY_NEWLINE);
 		FREE(gtp_cmd_args);
 		return CMD_WARNING;
 	}
+	sa_set_port(&gtp_cmd_args->dst_addr, port);
 
 	if (argc > 4) {
 		VTY_GET_INTEGER_RANGE("count", count, argv[4], 1, 20);
@@ -302,21 +305,23 @@ DEFUN(gtp_send_echo_request_extended,
 
 	VTY_GET_INTEGER_RANGE("port-src", port, argv[3], 1024, 65535);
 
-	err = inet_stosockaddr(argv[2], port, &gtp_cmd_args->src_addr);
+	err = sa_parse(argv[2], &gtp_cmd_args->src_addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[2], VTY_NEWLINE);
 		FREE(gtp_cmd_args);
 		return CMD_WARNING;
 	}
+	sa_set_port(&gtp_cmd_args->src_addr, port);
 
 	VTY_GET_INTEGER_RANGE("port-dst", port, argv[5], 1024, 65535);
 
-	err = inet_stosockaddr(argv[4], port, &gtp_cmd_args->dst_addr);
+	err = sa_parse(argv[4], &gtp_cmd_args->dst_addr);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[4], VTY_NEWLINE);
 		FREE(gtp_cmd_args);
 		return CMD_WARNING;
 	}
+	sa_set_port(&gtp_cmd_args->dst_addr, port);
 
 	if (argc > 6) {
 		VTY_GET_INTEGER_RANGE("count", count, argv[7], 1, 20);
@@ -371,8 +376,8 @@ DEFUN(show_workers_request_channel,
 
 	vty_out(vty, "pdn request-channel:%s port:%d with %d threads%s"
 		     "  flags:%s%s"
-		     , inet_sockaddrtos2(&srv->addr, addr_str)
-		     , ntohs(inet_sockaddrport(&srv->addr))
+		     , sa_str_ip(&srv->addr, addr_str, sizeof(addr_str))
+		     , sa_port(&srv->addr)
 		     , srv->thread_cnt
 		     , VTY_NEWLINE
 		     , gtp_flags2str(flags2str, sizeof(flags2str), srv->flags)
@@ -388,8 +393,8 @@ static int
 pdn_config_write(struct vty *vty)
 {
 	vty_out(vty, "pdn%s", VTY_NEWLINE);
-	if (daemon_data->nameserver.ss_family)
-		vty_out(vty, " nameserver %s%s", inet_sockaddrtos(&daemon_data->nameserver), VTY_NEWLINE);
+	if (daemon_data->nameserver.family)
+		vty_out(vty, " nameserver %s%s", sa_sstr_ip(&daemon_data->nameserver), VTY_NEWLINE);
 	if (daemon_data->realm[0])
 		vty_out(vty, " realm %s%s", daemon_data->realm, VTY_NEWLINE);
 	if (__test_bit(GTP_FL_RESTART_COUNTER_LOADED_BIT, &daemon_data->flags)) {

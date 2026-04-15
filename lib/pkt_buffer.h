@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include "addr.h"
 #include "list_head.h"
 
 /* defines */
@@ -128,7 +129,7 @@ int __pkt_queue_mget(struct pkt_queue *q, struct mpkt *mp);
 int pkt_queue_mget(struct pkt_queue *q, struct mpkt *mp);
 int __pkt_queue_mput(struct pkt_queue *q, struct mpkt *mp);
 int pkt_queue_mput(struct pkt_queue *q, struct mpkt *mp);
-ssize_t pkt_buffer_send(int fd, struct pkt_buffer *b, struct sockaddr_storage *addr);
+ssize_t pkt_buffer_send(int fd, struct pkt_buffer *b, union sa *addr);
 int pkt_buffer_put_zero(struct pkt_buffer *pkt, unsigned int size);
 int pkt_buffer_pad(struct pkt_buffer *b, unsigned int size);
 struct pkt_buffer *pkt_buffer_alloc(unsigned int size);

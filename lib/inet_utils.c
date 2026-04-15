@@ -16,7 +16,7 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2024 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <net/if.h>
@@ -32,8 +32,10 @@
 #include <linux/ip.h>
 #include <linux/if_packet.h>
 
+#define SA_USE_AF_UNIX
 #include "logger.h"
 #include "inet_utils.h"
+#include "addr.h"
 #include "utils.h"
 
 /* Compute a checksum */
@@ -176,120 +178,6 @@ inet_ntoa2(uint32_t addr, char *buffer)
 	return buffer;
 }
 
-/* IP string to sockaddr_storage */
-int
-inet_stosockaddr(const char *str, const uint16_t port, struct sockaddr_storage *addr)
-{
-	struct sockaddr_in6 *addr6;
-	struct sockaddr_in *addr4;
-	void *addr_ip;
-
-	if (*str == '/') {
-		struct sockaddr_un *un = (struct sockaddr_un *) addr;
-		un->sun_family = AF_UNIX;
-		bsd_strlcpy(un->sun_path, str, sizeof(un->sun_path) - 1);
-		return 0;
-	}
-
-	addr->ss_family = (strchr(str, ':')) ? AF_INET6 : AF_INET;
-	switch (addr->ss_family) {
-	case AF_INET6:
-		addr6 = (struct sockaddr_in6 *) addr;
-		if (port)
-			addr6->sin6_port = htons(port);
-		addr_ip = &addr6->sin6_addr;
-		break;
-	case AF_INET:
-		addr4 = (struct sockaddr_in *) addr;
-		if (port)
-			addr4->sin_port = htons(port);
-		addr_ip = &addr4->sin_addr;
-		break;
-	}
-
-	if (!inet_pton(addr->ss_family, str, addr_ip))
-		return -1;
-
-	return 0;
-}
-
-/* IPv4 to sockaddr_storage */
-int
-inet_ip4tosockaddr(uint32_t addr_ip, struct sockaddr_storage *addr)
-{
-	struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
-	addr4->sin_family = AF_INET;
-	addr4->sin_addr.s_addr = addr_ip;
-	return 0;
-}
-
-/* IP network to string representation */
-char *
-inet_sockaddrtos2(struct sockaddr_storage *addr, char *addr_str)
-{
-	struct sockaddr_in6 *addr6;
-	struct sockaddr_in *addr4;
-	void *addr_ip;
-
-	switch (addr->ss_family) {
-	case AF_UNIX:
-		return ((struct sockaddr_un *) addr)->sun_path;
-	case AF_INET:
-		addr4 = (struct sockaddr_in *) addr;
-		addr_ip = &addr4->sin_addr;
-		break;
-	case AF_INET6:
-		addr6 = (struct sockaddr_in6 *) addr;
-		addr_ip = &addr6->sin6_addr;
-		break;
-	default:
-		return NULL;
-	}
-
-	if (!inet_ntop(addr->ss_family, addr_ip, addr_str, INET6_ADDRSTRLEN))
-		return NULL;
-
-	return addr_str;
-}
-
-char *
-inet_sockaddrtos(struct sockaddr_storage *addr)
-{
-	static char addr_str[INET6_ADDRSTRLEN];
-	return inet_sockaddrtos2(addr, addr_str);
-}
-
-uint16_t
-inet_sockaddrport(struct sockaddr_storage *addr)
-{
-	if (addr->ss_family == AF_UNIX)
-		return 0;
-
-	if (addr->ss_family == AF_INET6)
-		return ((struct sockaddr_in6 *) addr)->sin6_port;
-
-	return ((struct sockaddr_in *) addr)->sin_port;
-}
-
-uint32_t
-inet_sockaddrip4(struct sockaddr_storage *addr)
-{
-	if (addr->ss_family != AF_INET)
-		return -1;
-
-	return ((struct sockaddr_in *) addr)->sin_addr.s_addr;
-}
-
-int
-inet_sockaddrip6(struct sockaddr_storage *addr, struct in6_addr *ip6)
-{
-	if (addr->ss_family != AF_INET6)
-		return -1;
-
-	*ip6 = ((struct sockaddr_in6 *) addr)->sin6_addr;
-	return 0;
-}
-
 /*
  * IP string to network representation
  * Highly inspired from Paul Vixie code.
@@ -399,26 +287,17 @@ regular_file_fd2str(int fd, char *dst, size_t dsize)
 }
 
 static ssize_t
-socket_fd2str(struct sockaddr_storage *addr, char *dst, size_t dsize)
+socket_fd2str(union sa *addr, char *dst, size_t dsize)
 {
-	char addr_str[INET6_ADDRSTRLEN];
-	struct sockaddr_un *un;
-
 	if (dsize <= 0)
 		return -1;
 
-	if (addr->ss_family == AF_INET || addr->ss_family == AF_INET6)
-		return snprintf(dst, dsize, "%s%s%s:%d"
-				   , (addr->ss_family == AF_INET6) ? "[" : ""
-				   , inet_sockaddrtos2(addr, addr_str)
-				   , (addr->ss_family == AF_INET6) ? "]" : ""
-				   , ntohs(inet_sockaddrport(addr)));
+	if (addr->family == AF_INET || addr->family == AF_INET6)
+		return strlen(sa_str(addr, dst, dsize));
 
-	if (addr->ss_family == AF_UNIX) {
-		un = (struct sockaddr_un *) addr;
+	if (addr->family == AF_UNIX)
 		return snprintf(dst, dsize, "unix[%s]"
-				   , (*un->sun_path) ? un->sun_path : "'abstract'");
-	}
+				   , (*addr->sun.sun_path) ? addr->sun.sun_path : "'abstract'");
 
 	return snprintf(dst, dsize, "socket type not supported");
 }
@@ -427,7 +306,7 @@ char *
 inet_fd2str(int fd, char *dst, size_t dsize)
 {
 	struct stat statbuf;
-	struct sockaddr_storage addr;
+	union sa addr;
 	socklen_t addr_len = sizeof(addr);
 	ssize_t dlen = 0;
 
@@ -451,7 +330,7 @@ inet_fd2str(int fd, char *dst, size_t dsize)
 	}
 
 	/* fd is a socket */
-	if (getsockname(fd, (struct sockaddr *)&addr, &addr_len) < 0)
+	if (getsockname(fd, &addr.sa, &addr_len) < 0)
 		goto unknown;
 
 	dlen = socket_fd2str(&addr, dst, dsize);
@@ -459,7 +338,7 @@ inet_fd2str(int fd, char *dst, size_t dsize)
 		goto end;
 
 	/* fetch peer */
-	if (getpeername(fd, (struct sockaddr *)&addr, &addr_len) < 0)
+	if (getpeername(fd, &addr.sa, &addr_len) < 0)
 		goto end;
 
 	dlen = bsd_strlcat(dst + dlen, " -> remote_peer: ", dsize - dlen);

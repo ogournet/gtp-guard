@@ -19,6 +19,8 @@
  * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#define SA_USE_AF_UNIX
+
 #include <unistd.h>
 #include <sys/un.h>
 
@@ -172,10 +174,8 @@ gtp_metrics_cnx_process(struct inet_cnx *c)
 int
 gtp_metrics_srv_prepare(struct inet_server *s)
 {
-	struct sockaddr_storage	*addr = &s->addr;
-
-	if (addr->ss_family == AF_UNIX)
-		unlink(((struct sockaddr_un *) addr)->sun_path);
+	if (s->addr.family == AF_UNIX)
+		unlink(s->addr.sun.sun_path);
 
 	return 0;
 }

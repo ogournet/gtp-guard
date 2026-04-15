@@ -63,20 +63,19 @@ pfcp_server_rcv(struct inet_server *srv, ssize_t nbytes)
 int
 pfcp_server_init(struct pfcp_server *s, void *ctx,
 		 int (*init) (struct inet_server *),
-		 int (*process) (struct inet_server *, struct sockaddr_storage *))
+		 int (*process) (struct inet_server *, union sa *))
 {
 	struct inet_server *srv = &s->s;
-	struct sockaddr_storage *addr = &srv->addr;
+	union sa *addr = &srv->addr;
 	int err;
 
 	/* Init pfcp server */
 	s->ctx = ctx;
 	s->msg = pfcp_msg_alloc(PFCP_MSG_MEM_ZEROCOPY);
 	if (!s->msg) {
-		log_message(LOG_INFO, "%s(): Error allocating PFCP msg for [%s]:%d"
+		log_message(LOG_INFO, "%s(): Error allocating PFCP msg for %s"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(addr));
 		return -1;
 	}
 
@@ -90,10 +89,9 @@ pfcp_server_init(struct pfcp_server *s, void *ctx,
 	/* Create UDP Listener */
 	err = inet_server_init(srv, SOCK_DGRAM);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error creating PFCP listener on [%s]:%d"
+		log_message(LOG_INFO, "%s(): Error creating PFCP listener on %s"
 				    , __FUNCTION__
-				    , inet_sockaddrtos(addr)
-				    , ntohs(inet_sockaddrport(addr)));
+				    , sa_sstr(addr));
 		pfcp_msg_free(s->msg);
 		s->msg = NULL;
 		return -1;

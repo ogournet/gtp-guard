@@ -231,12 +231,12 @@ pfcp_ie_put_error_cause(struct pkt_buffer *pbuff, const uint8_t *node_id, size_t
 
 int
 pfcp_ie_put_f_seid(struct pkt_buffer *pbuff, const uint64_t seid,
-		   const struct sockaddr_storage *addr)
+		   const union sa *addr)
 {
 	struct pfcp_ie_f_seid *ie;
 	unsigned int length = sizeof(struct pfcp_ie) + sizeof(uint64_t) + 1;
 
-	switch (addr->ss_family) {
+	switch (addr->family) {
 	case AF_INET:
 		length += sizeof(struct in_addr);
 		break;
@@ -253,14 +253,14 @@ pfcp_ie_put_f_seid(struct pkt_buffer *pbuff, const uint64_t seid,
 	ie = (struct pfcp_ie_f_seid *) pbuff->data;
 	ie->seid = seid;
 	ie->flags = 0;
-	switch (addr->ss_family) {
+	switch (addr->family) {
 	case AF_INET:
 		ie->v4 = 1;
-		ie->ipv4 = ((struct sockaddr_in *)addr)->sin_addr;
+		ie->ipv4 = addr->sin.sin_addr;
 		break;
 	case AF_INET6:
 		ie->v6 = 1;
-		memcpy(&ie->ipv6, &((struct sockaddr_in6 *)addr)->sin6_addr,
+		memcpy(&ie->ipv6, &addr->sin6.sin6_addr,
 		       sizeof(struct in6_addr));
 		break;
 	}

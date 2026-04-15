@@ -35,7 +35,7 @@ extern struct data *daemon_data;
  *	Rules helpers
  */
 struct gtp_mirror_rule *
-gtp_mirror_rule_get(struct gtp_mirror *m, const struct sockaddr_storage *addr,
+gtp_mirror_rule_get(struct gtp_mirror *m, const union sa *addr,
 		    uint8_t protocol, int ifindex)
 {
 	struct list_head *l = &m->rules;
@@ -53,7 +53,7 @@ gtp_mirror_rule_get(struct gtp_mirror *m, const struct sockaddr_storage *addr,
 }
 
 struct gtp_mirror_rule *
-gtp_mirror_rule_add(struct gtp_mirror *m, const struct sockaddr_storage *addr,
+gtp_mirror_rule_add(struct gtp_mirror *m, const union sa *addr,
 		    uint8_t protocol, int ifindex)
 {
 	struct list_head *l = &m->rules;

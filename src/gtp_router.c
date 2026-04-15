@@ -45,7 +45,7 @@ gtp_router_ingress_init(struct inet_server *srv)
 }
 
 int
-gtp_router_ingress_process(struct inet_server *srv, struct sockaddr_storage *addr_from)
+gtp_router_ingress_process(struct inet_server *srv, union sa *addr_from)
 {
 	struct gtp_server *s = srv->ctx;
 	int ret;
@@ -57,7 +57,7 @@ gtp_router_ingress_process(struct inet_server *srv, struct sockaddr_storage *add
 
 	if (ret != GTP_ROUTER_DELAYED)
 		inet_server_snd(srv, srv->fd, srv->pbuff,
-				(struct sockaddr_in *) addr_from);
+				&addr_from->sin);
 	return 0;
 }
 
