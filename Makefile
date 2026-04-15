@@ -32,6 +32,11 @@ else
   Q = @
 endif
 
+J ?= 0
+ifneq ($J,0)
+  ninja_opts += -j $(J)
+endif
+
 all: $(BUILDDIR)/build.ninja
 	$Q ninja -C $(BUILDDIR) $(ninja_opts)
 	$Q ln -f $(BUILDDIR)/$(EXEC) $(BIN)/$(EXEC)
