@@ -16,13 +16,70 @@
 #include <net/if.h>
 #include <ifaddrs.h>
 
-#define SA_USE_AF_UNIX
-#define SA_USE_AF_PACKET
 #include "addr.h"
 
 
+int
+ip4_parse(uint32_t *out, const char *str)
+{
+	struct in_addr a;
+
+	if (inet_pton(AF_INET, str, &a) != 1)
+		return -1;
+	*out = a.s_addr;
+	return 0;
+}
+
+int
+ip6_parse(struct in6_addr *out, const char *str)
+{
+	if (inet_pton(AF_INET6, str, out) != 1)
+		return -1;
+	return 0;
+}
+
+char *
+ip4_str_r(uint32_t addr, char *buf, size_t buf_size)
+{
+	struct in_addr a = { .s_addr = addr };
+
+	if (!inet_ntop(AF_INET, &a, buf, buf_size))
+		buf[0] = 0;
+	return buf;
+}
+
+char *
+ip6_str_r(const struct in6_addr *addr, char *buf, size_t buf_size)
+{
+	if (!inet_ntop(AF_INET6, addr, buf, buf_size))
+		buf[0] = 0;
+	return buf;
+}
+
+char *
+ip4_str(uint32_t addr)
+{
+	static __thread char buf[INET_ADDRSTRLEN];
+
+	return ip4_str_r(addr, buf, sizeof (buf));
+}
+
+char *
+ip6_str(const struct in6_addr *addr)
+{
+	static __thread char buf[INET6_ADDRSTRLEN];
+
+	return ip6_str_r(addr, buf, sizeof (buf));
+}
+
+
+
+/*
+ * sockaddr_t
+ */
+
 socklen_t
-sa_len(const union sa *a)
+sa_len(const sockaddr_t *a)
 {
 	switch (a->sa.sa_family) {
 	case AF_INET:
@@ -39,7 +96,7 @@ sa_len(const union sa *a)
 }
 
 void
-sa_copy(union sa *dst, const union sa *src)
+sa_cpy(sockaddr_t *dst, const sockaddr_t *src)
 {
 	socklen_t l = sa_len(src);
 
@@ -49,124 +106,8 @@ sa_copy(union sa *dst, const union sa *src)
 		dst->sa.sa_family = AF_UNSPEC;
 }
 
-void
-sa_from_ip4(union sa *a, uint32_t ipaddr)
-{
-	a->family = AF_INET;
-	a->sin.sin_addr.s_addr = ipaddr;
-	a->sin.sin_port = 0;
-}
-
-void
-sa_from_ip4_port(union sa *a, uint32_t ipaddr, uint16_t port)
-{
-	a->family = AF_INET;
-	a->sin.sin_addr.s_addr = ipaddr;
-	a->sin.sin_port = htons(port);
-}
-
-void
-sa_from_ip4h(union sa *a, uint32_t ipaddr_host)
-{
-	a->family = AF_INET;
-	a->sin.sin_addr.s_addr = htonl(ipaddr_host);
-	a->sin.sin_port = 0;
-}
-
-void
-sa_from_ip4h_port(union sa *a, uint32_t ipaddr_host, uint16_t port)
-{
-	a->family = AF_INET;
-	a->sin.sin_addr.s_addr = htonl(ipaddr_host);
-	a->sin.sin_port = htons(port);
-}
-
-uint32_t
-sa_ip4(const union sa *a)
-{
-	if (a->family == AF_INET)
-		return a->sin.sin_addr.s_addr;
-	return 0;
-}
-
-uint32_t
-sa_ip4h(const union sa *a)
-{
-	if (a->family == AF_INET)
-		return ntohl(a->sin.sin_addr.s_addr);
-	return 0;
-}
-
-void
-sa_from_ip6(union sa *a, const struct in6_addr *ipaddr)
-{
-	a->family = AF_INET6;
-	memcpy(a->sin6.sin6_addr.s6_addr, ipaddr->s6_addr,
-	       sizeof (ipaddr->s6_addr));
-	a->sin6.sin6_port = 0;
-}
-
-void
-sa_from_ip6_port(union sa *a, const struct in6_addr *ipaddr, uint16_t port)
-{
-	a->family = AF_INET6;
-	memcpy(a->sin6.sin6_addr.s6_addr, ipaddr->s6_addr,
-	       sizeof (ipaddr->s6_addr));
-	a->sin6.sin6_port = htons(port);
-}
-
-void
-sa_from_ip6_bytes(union sa *a, const uint8_t *bytes)
-{
-	a->family = AF_INET6;
-	memcpy(a->sin6.sin6_addr.s6_addr, bytes, sizeof (a->sin6.sin6_addr));
-	a->sin6.sin6_port = 0;
-	a->sin6.sin6_flowinfo = 0;
-	a->sin6.sin6_scope_id = 0;
-}
-
-const struct in6_addr *
-sa_ip6(const union sa *a)
-{
-	if (a->family == AF_INET6)
-		return &a->sin6.sin6_addr;
-	return NULL;
-}
-
-uint16_t
-sa_port(const union sa *a)
-{
-	switch (a->sa.sa_family) {
-	case AF_INET:
-		return ntohs(a->sin.sin_port);
-	case AF_INET6:
-		return ntohs(a->sin6.sin6_port);
-	default:
-		return 0;
-	}
-}
-
-uint16_t
-sa_portn(const union sa *a)
-{
-	return htons(sa_port(a));
-}
-
-void
-sa_set_port(union sa *a, uint16_t port)
-{
-	switch (a->sa.sa_family) {
-	case AF_INET:
-		a->sin.sin_port = htons(port);
-		break;
-	case AF_INET6:
-		a->sin6.sin6_port = htons(port);
-		break;
-	}
-}
-
 int
-sa_cmp(const union sa *la, const union sa *ra)
+sa_cmp(const sockaddr_t *la, const sockaddr_t *ra)
 {
 	int r;
 
@@ -214,7 +155,7 @@ sa_cmp(const union sa *la, const union sa *ra)
 }
 
 int
-sa_cmp_ip(const union sa *la, const union sa *ra)
+sa_cmp_ip(const sockaddr_t *la, const sockaddr_t *ra)
 {
 	if (la->sa.sa_family < ra->sa.sa_family)
 		return -1;
@@ -234,7 +175,7 @@ sa_cmp_ip(const union sa *la, const union sa *ra)
 }
 
 int
-sa_cmp_port(const union sa *la, const union sa *ra)
+sa_cmp_port(const sockaddr_t *la, const sockaddr_t *ra)
 {
 	if (la->sa.sa_family < ra->sa.sa_family)
 		return -1;
@@ -253,7 +194,7 @@ sa_cmp_port(const union sa *la, const union sa *ra)
 
 
 bool
-sa_is_unicast(const union sa *a)
+sa_is_unicast(const sockaddr_t *a)
 {
 	uint32_t addr;
 	uint8_t last;
@@ -288,7 +229,7 @@ sa_is_unicast(const union sa *a)
 }
 
 bool
-sa_is_any(const union sa *a)
+sa_is_any(const sockaddr_t *a)
 {
 	if (a == NULL)
 		return false;
@@ -305,7 +246,7 @@ sa_is_any(const union sa *a)
 }
 
 bool
-sa_is_loopback(const union sa *a)
+sa_is_loopback(const sockaddr_t *a)
 {
 	if (a == NULL)
 		return false;
@@ -322,7 +263,7 @@ sa_is_loopback(const union sa *a)
 }
 
 bool
-sa_is_multicast(const union sa *a)
+sa_is_multicast(const sockaddr_t *a)
 {
 	if (a == NULL)
 		return false;
@@ -338,7 +279,7 @@ sa_is_multicast(const union sa *a)
 }
 
 bool
-sa_is_linklocal(const union sa *a)
+sa_is_linklocal(const sockaddr_t *a)
 {
 	uint32_t addr;
 
@@ -362,7 +303,7 @@ sa_is_linklocal(const union sa *a)
  * sockaddr -> ipv4:port or [ipv6]:port
  */
 char *
-sa_str(const union sa *a, char *buf, size_t buf_size)
+sa_str_r(const sockaddr_t *a, char *buf, size_t buf_size)
 {
 	char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 
@@ -386,7 +327,7 @@ sa_str(const union sa *a, char *buf, size_t buf_size)
  * sockaddr -> ipv4 or ipv6
  */
 char *
-sa_str_ip(const union sa *a, char *buf, size_t buf_size)
+sa_str_ip_r(const sockaddr_t *a, char *buf, size_t buf_size)
 {
 	if (getnameinfo(&a->sa, sizeof (*a),
 			buf, buf_size, NULL, 0,
@@ -402,7 +343,7 @@ sa_str_ip(const union sa *a, char *buf, size_t buf_size)
  * sockaddr -> port
  */
 char *
-sa_str_port(const union sa *a, char *buf, size_t buf_size)
+sa_str_port_r(const sockaddr_t *a, char *buf, size_t buf_size)
 {
 	uint16_t port = sa_port(a);
 
@@ -418,27 +359,27 @@ sa_str_port(const union sa *a, char *buf, size_t buf_size)
  * thread-local buffer stringify variants
  */
 char *
-sa_sstr(const union sa *a)
+sa_str(const sockaddr_t *a)
 {
 	static __thread char buf[NI_MAXHOST + NI_MAXSERV + 2];
 
-	return sa_str(a, buf, sizeof (buf));
+	return sa_str_r(a, buf, sizeof (buf));
 }
 
 char *
-sa_sstr_ip(const union sa *a)
+sa_str_ip(const sockaddr_t *a)
 {
 	static __thread char buf[NI_MAXHOST];
 
-	return sa_str_ip(a, buf, sizeof (buf));
+	return sa_str_ip_r(a, buf, sizeof (buf));
 }
 
 char *
-sa_sstr_port(const union sa *a)
+sa_str_port(const sockaddr_t *a)
 {
 	static __thread char buf[NI_MAXSERV];
 
-	return sa_str_port(a, buf, sizeof (buf));
+	return sa_str_port_r(a, buf, sizeof (buf));
 }
 
 
@@ -446,7 +387,7 @@ sa_sstr_port(const union sa *a)
  * parse ipv4, ipv6, ipv4:port, [ipv6]:port or /tmp/unixsock
  */
 int
-sa_parse(const char *addr, union sa *out)
+sa_parse(sockaddr_t *out, const char *addr)
 {
 	struct addrinfo *res, hints;
 	char buf[strlen(addr) + 1];
@@ -526,7 +467,7 @@ sa_parse(const char *addr, union sa *out)
  * first_ip is true    10.13.26.16/8 => 10.0.0.0
  */
 int
-sa_parse_opt(const char *paddr, union sa *a,
+sa_parse_opt(sockaddr_t *a, const char *paddr,
 	     uint32_t *out_netmask, uint64_t *out_count,
 	     bool first_ip)
 {
@@ -534,7 +475,7 @@ sa_parse_opt(const char *paddr, union sa *a,
 	char buf[strlen(paddr) + 1];
 	uint32_t mask_max, mask;
 	char *nmask, *end, *srange;
-	union sa aend;
+	sockaddr_t aend;
 	int ret;
 
 	strcpy(buf, paddr);
@@ -545,7 +486,7 @@ sa_parse_opt(const char *paddr, union sa *a,
 		srange = strchr(buf, '-');
 		if (srange != NULL) {
 			*srange = 0;
-			if (sa_parse_opt(srange + 1, &aend, NULL, NULL, 0))
+			if (sa_parse_opt(&aend, srange + 1, NULL, NULL, 0))
 				return -1;
 		}
 	}

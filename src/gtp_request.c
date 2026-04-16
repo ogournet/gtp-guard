@@ -94,7 +94,7 @@ gtp_request_json_parse_cmd(struct inet_cnx *c, struct json_node *json)
 			    , __FUNCTION__
 			    , imsi_str
 			    ,  NIPQUAD(conn->sgw_addr.sin_addr.s_addr)
-			    , sa_sstr(&c->addr));
+			    , sa_str(&c->addr));
 
   end:
 	jsonw_end_object(jwriter);

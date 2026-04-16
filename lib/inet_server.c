@@ -19,8 +19,6 @@
  * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#define SA_USE_AF_UNIX
-
 /* system includes */
 #include <unistd.h>
 #include <sys/stat.h>
@@ -46,7 +44,7 @@ inet_server_vty(struct vty *vty, const char *type_str, struct inet_server *srv)
 {
 	vty_out(vty, "%s %s port %d"
 		   , type_str
-		   , sa_sstr_ip(&srv->addr)
+		   , sa_str_ip(&srv->addr)
 		   , sa_port(&srv->addr));
 	if (srv->if_boundto[0])
 		vty_out(vty, " bind %s", srv->if_boundto);
@@ -67,8 +65,8 @@ inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
 	if (nbytes < 0) {
 		log_message(LOG_INFO, "%s(): error sending from %s to %s (%m)"
 				    , __FUNCTION__
-				    , sa_str((union sa *)&s->addr, buf1, sizeof (buf1))
-				    , sa_str((union sa *)addr, buf2, sizeof (buf2)));
+				    , sa_str_r((sockaddr_t *)&s->addr, buf1, sizeof (buf1))
+				    , sa_str_r((sockaddr_t *)addr, buf2, sizeof (buf2)));
 		s->tx_errors++;
 		return -1;
 	}
@@ -81,7 +79,7 @@ inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
 }
 
 static ssize_t
-inet_server_rcv(struct inet_server *s, union sa *remote)
+inet_server_rcv(struct inet_server *s, sockaddr_t *remote)
 {
 	socklen_t remote_len = sizeof (*remote);
 	ssize_t nbytes;
@@ -108,7 +106,7 @@ static int
 inet_server_udp_init(struct inet_server *s)
 {
 	const char *ifname = s->if_boundto[0] ? s->if_boundto : NULL;
-	union sa *addr = &s->addr;
+	sockaddr_t *addr = &s->addr;
 	int fd, err;
 
 	/* Create UDP Listener */
@@ -121,7 +119,7 @@ inet_server_udp_init(struct inet_server *s)
 	if (err) {
 		log_message(LOG_INFO, "%s(): error creating UDP %s socket"
 				    , __FUNCTION__
-				    , sa_sstr(addr));
+				    , sa_str(addr));
 		close(fd);
 		return -1;
 	}
@@ -131,7 +129,7 @@ inet_server_udp_init(struct inet_server *s)
 	if (err) {
 		log_message(LOG_INFO, "%s(): Error binding to %s (%m)"
 				    , __FUNCTION__
-				    , sa_sstr(addr));
+				    , sa_str(addr));
 		close(fd);
 		return -1;
 	}
@@ -143,8 +141,8 @@ void
 inet_server_udp_async_recv_thread(struct thread *t)
 {
 	struct inet_server *s = THREAD_ARG(t);
-	union sa *addr = &s->addr;
-	union sa addr_from;
+	sockaddr_t *addr = &s->addr;
+	sockaddr_t addr_from;
 	ssize_t nbytes;
 
 	if (t->type == THREAD_READ_TIMEOUT)
@@ -167,7 +165,7 @@ inet_server_udp_async_recv_thread(struct thread *t)
 		if (s->fd < 0) {
 			log_message(LOG_INFO, "%s(): Error creating UDP on %s...dying..."
 					    , __FUNCTION__
-					    , sa_sstr(addr));
+					    , sa_str(addr));
 			return;
 		}
 		goto next_read;
@@ -243,7 +241,7 @@ inet_server_thread(void *arg)
 	int old_type, err;
 
 	/* Out identity */
-	snprintf(identity, 63, "%s", sa_sstr_ip(&c->addr));
+	snprintf(identity, 63, "%s", sa_str_ip(&c->addr));
 	prctl(PR_SET_NAME, identity, 0, 0, 0, 0);
 
 	/* Set Cancel type */
@@ -287,7 +285,7 @@ end:
 static void
 inet_server_accept(struct thread *t)
 {
-	union sa addr;
+	sockaddr_t addr;
 	socklen_t addrlen = sizeof (addr);
 	struct inet_worker *w;
 	struct inet_cnx *c;
@@ -313,21 +311,21 @@ inet_server_accept(struct thread *t)
 		log_message(LOG_INFO, "%s(): #%d Error accepting connection from peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , sa_sstr(&addr));
+				    , sa_str(&addr));
 		goto next_accept;
 	}
 
 	/* remote client session allocation */
 	PMALLOC(c);
 	c->fd = accept_fd;
-	sa_copy(&c->addr, &addr);
+	sa_cpy(&c->addr, &addr);
 	c->worker = w;
 	c->fp = fdopen(accept_fd, "w");
 	if (!c->fp) {
 		log_message(LOG_INFO, "%s(): #%d cant fdopen on accept socket with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , sa_sstr(&addr));
+				    , sa_str(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
@@ -340,7 +338,7 @@ inet_server_accept(struct thread *t)
 	if (err) {
 		log_message(LOG_INFO, "%s(): error creating TCP connection with %s"
 				    , __FUNCTION__
-				    , sa_sstr(&addr));
+				    , sa_str(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
@@ -352,7 +350,7 @@ inet_server_accept(struct thread *t)
 		log_message(LOG_INFO, "%s(): #%d cant init pthread_attr for session with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , sa_sstr(&addr));
+				    , sa_str(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
@@ -362,7 +360,7 @@ inet_server_accept(struct thread *t)
 		log_message(LOG_INFO, "%s(): #%d cant set pthread detached for session with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , sa_sstr(&addr));
+				    , sa_str(&addr));
 		inet_cnx_destroy(c);
 		goto next_accept;
 	}
@@ -372,7 +370,7 @@ inet_server_accept(struct thread *t)
 		log_message(LOG_INFO, "%s(): #%d cant create pthread for session with peer %s (%m)"
 				    , __FUNCTION__
 				    , w->id
-				    , sa_sstr(&addr));
+				    , sa_str(&addr));
 		inet_cnx_destroy(c);
 	}
 
@@ -391,7 +389,7 @@ inet_server_tcp_listen(struct inet_worker *w)
 {
 	mode_t old_mask;
 	struct inet_server *s = w->server;
-	union sa *bind_addr = &s->addr;
+	sockaddr_t *bind_addr = &s->addr;
 	socklen_t addrlen = sa_len(bind_addr);
 	int err, fd = -1;
 
@@ -412,7 +410,7 @@ inet_server_tcp_listen(struct inet_worker *w)
 	if (err) {
 		log_message(LOG_INFO, "%s(): error creating %s socket"
 				    , __FUNCTION__
-				    , sa_sstr(bind_addr));
+				    , sa_str(bind_addr));
 		close(fd);
 		return -1;
 	}
@@ -422,7 +420,7 @@ inet_server_tcp_listen(struct inet_worker *w)
 	if (err < 0) {
 		log_message(LOG_INFO, "%s(): Error binding to %s (%m)"
 				    , __FUNCTION__
-				    , sa_sstr(bind_addr));
+				    , sa_str(bind_addr));
 		goto error;
 	}
 
@@ -431,7 +429,7 @@ inet_server_tcp_listen(struct inet_worker *w)
 	if (err < 0) {
 		log_message(LOG_INFO, "%s(): Error listening on %s (%m)"
 				    , __FUNCTION__
-				    , sa_sstr(bind_addr));
+				    , sa_str(bind_addr));
 		goto error;
 	}
 
@@ -491,7 +489,7 @@ inet_server_worker_task(void *arg)
 	/* Welcome message */
 	log_message(LOG_INFO, "%s(): Starting Listener Server[%s]/Worker[%d]"
 			    , __FUNCTION__
-			    , sa_sstr(&s->addr)
+			    , sa_str(&s->addr)
 			    , w->id);
 	__set_bit(INET_FL_RUNNING_BIT, &w->flags);
 
@@ -510,7 +508,7 @@ inet_server_worker_task(void *arg)
 	/* Release Master stuff */
 	log_message(LOG_INFO, "%s(): Stopping Listener Server[%s]/Worker[%d]"
 			    , __FUNCTION__
-			    , sa_sstr(&s->addr)
+			    , sa_str(&s->addr)
 			    , w->id);
 	__clear_bit(INET_FL_RUNNING_BIT, &w->flags);
 	return NULL;

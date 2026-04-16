@@ -341,7 +341,7 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 	struct upf_ingress_key ik = {};
 	struct upf_fwd_rule rule;
 	struct upf_urr c = {};
-	union sa addr, laddr, addr_ue;
+	sockaddr_t addr, laddr, addr_ue;
 	char buf1[26], buf2[40], buf3[26], action_str[40];
 	uint32_t key = 0;
 	int err = 0;
@@ -378,9 +378,9 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 				 ntohs(rule.gtpu_local_port));
 		table_add_row_fmt(tbl, "0x%.8x|%s|%s|%s|%lld|%lld",
 				  ntohl(rule.gtpu_remote_teid),
-				  sa_str(&addr_ue, buf2, sizeof (buf2)),
-				  sa_str(&addr, buf1, sizeof (buf1)),
-				  sa_str(&laddr, buf3, sizeof (buf3)),
+				  sa_str_r(&addr_ue, buf2, sizeof (buf2)),
+				  sa_str_r(&addr, buf1, sizeof (buf1)),
+				  sa_str_r(&laddr, buf3, sizeof (buf3)),
 				  c.dl_pkt, c.dl_bytes);
 	}
 	table_vty_out(tbl, vty);
@@ -418,7 +418,7 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 		sa_set_port(&addr, ntohs(ek.gtpu_local_port));
 		table_add_row_fmt(tbl, "0x%.8x|%s|%s|%lld|%lld",
 				  ntohl(ek.gtpu_local_teid),
-				  sa_str(&addr, buf1, sizeof (buf1)),
+				  sa_str_r(&addr, buf1, sizeof (buf1)),
 				  action_str, c.ul_pkt, c.ul_bytes);
 	}
 	table_vty_out(tbl, vty);
@@ -668,7 +668,7 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 				 &s->pending_addr,
-				 (const union sa *)&s->router->s.s.addr,
+				 (const sockaddr_t *)&s->router->s.s.addr,
 				 GTP_CAPTURE_FL_OUTPUT);
 
 		inet_server_snd(&s->router->s.s, s->router->s.s.fd, pbuff,

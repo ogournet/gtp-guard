@@ -132,7 +132,7 @@ ip_pool_alloc(const char *ip_pool_str)
 		return NULL;
 	}
 
-	err = sa_parse_opt(ip_pool_str, &new->prefix, &new->prefix_bits,
+	err = sa_parse_opt(&new->prefix, ip_pool_str, &new->prefix_bits,
 			    NULL, false);
 	if (err)
 		goto inval;

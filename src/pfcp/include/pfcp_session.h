@@ -54,7 +54,7 @@ enum {
 /* Session components */
 struct f_seid {
 	uint64_t		id;
-	union sa		addr;
+	sockaddr_t		addr;
 };
 
 #define UE_IPV4	(1 << 0)
@@ -234,7 +234,7 @@ struct pfcp_session {
 	uint32_t		urr_query_ref;
 	struct list_head	urr_cmd_pending_list;
 	struct pkt_buffer	*pending_pbuff;
-	union sa		pending_addr;
+	sockaddr_t		pending_addr;
 
 	/* indexing */
 	struct list_head	next;
@@ -248,7 +248,7 @@ struct gtp_range_partition *gtp_resolve_rp(struct gtp_apn *apn, struct pfcp_rout
 struct pfcp_ue *pfcp_ue_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn);
 int pfcp_sessions_count_read(void);
 int pfcp_sessions_cpu_count(int cpu);
-union sa *pfcp_session_get_addr_by_interface(struct pfcp_router *r,
+sockaddr_t *pfcp_session_get_addr_by_interface(struct pfcp_router *r,
 					       uint8_t interface);
 struct pfcp_session *pfcp_session_get(uint64_t id);
 struct pfcp_session *pfcp_session_alloc(struct pfcp_ue *ue,
@@ -265,7 +265,7 @@ int pfcp_sessions_init(void);
 int pfcp_sessions_destroy(void);
 int pfcp_session_create(struct pfcp_session *s,
 			struct pfcp_session_establishment_request *req,
-			union sa *addr);
+			sockaddr_t *addr);
 int pfcp_session_modify(struct pfcp_session *s,
 			struct pfcp_session_modification_request *req);
 int pfcp_session_delete(struct pfcp_session *s);

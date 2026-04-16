@@ -895,7 +895,7 @@ gtpc_pppoe_chg(struct sppp *sp, int state)
  *	GTP-C Protocol helpers
  */
 static int
-gtpc_echo_request_hdl(struct gtp_server *srv, union sa *addr)
+gtpc_echo_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_ie_recovery *rec;
@@ -912,7 +912,7 @@ gtpc_echo_request_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static int
-gtpc_create_session_request_hdl(struct gtp_server *srv, union sa *addr)
+gtpc_create_session_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_msg *msg;
 	struct gtp_msg_ie *msg_ie;
@@ -1129,7 +1129,7 @@ gtpc_create_session_request_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static int
-gtpc_delete_session_request_hdl(struct gtp_server *srv, union sa *addr)
+gtpc_delete_session_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_teid *teid, *pteid;
@@ -1206,7 +1206,7 @@ gtpc_delete_session_request_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static int
-gtpc_modify_bearer_request_hdl(struct gtp_server *srv, union sa *addr)
+gtpc_modify_bearer_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_teid *teid, *pteid = NULL, *t, *t_u;
@@ -1281,7 +1281,7 @@ gtpc_modify_bearer_request_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static int
-gtpc_change_notification_request_hdl(struct gtp_server *srv, union sa *addr)
+gtpc_change_notification_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *h = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_teid *teid;
@@ -1319,7 +1319,7 @@ gtpc_change_notification_request_hdl(struct gtp_server *srv, union sa *addr)
  *	GTP-C Message handle
  */
 static const struct {
-	int (*hdl) (struct gtp_server *, union sa *);
+	int (*hdl) (struct gtp_server *, sockaddr_t *);
 } gtpc_msg_hdl[1 << 8] = {
 	[GTP_ECHO_REQUEST_TYPE]			= { gtpc_echo_request_hdl },
 	[GTP_CREATE_SESSION_REQUEST_TYPE]	= { gtpc_create_session_request_hdl },
@@ -1334,7 +1334,7 @@ static const struct {
 };
 
 int
-gtpc_router_handle(struct gtp_server *srv, union sa *addr)
+gtpc_router_handle(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 
@@ -1353,7 +1353,7 @@ gtpc_router_handle(struct gtp_server *srv, union sa *addr)
  *	GTP-U Message handle
  */
 static int
-gtpu_echo_request_hdl(struct gtp_server *srv, union sa *addr)
+gtpu_echo_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
 	struct gtp1_ie_recovery *rec;
@@ -1373,19 +1373,19 @@ gtpu_echo_request_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static int
-gtpu_error_indication_hdl(struct gtp_server *s, union sa *addr)
+gtpu_error_indication_hdl(struct gtp_server *s, sockaddr_t *addr)
 {
 	return 0;
 }
 
 static int
-gtpu_end_marker_hdl(struct gtp_server *s, union sa *addr)
+gtpu_end_marker_hdl(struct gtp_server *s, sockaddr_t *addr)
 {
 	return 0;
 }
 
 static const struct {
-	int (*hdl) (struct gtp_server *, union sa *);
+	int (*hdl) (struct gtp_server *, sockaddr_t *);
 } gtpu_msg_hdl[0xff + 1] = {
 	[GTPU_ECHO_REQ_TYPE]			= { gtpu_echo_request_hdl },
 	[GTPU_ERR_IND_TYPE]			= { gtpu_error_indication_hdl },
@@ -1393,7 +1393,7 @@ static const struct {
 };
 
 int
-gtpu_router_handle(struct gtp_server *srv, union sa *addr)
+gtpu_router_handle(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 	ssize_t len;
@@ -1412,7 +1412,7 @@ gtpu_router_handle(struct gtp_server *srv, union sa *addr)
 	log_message(LOG_INFO, "%s(): GTP-U/path-mgt msg_type:0x%.2x from %s not supported..."
 			    , __FUNCTION__
 			    , gtph->type
-			    , sa_sstr_ip(addr));
+			    , sa_str_ip(addr));
 
 	gtp_metrics_rx_notsup(&srv->msg_metrics, gtph->type);
 	return -1;

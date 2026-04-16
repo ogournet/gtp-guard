@@ -36,9 +36,9 @@ struct cdr_fwd_config
 	int				ack_window;
 	enum cdr_fwd_lb_mode		lb_mode;
 	uint32_t			instance_id;
-	union sa			addr_ip_bound;
+	sockaddr_t			addr_ip_bound;
 
-	union sa			*remote;
+	sockaddr_t			*remote;
 	int				remote_n;
 
 	/* round-robin, switch connection after this period (seconds) */
@@ -67,7 +67,7 @@ void cdr_fwd_ctx_force_spool_set(struct cdr_fwd_context *ctx, bool enable);
 bool cdr_fwd_ctx_force_spool_get(struct cdr_fwd_context *ctx);
 
 bool cdr_fwd_remote_select_addr(struct cdr_fwd_context *ctx,
-				const union sa *a);
+				const sockaddr_t *a);
 void cdr_fwd_send_ticket(struct cdr_fwd_context *ctx,
 			 const uint8_t *data, int size);
 int cdr_fwd_ctx_dump(const struct cdr_fwd_context *ctx, char *b, size_t s);

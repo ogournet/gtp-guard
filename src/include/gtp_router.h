@@ -41,7 +41,7 @@ struct gtp_router {
 /* Prototypes */
 int gtp_router_ingress_init(struct inet_server *srv);
 int gtp_router_ingress_process(struct inet_server *srv,
-			       union sa *addr_from);
+			       sockaddr_t *addr_from);
 bool gtp_router_inuse(void);
 void gtp_router_foreach(int (*hdl) (struct gtp_router *, void *), void *arg);
 struct gtp_router *gtp_router_get(const char *name);

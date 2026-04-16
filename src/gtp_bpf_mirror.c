@@ -111,7 +111,7 @@ gtp_bpf_mirror_action(int action, void *arg, struct gtp_bpf_prog *p)
 		log_message(LOG_INFO, "%s(): Cant %s mirror_rule for %s (%s)"
 				    , __FUNCTION__
 				    , (action) ? "del" : "add"
-				    , sa_sstr_ip(&m->addr)
+				    , sa_str_ip(&m->addr)
 				    , errmsg);
 		return -1;
 	}
@@ -122,7 +122,7 @@ gtp_bpf_mirror_action(int action, void *arg, struct gtp_bpf_prog *p)
 			      "{addr:%s port:%u, protocol:%s, ifindex:%d}"
 			    , __FUNCTION__
 			    , action_str
-			    , sa_sstr_ip(&m->addr)
+			    , sa_str_ip(&m->addr)
 			    , sa_port(&m->addr)
 			    , (m->protocol == IPPROTO_UDP) ? "UDP" : "TCP"
 			    , m->ifindex);

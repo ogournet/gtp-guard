@@ -182,7 +182,7 @@ gtp_cmd_build_pkt(struct gtp_cmd_args *args)
 static int
 gtp_cmd_sendmsg(struct gtp_cmd_args *args)
 {
-	union sa *addr = &args->dst_addr;
+	sockaddr_t *addr = &args->dst_addr;
 	struct msghdr msg;
 	struct iovec iov;
 	int fd;
@@ -219,7 +219,7 @@ static void
 gtp_cmd_read_thread(struct thread *t)
 {
 	struct gtp_cmd_args *args = THREAD_ARG(t);
-	union sa addr_from;
+	sockaddr_t addr_from;
 	socklen_t addrlen = sizeof(addr_from);
 	struct vty *vty = args->vty;
 	struct gtp_hdr *gtph;
@@ -235,7 +235,7 @@ gtp_cmd_read_thread(struct thread *t)
 		log_message(LOG_INFO, "%s(): Timeout receiving GTPv%d Echo-Response from remote-peer [%s]:%d"
 				    , __FUNCTION__
 				    , args->version
-				    , sa_sstr_ip(&args->dst_addr)
+				    , sa_str_ip(&args->dst_addr)
 				    , sa_port(&args->dst_addr));
 		goto end;
 	}
@@ -244,7 +244,7 @@ gtp_cmd_read_thread(struct thread *t)
 				  , (struct sockaddr *) &addr_from, &addrlen);
 	if (ret < 0) {
 		vty_out(vty, "%% Error receiving msg from %s (%m)%s"
-			   , sa_sstr(&addr_from)
+			   , sa_str(&addr_from)
 			   , VTY_NEWLINE);
 		goto end;
 	}
@@ -260,7 +260,7 @@ gtp_cmd_read_thread(struct thread *t)
 	log_message(LOG_INFO, "%s(): Receiving GTPv%d Echo-Response from remote-peer %s"
 			    , __FUNCTION__
 			    , args->version
-			    , sa_sstr(&addr_from));
+			    , sa_str(&addr_from));
 
 end:
 	if (!--args->count) {
@@ -278,7 +278,7 @@ static void
 gtp_cmd_write_thread(struct thread *t)
 {
 	struct gtp_cmd_args *args = THREAD_ARG(t);
-	union sa *addr = &args->dst_addr;
+	sockaddr_t *addr = &args->dst_addr;
 	struct vty *vty = args->vty;
 	int ret = 0;
 
@@ -307,7 +307,7 @@ gtp_cmd_write_thread(struct thread *t)
 	ret = gtp_cmd_sendmsg(args);
 	if (ret < 0) {
 		vty_send_out(vty, "%% Error sending msg to %s (%m)%s"
-				, sa_sstr(addr)
+				, sa_str(addr)
 				, VTY_NEWLINE);
 		vty_prompt_restore(vty);
 		close(args->fd_in);
@@ -318,7 +318,7 @@ gtp_cmd_write_thread(struct thread *t)
 	log_message(LOG_INFO, "%s(): Sending GTPv%d Echo-Request to remote-peer %s"
 			    , __FUNCTION__
 			    , args->version
-			    , sa_sstr(addr));
+			    , sa_str(addr));
 
 	/* Register async read thread */
 	args->t_read = thread_add_read(master, gtp_cmd_read_thread, args, args->fd_in, 3 * TIMER_HZ, 0);

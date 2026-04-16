@@ -84,7 +84,7 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	if (!p) {
 		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server %s"
 				    , __FUNCTION__
-				    , sa_sstr(&srv->s.addr));
+				    , sa_str(&srv->s.addr));
 		return;
 	}
 
@@ -109,13 +109,13 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	if (err) {
 		log_message(LOG_INFO, "%s(): Error building report pkt for server %s"
 				    , __FUNCTION__
-				    , sa_sstr(&srv->s.addr));
+				    , sa_str(&srv->s.addr));
 		goto end;
 	}
 
 	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 			 &s->remote_seid.addr,
-			 (const union sa *)&s->router->s.s.addr,
+			 (const sockaddr_t *)&s->router->s.s.addr,
 			 GTP_CAPTURE_FL_OUTPUT);
 
 	/* Run, Baby, Run */

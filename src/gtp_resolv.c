@@ -152,7 +152,7 @@ ns_log_error(const char *dn, int error)
 static int
 ns_bind_connect(struct gtp_apn *apn, int type)
 {
-	union sa *bind_addr = &apn->nameserver_bind;
+	sockaddr_t *bind_addr = &apn->nameserver_bind;
 	int fd, err;
 
 	if (!bind_addr->family)
@@ -167,7 +167,7 @@ ns_bind_connect(struct gtp_apn *apn, int type)
 	if (err) {
 		log_message(LOG_INFO, "%s(): error creating TCP %s socket"
 				    , __FUNCTION__
-				    , sa_sstr(bind_addr));
+				    , sa_str(bind_addr));
 		close(fd);
 		return -1;
 	}
@@ -177,7 +177,7 @@ ns_bind_connect(struct gtp_apn *apn, int type)
 	if (err) {
 		log_message(LOG_INFO, "%s(): Error binding to %s (%m)"
 				    , __FUNCTION__
-				    , sa_sstr(bind_addr));
+				    , sa_str(bind_addr));
 		close(fd);
 		return -1;
 	}
@@ -191,7 +191,7 @@ ns_bind_connect(struct gtp_apn *apn, int type)
 		log_message(LOG_INFO, "%s(): Error(%d) connecting to %s (%m)"
 				    , __FUNCTION__
 				    , errno
-				    , sa_sstr(&apn->nameserver));
+				    , sa_str(&apn->nameserver));
 		goto err;
 	}
 
@@ -205,7 +205,7 @@ static int
 ns_ctx_init(struct gtp_resolv_ctx *ctx)
 {
 	struct gtp_apn *apn = ctx->apn;
-	union sa *addr;
+	sockaddr_t *addr;
 	int fd;
 
 	fd = ns_bind_connect(apn, SOCK_STREAM);
@@ -496,7 +496,7 @@ struct gtp_resolv_ctx *
 gtp_resolv_ctx_alloc(struct gtp_apn *apn)
 {
 	struct gtp_resolv_ctx *ctx;
-	union sa *addr;
+	sockaddr_t *addr;
 
 	PMALLOC(ctx);
 	if (!ctx)
@@ -554,7 +554,7 @@ gtp_pgw_show(struct vty *vty, struct list_head *l)
 	list_for_each_entry(pgw, l, next) {
 		vty_out(vty, "  %s\t\t%s\tPrio:%d Weight:%d%s"
 			   , pgw->srv_name
-			   , sa_sstr(&pgw->addr)
+			   , sa_str(&pgw->addr)
 			   , pgw->priority
 			   , pgw->weight
 			   , VTY_NEWLINE);
@@ -571,7 +571,7 @@ gtp_pgw_dump(struct list_head *l)
 	list_for_each_entry(pgw, l, next) {
 		printf(" %s\t\t%s\tPrio:%d Weight:%d\n",
 			pgw->srv_name,
-			sa_sstr(&pgw->addr),
+			sa_str(&pgw->addr),
 			pgw->priority,
 			pgw->weight);
 	}

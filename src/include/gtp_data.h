@@ -34,7 +34,7 @@ enum daemon_flags {
 /* Main control block */
 struct data {
 	char			realm[GTP_STR_MAX_LEN];
-	union sa		nameserver;
+	sockaddr_t		nameserver;
 	struct inet_server	request_channel;
 	struct inet_server	metrics_channel;
 	char			restart_counter_filename[GTP_STR_MAX_LEN];

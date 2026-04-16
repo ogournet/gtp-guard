@@ -183,7 +183,8 @@ int main(int argc, char **argv)
 	PMALLOC(apn);
 	INIT_LIST_HEAD(&apn->service_selection);
 	bsd_strlcpy(apn->name, "*", GTP_APN_MAX_LEN);
-	inet_stosockaddr(nameserver, 53, &apn->nameserver);
+	sa_parse(&apn->nameserver, nameserver);
+	sa_set_port(&apn->nameserver, 53);
 	if (service_selection) {
 		PMALLOC(svc);
 		INIT_LIST_HEAD(&svc->next);

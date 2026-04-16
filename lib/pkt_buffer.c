@@ -390,7 +390,7 @@ pkt_queue_mput(struct pkt_queue *q, struct mpkt *mp)
  *	Pkt buffer helpers
  */
 ssize_t
-pkt_buffer_send(int fd, struct pkt_buffer *b, union sa *addr)
+pkt_buffer_send(int fd, struct pkt_buffer *b, sockaddr_t *addr)
 {
 	struct iovec iov = { .iov_base = b->head, .iov_len = pkt_buffer_len(b) };
 	struct msghdr msg = {

@@ -31,7 +31,7 @@ enum gtp_mirror_flags {
 
 /* mirror structure */
 struct gtp_mirror_rule {
-	union sa		addr;
+	sockaddr_t		addr;
 	uint8_t			protocol;
 	int			ifindex;
 	bool			active;
@@ -54,10 +54,10 @@ struct gtp_mirror {
 
 /* Prototypes */
 struct gtp_mirror_rule *gtp_mirror_rule_get(struct gtp_mirror *,
-					    const union sa *,
+					    const sockaddr_t *,
 					    uint8_t, int);
 struct gtp_mirror_rule *gtp_mirror_rule_add(struct gtp_mirror *,
-					    const union sa *,
+					    const sockaddr_t *,
 					    uint8_t, int);
 void gtp_mirror_rule_del(struct gtp_mirror_rule *);
 void gtp_mirror_brd_action(int, int);
