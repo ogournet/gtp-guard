@@ -231,7 +231,7 @@ pfcp_ie_put_error_cause(struct pkt_buffer *pbuff, const uint8_t *node_id, size_t
 
 int
 pfcp_ie_put_f_seid(struct pkt_buffer *pbuff, const uint64_t seid,
-		   const union sa *addr)
+		   const sockaddr_t *addr)
 {
 	struct pfcp_ie_f_seid *ie;
 	unsigned int length = sizeof(struct pfcp_ie) + sizeof(uint64_t) + 1;

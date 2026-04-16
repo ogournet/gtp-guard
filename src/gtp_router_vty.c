@@ -129,7 +129,7 @@ DEFUN(gtpc_router_tunnel_endpoint,
 {
 	struct gtp_router *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpc;
-	union sa *addr = &srv->s.addr;
+	sockaddr_t *addr = &srv->s.addr;
 	int port = 2123, err = 0;
 
 	if (argc < 1) {
@@ -145,7 +145,7 @@ DEFUN(gtpc_router_tunnel_endpoint,
 	if (argc >= 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = sa_parse(argv[0], addr);
+	err = sa_parse(addr, argv[0]);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
 		sa_zero(addr);
@@ -189,7 +189,7 @@ DEFUN(gtpu_router_tunnel_endpoint,
 {
 	struct gtp_router *ctx = vty->index;
 	struct gtp_server *srv = &ctx->gtpu;
-	union sa *addr = &srv->s.addr;
+	sockaddr_t *addr = &srv->s.addr;
 	int port = GTP_U_PORT, err = 0;
 
 	if (argc < 1) {
@@ -205,7 +205,7 @@ DEFUN(gtpu_router_tunnel_endpoint,
 	if (argc >= 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = sa_parse(argv[0], addr);
+	err = sa_parse(addr, argv[0]);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
 		sa_zero(addr);
@@ -283,7 +283,7 @@ vty_server(struct vty *vty, struct gtp_server *srv, const char *gtplane)
 		     "   flags:0x%lx (%s)%s"
 		     "   rx:%"PRIu64"packets %"PRIu64"bytes | tx:%"PRIu64"packets %"PRIu64"bytes%s"
 		   , gtplane
-		   , sa_sstr_ip(&srv->s.addr)
+		   , sa_str_ip(&srv->s.addr)
 		   , sa_port(&srv->s.addr)
 		   , VTY_NEWLINE
 		   , srv->flags, gtp_flags2str(flags2str, sizeof(flags2str), srv->flags)

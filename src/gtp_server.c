@@ -63,10 +63,10 @@ gtp_server_rcv(struct inet_server *srv, ssize_t nbytes)
 int
 gtp_server_init(struct gtp_server *s, void *ctx,
 		int (*init) (struct inet_server *),
-		int (*process) (struct inet_server *, union sa *))
+		int (*process) (struct inet_server *, sockaddr_t *))
 {
 	struct inet_server *srv = &s->s;
-	union sa *addr = &srv->addr;
+	sockaddr_t *addr = &srv->addr;
 	int err;
 
 	/* Init inet server */
@@ -82,7 +82,7 @@ gtp_server_init(struct gtp_server *s, void *ctx,
 	if (err) {
 		log_message(LOG_INFO, "%s(): Error creating GTP on %s"
 				    , __FUNCTION__
-				    , sa_sstr(addr));
+				    , sa_str(addr));
 		return -1;
 	}
 

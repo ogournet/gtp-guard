@@ -42,5 +42,5 @@ struct gtp_server {
 /* Prototypes */
 int gtp_server_init(struct gtp_server *s, void *ctx,
 		    int (*init) (struct inet_server *),
-		    int (*process) (struct inet_server *, union sa *));
+		    int (*process) (struct inet_server *, sockaddr_t *));
 int gtp_server_destroy(struct gtp_server *s);

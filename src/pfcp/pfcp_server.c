@@ -63,10 +63,10 @@ pfcp_server_rcv(struct inet_server *srv, ssize_t nbytes)
 int
 pfcp_server_init(struct pfcp_server *s, void *ctx,
 		 int (*init) (struct inet_server *),
-		 int (*process) (struct inet_server *, union sa *))
+		 int (*process) (struct inet_server *, sockaddr_t *))
 {
 	struct inet_server *srv = &s->s;
-	union sa *addr = &srv->addr;
+	sockaddr_t *addr = &srv->addr;
 	int err;
 
 	/* Init pfcp server */
@@ -75,7 +75,7 @@ pfcp_server_init(struct pfcp_server *s, void *ctx,
 	if (!s->msg) {
 		log_message(LOG_INFO, "%s(): Error allocating PFCP msg for %s"
 				    , __FUNCTION__
-				    , sa_sstr(addr));
+				    , sa_str(addr));
 		return -1;
 	}
 
@@ -91,7 +91,7 @@ pfcp_server_init(struct pfcp_server *s, void *ctx,
 	if (err) {
 		log_message(LOG_INFO, "%s(): Error creating PFCP listener on %s"
 				    , __FUNCTION__
-				    , sa_sstr(addr));
+				    , sa_str(addr));
 		pfcp_msg_free(s->msg);
 		s->msg = NULL;
 		return -1;

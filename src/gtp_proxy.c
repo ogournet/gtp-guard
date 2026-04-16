@@ -73,7 +73,7 @@ gtp_proxy_gtpu_teid_destroy(struct gtp_teid *teid)
 }
 
 static void
-gtp_proxy_fwd_addr_get(struct gtp_teid *teid, union sa *from, struct sockaddr_in *to)
+gtp_proxy_fwd_addr_get(struct gtp_teid *teid, sockaddr_t *from, struct sockaddr_in *to)
 {
 	if (sa_ip4(from) == teid->sgw_addr.sin_addr.s_addr) {
 		*to = teid->pgw_addr;
@@ -92,7 +92,7 @@ gtp_proxy_ingress_init(struct inet_server *srv)
 }
 
 int
-gtp_proxy_ingress_process(struct inet_server *srv, union sa *addr_from)
+gtp_proxy_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 {
 	struct gtp_server *s = srv->ctx;
 	struct gtp_proxy *ctx = s->ctx;

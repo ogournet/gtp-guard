@@ -32,7 +32,6 @@
 #include <linux/ip.h>
 #include <linux/if_packet.h>
 
-#define SA_USE_AF_UNIX
 #include "logger.h"
 #include "inet_utils.h"
 #include "addr.h"
@@ -287,13 +286,13 @@ regular_file_fd2str(int fd, char *dst, size_t dsize)
 }
 
 static ssize_t
-socket_fd2str(union sa *addr, char *dst, size_t dsize)
+socket_fd2str(sockaddr_t *addr, char *dst, size_t dsize)
 {
 	if (dsize <= 0)
 		return -1;
 
 	if (addr->family == AF_INET || addr->family == AF_INET6)
-		return strlen(sa_str(addr, dst, dsize));
+		return strlen(sa_str_r(addr, dst, dsize));
 
 	if (addr->family == AF_UNIX)
 		return snprintf(dst, dsize, "unix[%s]"
@@ -306,7 +305,7 @@ char *
 inet_fd2str(int fd, char *dst, size_t dsize)
 {
 	struct stat statbuf;
-	union sa addr;
+	sockaddr_t addr;
 	socklen_t addr_len = sizeof(addr);
 	ssize_t dlen = 0;
 

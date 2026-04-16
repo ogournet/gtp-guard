@@ -294,9 +294,9 @@ DEFUN(mape_border_relay_address,
       "Set ipv6 source address when encapsulating in map-e\n")
 {
 	struct mape_rule *r = vty->index;
-	union sa addr;
+	sockaddr_t addr;
 
-	if (sa_parse_opt(argv[0], &addr, NULL, NULL, 1) ||
+	if (sa_parse_opt(&addr, argv[0], NULL, NULL, 1) ||
 	    addr.family != AF_INET6) {
 		vty_out(vty, "%% mape:'%s' cannot parse encap-source %s\n",
 			r->name, argv[0]);
@@ -316,10 +316,10 @@ DEFUN(mape_ipv6_prefix,
       "Set ipv6 prefix\n")
 {
 	struct mape_rule *r = vty->index;
-	union sa addr;
+	sockaddr_t addr;
 	uint32_t ns;
 
-	if (sa_parse_opt(argv[0], &addr, &ns, NULL, 1) ||
+	if (sa_parse_opt(&addr, argv[0], &ns, NULL, 1) ||
 	    addr.family != AF_INET6) {
 		vty_out(vty, "%% mape:'%s' cannot parse ipv6-prefix %s\n",
 			r->name, argv[0]);
@@ -341,10 +341,10 @@ DEFUN(mape_ipv4_prefix,
       "Set ipv4 prefix\n")
 {
 	struct mape_rule *r = vty->index;
-	union sa addr;
+	sockaddr_t addr;
 	uint32_t ns;
 
-	if (sa_parse_opt(argv[0], &addr, &ns, NULL, 1) ||
+	if (sa_parse_opt(&addr, argv[0], &ns, NULL, 1) ||
 	    addr.family != AF_INET) {
 		vty_out(vty, "%% mape:'%s' cannot parse ipv4-prefix %s\n",
 			r->name, argv[0]);

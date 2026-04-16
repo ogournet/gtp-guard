@@ -192,12 +192,12 @@ split_ipv4(struct gtp_range_partition *rp, const char *range_str, int k, int cou
 {
 	char addr_str[INET_ADDRSTRLEN], cidr[64];
 	uint32_t base_bits, part_size, prefix_bits;
-	union sa base_addr;
+	sockaddr_t base_addr;
 	struct in_addr in;
 	int part_prefix, i;
 	void *pool;
 
-	if (sa_parse_opt(range_str, &base_addr, &prefix_bits, NULL, true) < 0)
+	if (sa_parse_opt(&base_addr, range_str, &prefix_bits, NULL, true) < 0)
 		return -1;
 	if (base_addr.family != AF_INET)
 		return -1;
@@ -232,13 +232,13 @@ static int
 split_ipv6(struct gtp_range_partition *rp, const char *range_str, int k, int count)
 {
 	char addr_str[INET6_ADDRSTRLEN], cidr[64];
-	union sa base_addr;
+	sockaddr_t base_addr;
 	struct in6_addr addr6;
 	uint32_t prefix_bits;
 	int part_prefix, b, q;
 	void *pool;
 
-	if (sa_parse_opt(range_str, &base_addr, &prefix_bits, NULL, true) < 0)
+	if (sa_parse_opt(&base_addr, range_str, &prefix_bits, NULL, true) < 0)
 		return -1;
 	if (base_addr.family != AF_INET6)
 		return -1;

@@ -91,14 +91,14 @@ gtpc_retransmit_detected(struct gtp_server *srv)
  *	GTP-C Message handle
  */
 static const struct {
-	struct gtp_teid * (*hdl) (struct gtp_server *, union sa *);
+	struct gtp_teid * (*hdl) (struct gtp_server *, sockaddr_t *);
 } gtpc_msg_hdl[7] = {
 	[1]	= { gtpc_proxy_handle_v1 },
 	[2]	= { gtpc_proxy_handle_v2 },
 };
 
 struct gtp_teid *
-gtpc_proxy_handle(struct gtp_server *srv, union sa *addr)
+gtpc_proxy_handle(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 
@@ -110,7 +110,7 @@ gtpc_proxy_handle(struct gtp_server *srv, union sa *addr)
 			      " Ignoring ingress datagram from %s"
 			    , __FUNCTION__
 			    , gtph->version
-			    , sa_sstr(addr));
+			    , sa_str(addr));
 
 	return NULL;
 }
@@ -142,7 +142,7 @@ gtpc_proxy_handle_post(struct gtp_server *srv, struct gtp_teid *teid)
  *	GTP-U Message handle
  */
 static struct gtp_teid *
-gtpu_echo_request_hdl(struct gtp_server *srv, union sa *addr)
+gtpu_echo_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
 	struct gtp1_ie_recovery *rec;
@@ -163,7 +163,7 @@ gtpu_echo_request_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static struct gtp_teid *
-gtpu_error_indication_hdl(struct gtp_server *srv, union sa *addr)
+gtpu_error_indication_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_proxy *ctx = srv->ctx;
 	struct gtp_teid *teid = NULL, *pteid = NULL;
@@ -210,7 +210,7 @@ gtpu_error_indication_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static struct gtp_teid *
-gtpu_end_marker_hdl(struct gtp_server *srv, union sa *addr)
+gtpu_end_marker_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 	struct gtp_proxy *ctx = srv->ctx;
@@ -250,7 +250,7 @@ gtpu_end_marker_hdl(struct gtp_server *srv, union sa *addr)
 }
 
 static const struct {
-	struct gtp_teid * (*hdl) (struct gtp_server *, union sa *);
+	struct gtp_teid * (*hdl) (struct gtp_server *, sockaddr_t *);
 } gtpu_msg_hdl[0xff + 1] = {
 	[GTPU_ECHO_REQ_TYPE]			= { gtpu_echo_request_hdl },
 	[GTPU_ERR_IND_TYPE]			= { gtpu_error_indication_hdl },
@@ -258,7 +258,7 @@ static const struct {
 };
 
 struct gtp_teid *
-gtpu_proxy_handle(struct gtp_server *srv, union sa *addr)
+gtpu_proxy_handle(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
 	ssize_t len;
@@ -275,6 +275,6 @@ gtpu_proxy_handle(struct gtp_server *srv, union sa *addr)
 	log_message(LOG_INFO, "%s(): GTP-U/path-mgt msg_type:0x%.2x from %s not supported..."
 			    , __FUNCTION__
 			    , gtph->type
-			    , sa_sstr_ip(addr));
+			    , sa_str_ip(addr));
 	return NULL;
 }

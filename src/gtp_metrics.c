@@ -19,8 +19,6 @@
  * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
-#define SA_USE_AF_UNIX
-
 #include <unistd.h>
 #include <sys/un.h>
 

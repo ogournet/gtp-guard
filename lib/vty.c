@@ -1472,7 +1472,7 @@ vty_flush(struct thread *t)
 
 /* Create new vty structure. */
 static struct vty *
-vty_create(struct thread_master *m, int vty_sock, union sa *addr)
+vty_create(struct thread_master *m, int vty_sock, sockaddr_t *addr)
 {
 	struct vty *vty;
 
@@ -1548,8 +1548,8 @@ vty_create(struct thread_master *m, int vty_sock, union sa *addr)
 static void
 vty_accept(struct thread *t)
 {
-	union sa *bind_addr = THREAD_ARG(t);
-	union sa sock;
+	sockaddr_t *bind_addr = THREAD_ARG(t);
+	sockaddr_t sock;
 	socklen_t len;
 	int vty_sock, ret;
 	int accept_sock = THREAD_FD(t);
@@ -1559,7 +1559,7 @@ vty_accept(struct thread *t)
 
 	/* We can handle IPv4 or IPv6 socket. */
 	sa_zero(&sock);
-	len = sizeof(union sa);
+	len = sizeof(sockaddr_t);
 	vty_sock = accept4(accept_sock, &sock.sa, &len, SOCK_NONBLOCK);
 	if (vty_sock < 0) {
 		log_message(LOG_WARNING, "can't accept vty socket : %s"
@@ -1574,7 +1574,7 @@ vty_accept(struct thread *t)
 		ret = inet_setsockopt_nodelay(vty_sock, 1);
 		if (ret < 0)
 			log_message(LOG_INFO, "can't set sockopt to vty_sock : %m");
-		log_message(LOG_INFO, "Vty connection from %s", sa_sstr_ip(&sock));
+		log_message(LOG_INFO, "Vty connection from %s", sa_str_ip(&sock));
 	}
 
 	vty_create(t->master, vty_sock, &sock);
@@ -1582,7 +1582,7 @@ vty_accept(struct thread *t)
 
 /* Start listener thread */
 int
-vty_listen(struct thread_master *m, union sa *addr)
+vty_listen(struct thread_master *m, sockaddr_t *addr)
 {
 	int ret, accept_sock, on = 1;
 	mode_t old_mask;
@@ -1592,7 +1592,7 @@ vty_listen(struct thread_master *m, union sa *addr)
 	accept_sock = socket(addr->family, SOCK_STREAM, 0);
 	if (accept_sock < 0) {
 		log_message(LOG_INFO, "Vty error creating listening socket on [%s]:%d (%m)"
-				    , sa_sstr_ip(addr)
+				    , sa_str_ip(addr)
 				    , sa_port(addr));
 		umask(old_mask);
 		return -1;
@@ -1608,7 +1608,7 @@ vty_listen(struct thread_master *m, union sa *addr)
 	ret = bind(accept_sock, &addr->sa, sizeof(*addr));
 	if (ret < 0) {
 		log_message(LOG_INFO, "Vty error cant bind to [%s]:%d (%m)"
-				    , sa_sstr_ip(addr)
+				    , sa_str_ip(addr)
 				    , sa_port(addr));
 		goto err;
 	}
@@ -1616,14 +1616,14 @@ vty_listen(struct thread_master *m, union sa *addr)
 	ret = listen(accept_sock, 16);
 	if (ret < 0) {
 		log_message(LOG_INFO, "Vty error cant listen to [%s]:%d (%m)"
-				    , sa_sstr_ip(addr)
+				    , sa_str_ip(addr)
 				    , sa_port(addr));
 		goto err;
 	}
 
 	umask(old_mask);
 	log_message(LOG_INFO, "Vty start listening on [%s]:%d"
-			    , sa_sstr_ip(addr)
+			    , sa_str_ip(addr)
 			    , sa_port(addr));
 	vty_event(m, VTY_SERV, accept_sock, addr);
 	return accept_sock;
@@ -2022,7 +2022,7 @@ DEFUN(config_who,
 		if ((v = vector_slot(vtyvec, i)) != NULL) {
 			vty_out(vty, "%svty[%d] connected from %s.%s"
 				   , v->config ? "*" : " "
-				   , i, sa_str_ip(&v->address, ipaddr, sizeof(ipaddr))
+				   , i, sa_str_ip_r(&v->address, ipaddr, sizeof(ipaddr))
 				   , VTY_NEWLINE);
 		}
 	}
@@ -2124,7 +2124,7 @@ DEFUN(vty_line_listen,
       "IPv6 Address\n"
       "TCP Port\n")
 {
-	union sa *vty_listen_addr;
+	sockaddr_t *vty_listen_addr;
 	uint16_t port = 0;
 	int ret;
 
@@ -2135,8 +2135,8 @@ DEFUN(vty_line_listen,
 
 	VTY_GET_INTEGER_RANGE("TCP Port", port, argv[1], 1024, 65535);
 
-	vty_listen_addr = (union sa *) MALLOC(sizeof(union sa));
-	ret = sa_parse(argv[0], vty_listen_addr);
+	vty_listen_addr = (sockaddr_t *) MALLOC(sizeof(sockaddr_t));
+	ret = sa_parse(vty_listen_addr, argv[0]);
 	if (ret < 0) {
 		vty_out(vty, "%% Invalid IP Address%s", VTY_NEWLINE);
 		FREE(vty_listen_addr);
@@ -2163,8 +2163,8 @@ DEFUN(no_vty_line_listen,
       "IPv6 Address\n"
       "TCP Port\n")
 {
-	union sa *vty_listen_addr;
-	union sa addr;
+	sockaddr_t *vty_listen_addr;
+	sockaddr_t addr;
 	struct thread *vty_serv_thread;
 	uint16_t port = 0;
 	unsigned int i;
@@ -2178,7 +2178,7 @@ DEFUN(no_vty_line_listen,
 	VTY_GET_INTEGER_RANGE("TCP Port", port, argv[1], 1024, 65535);
 
 	sa_zero(&addr);
-	ret = sa_parse(argv[0], &addr);
+	ret = sa_parse(&addr, argv[0]);
 	if (ret < 0) {
 		vty_out(vty, "%% Invalid IP Address%s", VTY_NEWLINE);
 		return CMD_WARNING;
@@ -2188,11 +2188,11 @@ DEFUN(no_vty_line_listen,
 	for (i = 0; i < vector_active(Vvty_serv_thread); i++) {
 		if ((vty_serv_thread = vector_slot(Vvty_serv_thread, i)) != NULL) {
 			vty_listen_addr = THREAD_ARG(vty_serv_thread);
-			if (memcmp(vty_listen_addr, &addr, sizeof(union sa)) == 0) {
+			if (memcmp(vty_listen_addr, &addr, sizeof(sockaddr_t)) == 0) {
 				thread_del(vty_serv_thread);
 				vector_slot(Vvty_serv_thread, i) = NULL;
 				log_message(LOG_INFO, "Vty stop listener on [%s]:%d"
-						    , sa_sstr_ip(vty_listen_addr)
+						    , sa_str_ip(vty_listen_addr)
 						    , sa_port(vty_listen_addr));
 				FREE(vty_listen_addr);
 				close(i);
@@ -2355,7 +2355,7 @@ DEFUN(show_history,
 static int
 vty_config_write(struct vty *vty)
 {
-	union sa *addr;
+	sockaddr_t *addr;
 	struct thread *vty_serv_thread;
 	unsigned int i;
 
@@ -2401,9 +2401,9 @@ vty_config_write(struct vty *vty)
 			}
 			vty_out(vty, "%s", VTY_NEWLINE);
 		} else {
-			addr = (union sa *)sa;
+			addr = (sockaddr_t *)sa;
 			vty_out(vty, " listen %s %d%s"
-				   , sa_sstr_ip(addr)
+				   , sa_str_ip(addr)
 				   , sa_port(addr)
 				   , VTY_NEWLINE);
 		}
@@ -2429,7 +2429,7 @@ vty_reset(void)
 	unsigned int i;
 	struct vty *vty;
 	struct thread *vty_serv_thread;
-	union sa *addr;
+	sockaddr_t *addr;
 
 	for (i = 0; i < vector_active(vtyvec); i++) {
 		if ((vty = vector_slot(vtyvec, i)) != NULL) {
@@ -2454,9 +2454,9 @@ vty_reset(void)
 					    , usock->addr.sun_path);
 			unlink(usock->addr.sun_path);
 		} else {
-			addr = (union sa *)sa;
+			addr = (sockaddr_t *)sa;
 			log_message(LOG_INFO, "Vty stop listener on [%s]:%d"
-					    , sa_sstr_ip(addr)
+					    , sa_str_ip(addr)
 					    , sa_port(addr));
 		}
 		FREE(sa);

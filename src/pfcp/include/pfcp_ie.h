@@ -3312,7 +3312,7 @@ int pfcp_ie_put_node_id(struct pkt_buffer *pbuff, const uint8_t *node_id,
 int pfcp_ie_put_error_cause(struct pkt_buffer *pbuff, const uint8_t *node_id,
 			    size_t nsize, uint8_t cause);
 int pfcp_ie_put_f_seid(struct pkt_buffer *pbuff, const uint64_t seid,
-		       const union sa *addr);
+		       const sockaddr_t *addr);
 int pfcp_ie_put_created_pdr(struct pkt_buffer *pbuff, const uint16_t pdr_id,
 			    const uint32_t teid, const struct in_addr *ipv4,
 			    const struct in6_addr *ipv6, const struct in_addr *ue_ipv4,

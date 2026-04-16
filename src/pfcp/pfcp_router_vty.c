@@ -204,7 +204,7 @@ DEFUN(pfcp_listen,
 {
 	struct pfcp_router *c = vty->index;
 	struct pfcp_server *srv = &c->s;
-	union sa *addr = &srv->s.addr;
+	sockaddr_t *addr = &srv->s.addr;
 	int port = PFCP_PORT, err = 0;
 
 	if (argc < 1) {
@@ -221,7 +221,7 @@ DEFUN(pfcp_listen,
 	if (argc >= 2)
 		VTY_GET_INTEGER_RANGE("UDP Port", port, argv[1], 1024, 65535);
 
-	err = sa_parse(argv[0], addr);
+	err = sa_parse(addr, argv[0]);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
 		sa_zero(addr);
@@ -241,7 +241,7 @@ DEFUN(pfcp_listen,
 	}
 
 	log_message(LOG_INFO, "PFCP start listening on %s"
-			    , sa_sstr(addr));
+			    , sa_str(addr));
 	__set_bit(PFCP_ROUTER_FL_LISTEN, &c->flags);
 	return CMD_SUCCESS;
 }
@@ -300,7 +300,7 @@ parse_teid_range(const char *str, uint32_t *start, uint32_t *end)
 static int
 parse_ueip4_range(const char *str, uint32_t *start, uint32_t *end)
 {
-	union sa start_addr = {}, end_addr = {};
+	sockaddr_t start_addr = {}, end_addr = {};
 	char buf[INET_ADDRSTRLEN * 2 + 2];
 	char *dash;
 
@@ -312,9 +312,9 @@ parse_ueip4_range(const char *str, uint32_t *start, uint32_t *end)
 		return -1;
 
 	*dash = '\0';
-	if (sa_parse(buf, &start_addr) || start_addr.family != AF_INET)
+	if (sa_parse(&start_addr, buf) || start_addr.family != AF_INET)
 		return -1;
-	if (sa_parse(dash + 1, &end_addr) || end_addr.family != AF_INET)
+	if (sa_parse(&end_addr, dash + 1) || end_addr.family != AF_INET)
 		return -1;
 
 	*start = sa_ip4h(&start_addr);
@@ -326,14 +326,14 @@ struct pfcp_teid_iter_ctx {
 	const char		*action;
 	bool			 is_ingress;
 	bool			 is_fwd;
-	const union sa	*endpt_addr;
-	const union sa	*local;
+	const sockaddr_t	*endpt_addr;
+	const sockaddr_t	*local;
 	bool			 has_ue;
-	union sa		 ue_addr;
+	sockaddr_t		 ue_addr;
 	bool			 ue_is_range;
 	uint32_t		 ue_start;
 	bool			 has_ue2;
-	union sa		 ue2_addr;
+	sockaddr_t		 ue2_addr;
 	uint32_t		 rteid_start;
 	uint32_t		 rteid_end;
 };
@@ -440,7 +440,7 @@ DEFUN(pfcp_debug_teid,
 {
 	struct pfcp_router *c = vty->index;
 	struct pfcp_teid_iter_ctx ctx = {};
-	union sa endpt_addr, ue_addr = {}, ue2_addr = {};
+	sockaddr_t endpt_addr, ue_addr = {}, ue2_addr = {};
 	uint32_t teid_start, teid_end, range_count;
 	uint32_t ue_start = 0, ue_end = 0;
 	uint32_t rteid_start = 0, rteid_end = 0;
@@ -452,7 +452,7 @@ DEFUN(pfcp_debug_teid,
 	ctx.is_fwd = !strcmp(argv[1], "fwd");
 
 	/* Parse endpoint address */
-	if (sa_parse(argv[3], &endpt_addr) || endpt_addr.family != AF_INET) {
+	if (sa_parse(&endpt_addr, argv[3]) || endpt_addr.family != AF_INET) {
 		vty_out(vty, "%% cannot parse endpt addresses %s\n", argv[3]);
 		return CMD_WARNING;
 	}
@@ -481,7 +481,7 @@ DEFUN(pfcp_debug_teid,
 			ue_addr.family = AF_INET;
 			ue_is_range = true;
 		} else {
-			if (sa_parse(argv[4], &ue_addr)) {
+			if (sa_parse(&ue_addr, argv[4])) {
 				vty_out(vty, "%% cannot parse ue addresses %s\n", argv[4]);
 				return CMD_WARNING;
 			}
@@ -516,7 +516,7 @@ DEFUN(pfcp_debug_teid,
 
 	/* Parse secondary UE address for ingress (must differ in address family) */
 	if (ctx.is_ingress && argc >= 6) {
-		if (sa_parse(argv[5], &ue2_addr) ||
+		if (sa_parse(&ue2_addr, argv[5]) ||
 		    ue2_addr.family == ue_addr.family) {
 			vty_out(vty, "%% cannot parse secondary ue addresses %s\n", argv[5]);
 			return CMD_WARNING;
@@ -526,7 +526,7 @@ DEFUN(pfcp_debug_teid,
 	}
 
 	/* fixme: works only for 'all' interfaces */
-	ctx.local = (union sa *)pfcp_session_get_addr_by_interface(c, 0);
+	ctx.local = (sockaddr_t *)pfcp_session_get_addr_by_interface(c, 0);
 
 	/* Iterate over TEID/UEADDR range */
 	for (i = 0; i < (int)range_count; i++) {
@@ -632,7 +632,7 @@ DEFUN(pfcp_gtpu_tunnel_endpoint,
 
 	/* endpoint ip address */
 	VTY_GET_INTEGER_RANGE("UDP Port", port, argv[2], 1024, 65535);
-	err = sa_parse(addr_str, &srv->s.addr);
+	err = sa_parse(&srv->s.addr, addr_str);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s\n", addr_str);
 		sa_zero(&srv->s.addr);
@@ -647,7 +647,7 @@ DEFUN(pfcp_gtpu_tunnel_endpoint,
 			      pfcp_gtpu_ingress_process);
 	if (err) {
 		vty_out(vty, "%% Error initializing GTP-U listener on %s\n",
-			sa_sstr(&srv->s.addr));
+			sa_str(&srv->s.addr));
 		sa_zero(&srv->s.addr);
 		return CMD_WARNING;
 	}
@@ -813,7 +813,7 @@ DEFUN(pfcp_peer,
 		return CMD_WARNING;
 	}
 
-	err = sa_parse(argv[0], &p->addr[p->nr_addr]);
+	err = sa_parse(&p->addr[p->nr_addr], argv[0]);
 	if (err) {
 		vty_out(vty, "%% invalid peer:'%s'%s", argv[0], VTY_NEWLINE);
 		return CMD_WARNING;
@@ -1019,7 +1019,7 @@ config_pfcp_peer_list_write(struct vty *vty)
 				   , p->description, VTY_NEWLINE);
 		for (i = 0; i < p->nr_addr; i++) {
 			vty_out(vty, " peer %s%s"
-				   , sa_str(&p->addr[i], addr_str, sizeof(addr_str))
+				   , sa_str_r(&p->addr[i], addr_str, sizeof(addr_str))
 				   , VTY_NEWLINE);
 		}
 

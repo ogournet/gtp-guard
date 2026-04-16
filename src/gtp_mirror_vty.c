@@ -183,7 +183,7 @@ DEFUN(mirror_no_shutdown,
 
 static int
 mirror_prepare(int argc, const char **argv, struct vty *vty,
-	       union sa *addr, uint8_t *protocol, int *ifindex)
+	       sockaddr_t *addr, uint8_t *protocol, int *ifindex)
 {
 	int err, port;
 
@@ -194,7 +194,7 @@ mirror_prepare(int argc, const char **argv, struct vty *vty,
 
 	VTY_GET_INTEGER_RANGE("Port", port, argv[1], 1024, 65535);
 
-	err = sa_parse(argv[0], addr);
+	err = sa_parse(addr, argv[0]);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
 		return CMD_WARNING;
@@ -243,7 +243,7 @@ DEFUN(mirror_rule,
 {
 	struct gtp_mirror *m = vty->index;
 	struct gtp_mirror_rule *r;
-	union sa addr;
+	sockaddr_t addr;
 	uint8_t protocol;
 	int ifindex, err;
 
@@ -299,7 +299,7 @@ DEFUN(mirror_no_rule,
 {
 	struct gtp_mirror *m = vty->index;
 	struct gtp_mirror_rule *r;
-	union sa addr;
+	sockaddr_t addr;
 	uint8_t protocol;
 	int ifindex, err;
 
@@ -358,7 +358,7 @@ mirror_config_rules_write(struct vty *vty, struct gtp_mirror *m)
 
 	list_for_each_entry(r, l, next) {
 		vty_out(vty, " ip-src-dst %s port %d protocol %s interface %s%s"
-			   , sa_str_ip(&r->addr, addr_str, sizeof(addr_str))
+			   , sa_str_ip_r(&r->addr, addr_str, sizeof(addr_str))
 			   , sa_port(&r->addr)
 			   , (r->protocol == IPPROTO_UDP) ? "UDP" : "TCP"
 			   , if_indextoname(r->ifindex, ifname)

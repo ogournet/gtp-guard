@@ -101,7 +101,7 @@ pfcp_gtpu_ingress_init(struct inet_server *srv)
 }
 
 int
-pfcp_gtpu_ingress_process(struct inet_server *srv, union sa *addr_from)
+pfcp_gtpu_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 {
 	struct gtp_server *s = srv->ctx;
 	int ret;
@@ -121,7 +121,7 @@ pfcp_router_ingress_init(struct inet_server *s)
 }
 
 int
-pfcp_router_ingress_process(struct inet_server *srv, union sa *addr_from)
+pfcp_router_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 {
 	struct pfcp_server *s = srv->ctx;
 	int ret;
