@@ -88,7 +88,7 @@ pfcp_assoc_hashkey(struct pfcp_node_id *node_id)
 		break;
 
 	case PFCP_NODE_ID_TYPE_IPV6:
-		hkey = inet_hash_ip6(&node_id->ipv6);
+		hkey = ip6_hash(&node_id->ipv6);
 		break;
 
 	case PFCP_NODE_ID_TYPE_FQDN:
@@ -110,12 +110,12 @@ pfcp_assoc_cmp(struct pfcp_node_id *a, struct pfcp_node_id *b)
 
 	switch (a->type) {
 	case PFCP_NODE_ID_TYPE_IPV4:
-		if (inet_ip4_equal(&a->ipv4, &b->ipv4))
+		if (a->ipv4.s_addr == b->ipv4.s_addr)
 			return 0;
 		break;
 
 	case PFCP_NODE_ID_TYPE_IPV6:
-		if (inet_ip6_equal(&a->ipv6, &b->ipv6))
+		if (ip6_equal(&a->ipv6, &b->ipv6))
 			return 0;
 		break;
 
