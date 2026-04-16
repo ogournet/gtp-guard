@@ -222,17 +222,17 @@ gtp_interface_show(struct gtp_interface *iface, void *arg)
 	if (iface->tunnel_mode)
 		vty_out(vty, " tunnel-%s: local:%s remote:%s%s"
 			   , iface->tunnel_mode == 1 ? "gre" : "ipip"
-			   , sa_str(&iface->tunnel_local
-					    , addr_str, sizeof (addr_str))
-			   , sa_str(&iface->tunnel_remote
-					    , addr2_str, sizeof (addr2_str))
+			   , sa_str_r(&iface->tunnel_local
+					      , addr_str, sizeof (addr_str))
+			   , sa_str_r(&iface->tunnel_remote
+					      , addr2_str, sizeof (addr2_str))
 			   , VTY_NEWLINE);
 	if (__test_bit(GTP_INTERFACE_FL_BPF_NO_DEFAULT_ROUTE_BIT, &iface->flags))
 		vty_out(vty, " bpf-input-pkt: rule-disabled\n");
 	if (iface->direct_tx_gw.family)
 		vty_out(vty, " direct-tx-gw:%s ll_addr:" ETHER_FMT "%s"
-			   , sa_str_ip(&iface->direct_tx_gw, addr_str,
-					       sizeof (addr_str))
+			   , sa_str_ip_r(&iface->direct_tx_gw, addr_str,
+						 sizeof (addr_str))
 			   , ETHER_BYTES(iface->direct_tx_hw_addr)
 			   , VTY_NEWLINE);
 
@@ -377,7 +377,7 @@ DEFUN(interface_direct_tx_gw,
 	struct gtp_interface *iface = vty->index;
 	int err;
 
-	err = sa_parse(argv[0], &iface->direct_tx_gw);
+	err = sa_parse(&iface->direct_tx_gw, argv[0]);
 	if (err) {
 		vty_out(vty, "%% malformed IP address %s%s", argv[0], VTY_NEWLINE);
 		sa_zero(&iface->direct_tx_gw);
@@ -853,8 +853,8 @@ interface_config_write(struct vty *vty)
 			vty_out(vty, " bpf-packet input disable-rule\n");
 		if (__test_bit(GTP_INTERFACE_FL_DIRECT_TX_GW_BIT, &iface->flags))
 			vty_out(vty, " direct-tx-gw %s%s"
-				   , sa_str_ip(&iface->direct_tx_gw, addr_str,
-						       sizeof (addr_str))
+				   , sa_str_ip_r(&iface->direct_tx_gw, addr_str,
+							 sizeof (addr_str))
 				   , VTY_NEWLINE);
 
 		if (iface->table_id)

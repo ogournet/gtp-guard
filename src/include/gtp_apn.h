@@ -58,15 +58,15 @@ enum gtp_pco_flags {
 
 /* Protocol Configuration Option */
 struct gtp_ns {
-	union sa		addr;
+	sockaddr_t		addr;
 
 	struct list_head	next;
 };
 
 struct gtp_pco {
 	struct list_head	ns;
-	union sa		ipcp_primary_ns;
-	union sa		ipcp_secondary_ns;
+	sockaddr_t		ipcp_primary_ns;
+	sockaddr_t		ipcp_secondary_ns;
 	uint16_t		link_mtu;
 	uint8_t			selected_bearer_control_mode;
 
@@ -101,8 +101,8 @@ struct gtp_apn_ip_pool {
 struct gtp_apn {
 	char			name[GTP_APN_MAX_LEN];
 	char			realm[GTP_REALM_LEN];
-	union sa		nameserver;
-	union sa		nameserver_bind;
+	sockaddr_t		nameserver;
+	sockaddr_t		nameserver_bind;
 	int			nameserver_timeout;
 	uint8_t			resolv_max_retry;
 	int			resolv_cache_update;

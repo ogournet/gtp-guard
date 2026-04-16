@@ -25,5 +25,5 @@
 
 /* Prototypes */
 int gtpc_send_delete_bearer_request(struct gtp_teid *);
-int gtpc_router_handle(struct gtp_server *, union sa *);
-int gtpu_router_handle(struct gtp_server *, union sa *);
+int gtpc_router_handle(struct gtp_server *, sockaddr_t *);
+int gtpu_router_handle(struct gtp_server *, sockaddr_t *);

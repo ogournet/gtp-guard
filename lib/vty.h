@@ -85,7 +85,7 @@ struct vty {
 	struct thread		*t_read;			/* Read thread */
 	struct thread		*t_write;			/* Write thread */
 	unsigned long		v_timeout;			/* Timeout seconds */
-	union sa		address;			/* What address is this vty comming from. */
+	sockaddr_t		address;			/* What address is this vty comming from. */
 	void			*priv;				/* Per-session private data */
 };
 
@@ -180,7 +180,7 @@ struct vty_unix_sock {
 /* Prototypes. */
 void vty_init(void);
 void vty_terminate(void);
-int vty_listen(struct thread_master *m, union sa *addr);
+int vty_listen(struct thread_master *m, sockaddr_t *addr);
 int vty_listen_unix(struct thread_master *m, const char *path,
 		    const char *user, const char *group);
 void vty_reset(void);

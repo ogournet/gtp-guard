@@ -45,7 +45,7 @@ gtp_router_ingress_init(struct inet_server *srv)
 }
 
 int
-gtp_router_ingress_process(struct inet_server *srv, union sa *addr_from)
+gtp_router_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 {
 	struct gtp_server *s = srv->ctx;
 	int ret;

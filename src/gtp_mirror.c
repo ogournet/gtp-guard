@@ -35,14 +35,14 @@ extern struct data *daemon_data;
  *	Rules helpers
  */
 struct gtp_mirror_rule *
-gtp_mirror_rule_get(struct gtp_mirror *m, const union sa *addr,
+gtp_mirror_rule_get(struct gtp_mirror *m, const sockaddr_t *addr,
 		    uint8_t protocol, int ifindex)
 {
 	struct list_head *l = &m->rules;
 	struct gtp_mirror_rule *r;
 
 	list_for_each_entry(r, l, next) {
-		if (!sa_cmp((const union sa *)addr, (const union sa *)&r->addr) &&
+		if (!sa_cmp((const sockaddr_t *)addr, (const sockaddr_t *)&r->addr) &&
 		    r->protocol == protocol &&
 		    r->ifindex == ifindex) {
 			return r;
@@ -53,7 +53,7 @@ gtp_mirror_rule_get(struct gtp_mirror *m, const union sa *addr,
 }
 
 struct gtp_mirror_rule *
-gtp_mirror_rule_add(struct gtp_mirror *m, const union sa *addr,
+gtp_mirror_rule_add(struct gtp_mirror *m, const sockaddr_t *addr,
 		    uint8_t protocol, int ifindex)
 {
 	struct list_head *l = &m->rules;

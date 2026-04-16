@@ -703,7 +703,7 @@ gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 
 static int
 _build_fake_l2l3_hdr(uint8_t *buffer, size_t buflen, size_t payload_len,
-		     const union sa *remote_addr, const union sa *local_addr,
+		     const sockaddr_t *remote_addr, const sockaddr_t *local_addr,
 		     uint16_t flags)
 {
 	struct ethhdr *eth;
@@ -826,7 +826,7 @@ gtp_capture_pkt(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
 
 void
 gtp_capture_data(struct gtp_capture_entry *e, const uint8_t *data, size_t len,
-		 const union sa *remote_addr, const union sa *local_addr,
+		 const sockaddr_t *remote_addr, const sockaddr_t *local_addr,
 		 uint16_t flags)
 {
 	struct iovec pkt_iov[2];

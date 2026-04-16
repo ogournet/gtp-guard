@@ -76,7 +76,7 @@ struct gtp_interface {
 	uint8_t				hw_addr_len;
 	uint16_t			vlan_id;
 	uint16_t			table_id;
-	union sa			direct_tx_gw;
+	sockaddr_t			direct_tx_gw;
 	uint8_t				direct_tx_hw_addr[ETH_ALEN];
 	char				description[GTP_STR_MAX_LEN];
 
@@ -120,8 +120,8 @@ struct gtp_interface {
 
 	/* tunnel info */
 	enum gtp_interface_tunnel_mode	tunnel_mode;
-	union sa			tunnel_local;
-	union sa			tunnel_remote;
+	sockaddr_t			tunnel_local;
+	sockaddr_t			tunnel_remote;
 
 	/* packet capture */
 	struct gtp_capture_entry	capture_entry;
@@ -139,7 +139,7 @@ int gtp_interface_metrics_dump(FILE *);
 void gtp_interface_metrics_foreach(int (*hdl) (struct gtp_interface *, void *, const char *, int, __u8, __u8),
  				   void *, const char *, int, __u8, __u8);
 void gtp_interface_foreach(int (*hdl) (struct gtp_interface *, void *), void *);
-void gtp_interface_update_direct_tx_lladdr(const union sa *, const uint8_t *);
+void gtp_interface_update_direct_tx_lladdr(const sockaddr_t *, const uint8_t *);
 struct gtp_interface *gtp_interface_get(const char *, bool);
 struct gtp_interface *gtp_interface_get_by_ifindex(int, bool);
 int gtp_interface_start(struct gtp_interface *);

@@ -341,8 +341,8 @@ range_partition_vty_show_parts(struct vty *vty, struct gtp_range_partition *rp)
 
 		table_add_row_fmt(tbl, "%d|%s/%d|%u|%u|%.2f%%"
 				     , p->part_id
-				     , sa_str_ip(&p->ip_pool->prefix,
-						 addr_str, sizeof(addr_str))
+				     , sa_str_ip_r(&p->ip_pool->prefix,
+						   addr_str, sizeof(addr_str))
 				     , p->ip_pool->prefix_bits
 				     , p->ip_pool->pool.used
 				     , p->ip_pool->pool.size
@@ -424,7 +424,7 @@ range_partition_config_write_parts(struct vty *vty, struct gtp_range_partition *
 
 		vty_out(vty, " part-id %d prefix %s/%d%s"
 			   , p->part_id
-			   , sa_str_ip(&p->ip_pool->prefix, addr_str, sizeof(addr_str))
+			   , sa_str_ip_r(&p->ip_pool->prefix, addr_str, sizeof(addr_str))
 			   , p->ip_pool->prefix_bits
 			   , VTY_NEWLINE);
 	}

@@ -24,7 +24,7 @@
 #include "pfcp_msg.h"
 
 /* Prototypes */
-void pfcp_proto_dump(struct pfcp_server *srv, struct pfcp_msg *msg, union sa *addr,
+void pfcp_proto_dump(struct pfcp_server *srv, struct pfcp_msg *msg, sockaddr_t *addr,
 		     enum pfcp_direction dir);
 
 

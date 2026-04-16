@@ -543,7 +543,7 @@ static const struct {
 };
 
 static void
-pfcp_proto_buffer_format(union sa *addr, struct pkt_buffer *pbuff,
+pfcp_proto_buffer_format(sockaddr_t *addr, struct pkt_buffer *pbuff,
 			 char *buffer, size_t size, enum pfcp_direction dir)
 {
 	int width = 73, padding_left, padding_right, text_len;
@@ -555,7 +555,7 @@ pfcp_proto_buffer_format(union sa *addr, struct pkt_buffer *pbuff,
 	snprintf(title, sizeof(title), " %s packet %s %s len:%d ",
 		 (dir == PFCP_DIR_INGRESS) ? "ingress" : "egress",
 		 (dir == PFCP_DIR_INGRESS) ? "from" : "to",
-		 sa_sstr(addr), pkt_buffer_len(pbuff));
+		 sa_str(addr), pkt_buffer_len(pbuff));
 	text_len = strlen(title) + 2;
 	padding_left = (width - text_len) / 2;
 	padding_right = width - text_len - padding_left;
@@ -613,7 +613,7 @@ pfcp_proto_header_format(struct pkt_buffer *pbuff, char *buffer, size_t size)
 }
 
 void
-pfcp_proto_dump(struct pfcp_server *srv, struct pfcp_msg *msg, union sa *addr,
+pfcp_proto_dump(struct pfcp_server *srv, struct pfcp_msg *msg, sockaddr_t *addr,
 		enum pfcp_direction dir)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;

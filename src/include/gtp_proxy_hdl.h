@@ -30,6 +30,6 @@
 
 /* Prototypes */
 struct gtp_session *gtpc_retransmit_detected(struct gtp_server *);
-struct gtp_teid *gtpu_proxy_handle(struct gtp_server *, union sa *);
-struct gtp_teid *gtpc_proxy_handle(struct gtp_server *, union sa *);
+struct gtp_teid *gtpu_proxy_handle(struct gtp_server *, sockaddr_t *);
+struct gtp_teid *gtpc_proxy_handle(struct gtp_server *, sockaddr_t *);
 int gtpc_proxy_handle_post(struct gtp_server *, struct gtp_teid *);
