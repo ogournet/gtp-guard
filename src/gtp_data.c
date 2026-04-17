@@ -82,9 +82,9 @@ free_daemon_data(void)
 	gtp_metrics_destroy();
 	pppoe_bundle_destroy();
 	pppoe_destroy();
+	pfcp_destroy();
 	gtp_interfaces_destroy();
 	gtp_bpf_progs_destroy();
-	pfcp_destroy();
 	gtp_conn_module_destroy();
 	gtp_sessions_destroy();
 	gtp_proxy_destroy();

@@ -1008,6 +1008,15 @@ gtp_capture_stop(struct gtp_capture_entry *e)
 	}
 }
 
+void
+gtp_capture_get_info(struct gtp_capture_entry *e, const char **out_capname)
+{
+	if (e->cf == NULL) {
+		*out_capname = NULL;
+		return;
+	}
+	*out_capname = e->cf->name;
+}
 
 /********************************************************************/
 /* eBPF template */

@@ -268,6 +268,13 @@ pfcp_router_ctx_destroy(struct pfcp_router *c)
 
 	list_del(&c->bpf_list);
 	list_del(&c->next);
+	gtp_capture_stop(&c->s.capture);
+	gtp_capture_stop(&c->gtpu.capture);
+	gtp_capture_stop(&c->gtpu_s1.capture);
+	gtp_capture_stop(&c->gtpu_s5.capture);
+	gtp_capture_stop(&c->gtpu_s8.capture);
+	gtp_capture_stop(&c->gtpu_n9.capture);
+	gtp_capture_stop(&c->gtpu_n3.capture);
 	pfcp_server_destroy(&c->s);
 	if (__test_bit(PFCP_ROUTER_FL_ALL, &c->flags))
 		gtp_server_destroy(&c->gtpu);
