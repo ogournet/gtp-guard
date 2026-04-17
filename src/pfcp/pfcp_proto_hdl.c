@@ -215,13 +215,8 @@ pfcp_assoc_setup_request_send(struct thread *t)
 	}
 
 	/* Broadcast pkt to peer list */
-	for (i = 0; i < plist->nr_addr; i++) {
-		/* TODO: only support IPv4 peer from now */
-		if (plist->addr[i].family != AF_INET)
-			continue;
-
-		inet_server_snd(&ctx->s.s, ctx->s.s.fd, pbuff, &plist->addr[i].sin);
-	}
+	for (i = 0; i < plist->nr_addr; i++)
+		inet_server_snd(&ctx->s.s, ctx->s.s.fd, pbuff, &plist->addr[i]);
 
 end:
 	__pkt_queue_put(&srv->pkt_q, p);
@@ -627,11 +622,7 @@ int
 gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 {
 	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
-	struct sockaddr_in addr_to = {
-		.sin_family = AF_INET,
-		.sin_addr = f->outer_header_ip4,
-		.sin_port = htons(GTP_U_PORT),
-	};
+	sockaddr_t addr_to;
 
 	memset(h, 0, sizeof(*h));
 	h->flags = 0x30; /* GTP-Rel99 + GTPv1 */
@@ -639,6 +630,8 @@ gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 	h->teid_only = f->outer_header_teid;
 	pkt_buffer_set_end_pointer(srv->s.pbuff, gtp1_get_header_len(h));
 	pkt_buffer_set_data_pointer(srv->s.pbuff, gtp1_get_header_len(h));
+
+	sa_from_ip4_port(&addr_to, f->outer_header_ip4.s_addr, GTP_U_PORT);
 
 	return inet_server_snd(&srv->s, srv->s.fd, srv->s.pbuff, &addr_to);
 }

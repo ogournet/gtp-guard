@@ -61,7 +61,7 @@ struct spppoe {
 	struct sppp		*s_ppp;		/* PPP session */
 	struct pppoe		*pppoe;		/* back-pointer */
 	struct gtp_teid		*teid;		/* TEID we are linked to */
-	sockaddr_t gtpc_peer_addr;	/* Remote GTP-C peer */
+	sockaddr_t		gtpc_peer_addr;	/* Remote GTP-C peer */
 
 	/* I/O MUX */
 	struct thread		*timer;

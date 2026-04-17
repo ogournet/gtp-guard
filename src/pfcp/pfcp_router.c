@@ -110,7 +110,7 @@ pfcp_gtpu_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 	if (ret < 0)
 		return -1;
 
-	inet_server_snd(srv, srv->fd, srv->pbuff, &addr_from->sin);
+	inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 	return 0;
 }
 
@@ -131,7 +131,7 @@ pfcp_router_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 		return -1;
 
 	if (ret != PFCP_ROUTER_DELAYED)
-		inet_server_snd(srv, srv->fd, srv->pbuff, &addr_from->sin);
+		inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 
 	return 0;
 }
