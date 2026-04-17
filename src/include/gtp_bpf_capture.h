@@ -74,3 +74,4 @@ int gtp_capture_start_all(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 			  const char *name);
 int gtp_capture_start_iface(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 			    const char *name, int iface);
+void gtp_capture_get_info(struct gtp_capture_entry *e, const char **out_capname);

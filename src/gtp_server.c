@@ -35,10 +35,14 @@ extern struct thread_master *master;
  *	Worker
  */
 static int
-gtp_server_snd(struct inet_server *srv, struct pkt_buffer *pbuff, ssize_t nbytes)
+gtp_server_snd(struct inet_server *srv, struct pkt_buffer *pbuff, ssize_t nbytes,
+	       const sockaddr_t *remote)
 {
 	struct gtp_server *s = srv->ctx;
 	struct gtp_hdr *h = (struct gtp_hdr *) pbuff->head;
+
+	gtp_capture_data(&s->capture, pbuff->head, nbytes,
+			 remote, &srv->addr, GTP_CAPTURE_FL_OUTPUT);
 
 	/* metrics */
 	gtp_metrics_pkt_update(&s->tx_metrics, nbytes);
@@ -48,9 +52,13 @@ gtp_server_snd(struct inet_server *srv, struct pkt_buffer *pbuff, ssize_t nbytes
 }
 
 static int
-gtp_server_rcv(struct inet_server *srv, ssize_t nbytes)
+gtp_server_rcv(struct inet_server *srv, ssize_t nbytes, const sockaddr_t *remote)
 {
 	struct gtp_server *s = srv->ctx;
+	struct pkt_buffer *pbuff = srv->pbuff;
+
+	gtp_capture_data(&s->capture, pbuff->head, pkt_buffer_len(pbuff),
+			 remote, &srv->addr, GTP_CAPTURE_FL_INPUT);
 
 	gtp_metrics_pkt_update(&s->rx_metrics, nbytes);
 	return 0;

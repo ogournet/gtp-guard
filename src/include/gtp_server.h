@@ -22,11 +22,15 @@
 
 #include "inet_server.h"
 #include "gtp_metrics.h"
+#include "gtp_bpf_capture.h"
 
 /* GTP Server context */
 struct gtp_server {
 	struct inet_server	s;
 	void			*ctx;	/* context back-pointer */
+
+	/* packet capture */
+	struct gtp_capture_entry capture;
 
 	/* metrics */
 	struct gtp_metrics_pkt	rx_metrics;

@@ -23,10 +23,8 @@
 #include "inet_server.h"
 #include "pfcp_msg.h"
 #include "pfcp_metrics.h"
+#include "gtp_bpf_capture.h"
 
-enum pfcp_server_flags {
-	PFCP_FL_RUNNING_BIT = INET_FL_BIT_LAST,
-};
 
 /* PFCP Server context */
 struct pfcp_server {
@@ -36,12 +34,13 @@ struct pfcp_server {
 	uint32_t		seqn;
 	void			*ctx;	/* context back-pointer */
 
+	/* packet capture */
+	struct gtp_capture_entry capture;
+
 	/* metrics */
 	struct pfcp_metrics_pkt	rx_metrics;
 	struct pfcp_metrics_pkt	tx_metrics;
 	struct pfcp_metrics_msg	msg_metrics;
-
-	unsigned long		flags;
 };
 
 
