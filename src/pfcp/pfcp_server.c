@@ -32,34 +32,35 @@
 extern struct thread_master *master;
 
 
-/*
- *	Worker
- */
 static int
-pfcp_server_snd(struct inet_server *srv, struct pkt_buffer *pbuff, ssize_t nbytes)
+pfcp_server_rcv(struct inet_server *srv, ssize_t nbytes, const sockaddr_t *remote)
 {
-	struct pfcp_server *s = srv->ctx;
-	struct pfcp_hdr *h = (struct pfcp_hdr *) pbuff->head;
+	struct pfcp_server *s = container_of(srv, struct pfcp_server, s);
+	struct pkt_buffer *pbuff = srv->pbuff;
 
-	/* metrics */
-	pfcp_metrics_pkt_update(&s->tx_metrics, nbytes);
-	pfcp_metrics_tx(&s->msg_metrics, h->type);
-	return 0;
-}
-
-static int
-pfcp_server_rcv(struct inet_server *srv, ssize_t nbytes)
-{
-	struct pfcp_server *s = srv->ctx;
+	gtp_capture_data(&s->capture, pbuff->head, nbytes,
+			 remote, &srv->addr, GTP_CAPTURE_FL_INPUT);
 
 	pfcp_metrics_pkt_update(&s->rx_metrics, nbytes);
 	return 0;
 }
 
+static int
+pfcp_server_snd(struct inet_server *srv, struct pkt_buffer *pbuff, ssize_t nbytes,
+		const sockaddr_t *remote)
+{
+	struct pfcp_server *s = container_of(srv, struct pfcp_server, s);
+	struct pfcp_hdr *h = (struct pfcp_hdr *) pbuff->head;
 
-/*
- *	PFCP Server related
- */
+	gtp_capture_data(&s->capture, pbuff->head, pkt_buffer_len(pbuff),
+			 remote, &srv->addr, GTP_CAPTURE_FL_OUTPUT);
+
+	pfcp_metrics_pkt_update(&s->tx_metrics, nbytes);
+	pfcp_metrics_tx(&s->msg_metrics, h->type);
+	return 0;
+}
+
+
 int
 pfcp_server_init(struct pfcp_server *s, void *ctx,
 		 int (*init) (struct inet_server *),
@@ -100,7 +101,6 @@ pfcp_server_init(struct pfcp_server *s, void *ctx,
 	/* So far so good */
 	pkt_queue_init(&s->pkt_q, DEFAULT_PKT_QUEUE_SIZE);
 	inet_server_start(srv, master);
-	__set_bit(PFCP_FL_RUNNING_BIT, &srv->flags);
 	return 0;
 }
 
@@ -109,6 +109,5 @@ pfcp_server_destroy(struct pfcp_server *s)
 {
 	pfcp_msg_free(s->msg);
 	pkt_queue_destroy(&s->pkt_q);
-	__clear_bit(PFCP_FL_RUNNING_BIT, &s->s.flags);
 	return inet_server_destroy(&s->s);
 }

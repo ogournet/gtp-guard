@@ -328,8 +328,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	}
 
 	gtp_capture_data(&s->sig_cap, rcv_pbuff->head, pkt_buffer_len(rcv_pbuff),
-			 addr, (const sockaddr_t *)&srv->s.addr,
-			 GTP_CAPTURE_FL_INPUT);
+			 addr, &srv->s.addr, GTP_CAPTURE_FL_INPUT);
 
 	ret = pfcp_session_create(s, req, addr);
 	if (ret) {
@@ -387,8 +386,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	srv->s.pbuff = pbuff;
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const sockaddr_t *)&srv->s.addr,
-				 GTP_CAPTURE_FL_OUTPUT);
+				 addr, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
 	return ret;
 }
 
@@ -419,8 +417,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		goto reply_now;
 	}
 	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-			 addr, (const sockaddr_t *)&srv->s.addr,
-			 GTP_CAPTURE_FL_INPUT);
+			 addr, &srv->s.addr, GTP_CAPTURE_FL_INPUT);
 	pfcph->seid = s->remote_seid.id;
 
 	/* Handle modification message */
@@ -455,8 +452,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 				    , __FUNCTION__);
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const sockaddr_t *)&srv->s.addr,
-				 GTP_CAPTURE_FL_OUTPUT);
+				 addr, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
 
 	return ret;
 }
@@ -488,8 +484,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		goto reply_now;
 	}
 	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-			 addr, (const sockaddr_t *)&srv->s.addr,
-			 GTP_CAPTURE_FL_INPUT);
+			 addr, &srv->s.addr, GTP_CAPTURE_FL_INPUT);
 	pfcph->seid = s->remote_seid.id;
 
 	/* Delete URRs, and generate the last report */
@@ -519,8 +514,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 				    , __FUNCTION__);
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const sockaddr_t *)&srv->s.addr,
-				 GTP_CAPTURE_FL_OUTPUT);
+				 addr, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
 
 	return ret;
 }
@@ -545,8 +539,7 @@ pfcp_session_report_response(struct pfcp_msg *msg, struct pfcp_server *srv,
 		s = pfcp_session_get(be64toh(pfcph->seid));
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
-				 addr, (const sockaddr_t *)&srv->s.addr,
-				 GTP_CAPTURE_FL_INPUT);
+				 addr, &srv->s.addr, GTP_CAPTURE_FL_INPUT);
 
 	return -1;
 }

@@ -73,7 +73,7 @@ inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
 
 	s->tx_pkts++;
 	if (s->snd)
-		(*s->snd) (s, pbuff, nbytes);
+		(*s->snd) (s, pbuff, nbytes, addr);
 
 	return nbytes;
 }
@@ -93,7 +93,7 @@ inet_server_rcv(struct inet_server *s, sockaddr_t *remote)
 
 	s->rx_pkts++;
 	if (s->rcv)
-		(*s->rcv) (s, nbytes);
+		(*s->rcv) (s, nbytes, remote);
 
 	return nbytes;
 }

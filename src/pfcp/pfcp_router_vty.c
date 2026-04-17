@@ -207,11 +207,6 @@ DEFUN(pfcp_listen,
 	sockaddr_t *addr = &srv->s.addr;
 	int port = PFCP_PORT, err = 0;
 
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
-
 	if (__test_bit(PFCP_ROUTER_FL_LISTEN, &c->flags)) {
 		vty_out(vty, "%% PFCP listener already configured!%s"
 			   , VTY_NEWLINE);
@@ -273,6 +268,112 @@ DEFUN(pfcp_debug,
 
 	return CMD_SUCCESS;
 }
+
+DEFUN(pfcp_capture,
+      pfcp_capture_cmd,
+      "capture CAPENTRY [ (pfcp|gtpu|all) ]",
+      "Activate PFCP / GTP-U (non data) capture\n"
+      "Capture entry name\n"
+      "All PFCP packets\n"
+      "All (non-data) GTP-U packets\n"
+      "Everything\n")
+{
+	struct pfcp_router *c = vty->index;
+	struct pfcp_server *s = &c->s;
+	struct gtp_server *u;
+	bool do_pfcp = true;
+	bool do_gtpu = true;
+
+	if (argc > 1) {
+		if (!strcmp(argv[1], "pfcp"))
+			do_gtpu = false;
+		else if (!strcmp(argv[1], "gtpu"))
+			do_pfcp = false;
+	}
+
+	if (do_pfcp && __test_bit(PFCP_ROUTER_FL_LISTEN, &c->flags)) {
+		s->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		s->capture.cap_len = ~0;
+		if (gtp_capture_start(&s->capture, c->bpf_prog, argv[0]))
+			vty_out(vty, "%% Error starting pfcp trace\n");
+	}
+
+	if (do_gtpu && __test_bit(PFCP_ROUTER_FL_ALL, &c->flags)) {
+		u = &c->gtpu;
+		u->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		u->capture.cap_len = ~0;
+		if (gtp_capture_start(&u->capture, c->bpf_prog, argv[0]))
+			vty_out(vty, "%% Error starting gtp-u trace\n");
+	}
+
+	if (do_gtpu && __test_bit(PFCP_ROUTER_FL_S1U, &c->flags)) {
+		u = &c->gtpu_s1;
+		u->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		u->capture.cap_len = ~0;
+		if (gtp_capture_start(&u->capture, c->bpf_prog, argv[0]))
+			vty_out(vty, "%% Error starting gtp-u trace\n");
+	}
+
+	if (do_gtpu && __test_bit(PFCP_ROUTER_FL_S5U, &c->flags)) {
+		u = &c->gtpu_s5;
+		u->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		u->capture.cap_len = ~0;
+		if (gtp_capture_start(&u->capture, c->bpf_prog, argv[0]))
+			vty_out(vty, "%% Error starting gtp-u trace\n");
+	}
+
+	if (do_gtpu && __test_bit(PFCP_ROUTER_FL_S8U, &c->flags)) {
+		u = &c->gtpu_s8;
+		u->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		u->capture.cap_len = ~0;
+		if (gtp_capture_start(&u->capture, c->bpf_prog, argv[0]))
+			vty_out(vty, "%% Error starting gtp-u trace\n");
+	}
+
+	if (do_gtpu && __test_bit(PFCP_ROUTER_FL_N9, &c->flags)) {
+		u = &c->gtpu_n9;
+		u->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		u->capture.cap_len = ~0;
+		if (gtp_capture_start(&u->capture, c->bpf_prog, argv[0]))
+			vty_out(vty, "%% Error starting gtp-u trace\n");
+	}
+
+	if (do_gtpu && __test_bit(PFCP_ROUTER_FL_N3, &c->flags)) {
+		u = &c->gtpu_n3;
+		u->capture.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		u->capture.cap_len = ~0;
+		if (gtp_capture_start(&u->capture, c->bpf_prog, argv[0]))
+			vty_out(vty, "%% Error starting gtp-u trace\n");
+	}
+
+	return CMD_SUCCESS;
+}
+
+DEFUN(pfcp_no_capture,
+      pfcp_no_capture_cmd,
+      "no capture",
+      "Desactivate PFCP / GTP-U capture\n")
+{
+	struct pfcp_router *c = vty->index;
+
+	if (__test_bit(PFCP_ROUTER_FL_LISTEN, &c->flags))
+		gtp_capture_stop(&c->s.capture);
+	if (__test_bit(PFCP_ROUTER_FL_ALL, &c->flags))
+		gtp_capture_stop(&c->gtpu.capture);
+	if (__test_bit(PFCP_ROUTER_FL_S1U, &c->flags))
+		gtp_capture_stop(&c->gtpu_s1.capture);
+	if (__test_bit(PFCP_ROUTER_FL_S5U, &c->flags))
+		gtp_capture_stop(&c->gtpu_s5.capture);
+	if (__test_bit(PFCP_ROUTER_FL_S8U, &c->flags))
+		gtp_capture_stop(&c->gtpu_s8.capture);
+	if (__test_bit(PFCP_ROUTER_FL_N9, &c->flags))
+		gtp_capture_stop(&c->gtpu_n9.capture);
+	if (__test_bit(PFCP_ROUTER_FL_N3, &c->flags))
+		gtp_capture_stop(&c->gtpu_n3.capture);
+
+	return CMD_SUCCESS;
+}
+
 
 static int
 parse_teid_range(const char *str, uint32_t *start, uint32_t *end)
@@ -988,7 +1089,7 @@ config_pfcp_router_write(struct vty *vty)
 		if (__test_bit(PFCP_ROUTER_FL_ALL, &c->flags))
 			inet_server_vty(vty, " gtpu-tunnel-endpoint all", &c->gtpu.s);
 		if (__test_bit(PFCP_ROUTER_FL_S1U, &c->flags))
-			inet_server_vty(vty, " gtpu-tunnel-endpoint s1",&c->gtpu_s1.s);
+			inet_server_vty(vty, " gtpu-tunnel-endpoint s1", &c->gtpu_s1.s);
 		if (__test_bit(PFCP_ROUTER_FL_S5U, &c->flags))
 			inet_server_vty(vty, " gtpu-tunnel-endpoint s5", &c->gtpu_s5.s);
 		if (__test_bit(PFCP_ROUTER_FL_S8U, &c->flags))
@@ -997,6 +1098,12 @@ config_pfcp_router_write(struct vty *vty)
 			inet_server_vty(vty, " gtpu-tunnel-endpoint n9", &c->gtpu_n9.s);
 		if (__test_bit(PFCP_ROUTER_FL_N3, &c->flags))
 			inet_server_vty(vty, " gtpu-tunnel-endpoint n3", &c->gtpu_n3.s);
+
+		if (c->s.capture.flags) {
+			const char *name;
+			gtp_capture_get_info(&c->s.capture, &name);
+			vty_out(vty, " capture %s\n", name);
+		}
 
 		vty_out(vty, "!\n");
 	}
@@ -1047,6 +1154,8 @@ cmd_ext_pfcp_router_install(void)
 	install_element(PFCP_ROUTER_NODE, &pfcp_router_peer_list_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_bind_cmd);
+	install_element(PFCP_ROUTER_NODE, &pfcp_capture_cmd);
+	install_element(PFCP_ROUTER_NODE, &pfcp_no_capture_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_debug_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_debug_teid_cmd);
 	install_element(PFCP_ROUTER_NODE, &no_pfcp_debug_cmd);

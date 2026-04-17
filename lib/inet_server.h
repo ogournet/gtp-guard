@@ -105,8 +105,8 @@ struct inet_server {
 
 	/* Call-back */
 	int (*init) (struct inet_server *);
-	int (*snd) (struct inet_server *, struct pkt_buffer *, ssize_t);
-	int (*rcv) (struct inet_server *, ssize_t);
+	int (*snd) (struct inet_server *, struct pkt_buffer *, ssize_t, const sockaddr_t *);
+	int (*rcv) (struct inet_server *, ssize_t, const sockaddr_t *);
 	int (*process) (struct inet_server *, sockaddr_t *);
 	int (*destroy) (struct inet_server *);
 	int (*cnx_init) (struct inet_cnx *);
