@@ -54,7 +54,7 @@ gtp_netlink_fs_uninstall(void *, void *)
 	return 0;
 }
 void
-gtp_capture_stop(void *p)
+gtp_capture_stop(struct gtp_capture_entry *e)
 {
 }
 

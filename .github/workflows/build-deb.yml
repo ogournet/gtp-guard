@@ -6,11 +6,14 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-debs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: jtdor/build-deb-action@v1
         with:
           buildpackage-opts: --build=binary --no-sign
@@ -18,8 +21,12 @@ jobs:
           before-build-hook: debchange -M -U -v "$(cat VERSION)" -D noble "CI package build"
           extra-build-deps: ca-certificates git devscripts
       - name: Upload gtp-guard artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name : gtp-guard-package
           path : |
             debian/artifacts/*.deb
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create ${{ github.ref_name }} debian/artifacts/*.deb --generate-notes
