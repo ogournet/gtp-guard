@@ -54,19 +54,19 @@ inet_server_vty(struct vty *vty, const char *type_str, struct inet_server *srv)
 
 ssize_t
 inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
-		struct sockaddr_in *addr)
+		sockaddr_t *addr)
 {
 	char buf1[64], buf2[64];
 
 	ssize_t nbytes = sendto(fd, pbuff->head
 				  , pkt_buffer_len(pbuff)
-				  , 0, addr, sizeof(*addr));
+				  , 0, &addr->sa, sa_len(addr));
 	/* metrics */
 	if (nbytes < 0) {
 		log_message(LOG_INFO, "%s(): error sending from %s to %s (%m)"
 				    , __FUNCTION__
-				    , sa_str_r((sockaddr_t *)&s->addr, buf1, sizeof (buf1))
-				    , sa_str_r((sockaddr_t *)addr, buf2, sizeof (buf2)));
+				    , sa_str_r(&s->addr, buf1, sizeof (buf1))
+				    , sa_str_r(addr, buf2, sizeof (buf2)));
 		s->tx_errors++;
 		return -1;
 	}

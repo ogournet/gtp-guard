@@ -107,7 +107,7 @@ gtp_proxy_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 		if (!teid)
 			return -1;
 
-		inet_server_snd(srv, srv->fd, srv->pbuff, &addr_from->sin);
+		inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 		return 0;
 	}
 
@@ -128,7 +128,7 @@ gtp_proxy_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 	/* Set destination address */
 	gtp_proxy_fwd_addr_get(teid, addr_from, &addr_to);
 	inet_server_snd(srv, TEID_IS_DUMMY(teid) ? srv->fd : fd, srv->pbuff,
-			TEID_IS_DUMMY(teid) ? &addr_from->sin : &addr_to);
+			TEID_IS_DUMMY(teid) ? addr_from : (sockaddr_t *)&addr_to);
 	gtpc_proxy_handle_post(s, teid);
 
 	return 0;

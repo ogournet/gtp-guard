@@ -119,7 +119,7 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 			 GTP_CAPTURE_FL_OUTPUT);
 
 	/* Run, Baby, Run */
-	inet_server_snd(&srv->s, srv->s.fd, pbuff, &s->remote_seid.addr.sin);
+	inet_server_snd(&srv->s, srv->s.fd, pbuff, &s->remote_seid.addr);
 end:
 	__pkt_queue_put(&srv->pkt_q, p);
 }

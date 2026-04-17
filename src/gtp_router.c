@@ -56,8 +56,7 @@ gtp_router_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 		return -1;
 
 	if (ret != GTP_ROUTER_DELAYED)
-		inet_server_snd(srv, srv->fd, srv->pbuff,
-				&addr_from->sin);
+		inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 	return 0;
 }
 
@@ -105,8 +104,8 @@ gtp_router_init(const char *name)
 		errno = ENOMEM;
 		return NULL;
 	}
-        INIT_LIST_HEAD(&new->next);
-        bsd_strlcpy(new->name, name, GTP_NAME_MAX_LEN - 1);
+	INIT_LIST_HEAD(&new->next);
+	bsd_strlcpy(new->name, name, GTP_NAME_MAX_LEN - 1);
 
 	list_add_tail(&new->next, &daemon_data->gtp_router_ctx);
 

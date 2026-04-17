@@ -127,7 +127,7 @@ struct inet_server {
 /* Prototypes */
 int inet_server_vty(struct vty *vty, const char *type_str, struct inet_server *srv);
 ssize_t inet_server_snd(struct inet_server *s, int fd, struct pkt_buffer *pbuff,
-			struct sockaddr_in *addr);
+			sockaddr_t *addr);
 ssize_t inet_http_read(struct inet_cnx *c);
 int inet_server_start(struct inet_server *s, struct thread_master *m);
 int inet_server_init(struct inet_server *s, int type);
