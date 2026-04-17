@@ -5,4 +5,6 @@
 # we only need headers/xdp.
 ln -sf headers/xdp xdp
 
-make -s -f version.mk 2> /dev/null
+sed -e 's/[:() ]//g; q' version.mk > version_env
+source version_env
+echo $TOOLS_VERSION
