@@ -5,4 +5,4 @@
 # we only need headers/xdp.
 ln -sf headers/xdp xdp
 
-make -s -f version.mk
+make -s -f version.mk 2> /dev/null
