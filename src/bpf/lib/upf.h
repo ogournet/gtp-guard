@@ -187,13 +187,13 @@ upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
 	/* lookup user */
 	ip6h = (struct ipv6hdr *)(data + d->pl_off);
 	if (d->pl_off > 256 || (void *)(ip6h + 1) > data_end)
-		return XDP_PASS;
+		return XDP_DROP;
 
 	k.flags = UE_IPV6;
 	__builtin_memcpy(k.ue_addr.ip6.addr, ip6h->daddr.s6_addr, 16);
 	u = bpf_map_lookup_elem(&user_ingress, &k);
 	if (u == NULL)
-		return XDP_PASS;
+		return XDP_DROP;
 
 	return _encap_gtpu(ctx, d, u);
 }
@@ -216,13 +216,22 @@ upf_handle_pub(struct xdp_md *ctx, struct if_rule_data *d)
 	/* lookup user */
 	iph = (struct iphdr *)(data + d->pl_off);
 	if (d->pl_off > 256 || (void *)(iph + 1) > data_end)
-		return XDP_PASS;
+		return XDP_DROP;
 
 	k.flags = UE_IPV4;
 	k.ue_addr.ip4 = iph->daddr;
 	u = bpf_map_lookup_elem(&user_ingress, &k);
-	if (u == NULL)
-		return XDP_PASS;
+	if (u == NULL) {
+#ifdef UPF_N4_IN_DATAPATH
+		/* allow pfcp */
+		struct udphdr *udph = (void *)(iph) + iph->ihl * 4;
+		if (udph + 1 > data_end)
+			return XDP_DROP;
+		if (udph->dest == __constant_htons(8805))
+			return XDP_PASS;
+#endif
+		return XDP_DROP;
+	}
 
 	return _encap_gtpu(ctx, d, u);
 }
@@ -247,7 +256,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	if (gtph + 1 > data_end)
 		return XDP_DROP;
 
-	/* only handle gtp-u data packet */
+	/* gtp-u 'management' packets will be handled by userapp */
 	if (gtph->type != 0xff)
 		return XDP_PASS;
 
@@ -260,7 +269,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		   &iph->daddr, bpf_ntohs(udph->dest), bpf_ntohl(gtph->teid),
 		   u == NULL ? " => NOT FOUND" : "");
 	if (u == NULL)
-		return XDP_PASS;
+		return XDP_DROP;
 
 	capture_xdp_to_userspc_in(ctx, &u->capture, BPF_CAPTURE_EFL_INPUT |
 				  BPF_CAPTURE_EFL_ACCESS);
@@ -377,14 +386,14 @@ upf_handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d)
 		return XDP_DROP;
 
 	if (iph->protocol != IPPROTO_UDP)
-		return XDP_PASS;
+		return XDP_DROP;
 
 	udph = (void *)(iph) + iph->ihl * 4;
 	if (udph + 1 > data_end)
 		return XDP_DROP;
 
-	if (udph->dest != bpf_htons(GTPU_PORT))
-		return XDP_PASS;
+	if (udph->dest != __constant_htons(GTPU_PORT))
+		return XDP_DROP;
 
 	return _handle_gtpu(ctx, d, iph, udph);
 }
@@ -417,7 +426,7 @@ upf_traffic_selector(struct xdp_md *ctx, struct if_rule_data *d)
 		return XDP_DROP;
 
 	/* this is our gtp-u ! */
-	if (udph->dest == bpf_htons(GTPU_PORT))
+	if (udph->dest == __constant_htons(GTPU_PORT))
 		return _handle_gtpu(ctx, d, iph, udph);
 
 	return upf_handle_pub(ctx, d);
