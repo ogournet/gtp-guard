@@ -251,6 +251,34 @@ _if_rule_output_capture(struct xdp_md *ctx, struct if_rule_data *d,
 }
 
 /*
+ * send back packet where it comes from by switching mac, without modifying
+ * encapsulation. used when xdp program process and reply itself to a packet,
+ * eg. echoreply to incoming echorequest.
+ */
+static __always_inline int
+if_rule_send_back_pkt(struct xdp_md *ctx, struct if_rule_data *d)
+{
+	void *data = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+	struct if_rule *r = d->r;
+	struct ethhdr *ethh = data;
+	__u8 tmp[ETH_ALEN];
+
+	if ((void *)(ethh + 1) > data_end)
+		return XDP_DROP;
+
+	r->pkt_fwd++;
+
+	__builtin_memcpy(tmp, ethh->h_source, ETH_ALEN);
+	__builtin_memcpy(ethh->h_source, ethh->h_dest, ETH_ALEN);
+	__builtin_memcpy(ethh->h_dest, tmp, ETH_ALEN);
+
+	_if_rule_output_capture(ctx, d, data, data_end, XDP_TX);
+	return XDP_TX;
+}
+
+
+/*
  * rewrite packet according to 'if_rule'. usually the latest
  * call from xdp program.
  *

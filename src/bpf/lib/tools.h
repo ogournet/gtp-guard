@@ -235,6 +235,7 @@ struct ipfrag_rule
 # define IN6_IS_ADDR_LINKLOCAL(a)				    \
  	(((a)->s6_addr32[0] & __constant_htonl(0xffc00000)) ==	    \
 	 __constant_htonl(0xfe800000))
+# define IN6_IS_ADDR_MULTICAST(a) (((const __u8 *) (a))[0] == 0xff)
 
 struct ipv6_frag_hdr
 {

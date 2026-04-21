@@ -109,7 +109,7 @@ setup_split() {
     ip netns exec internet ethtool -K veth0 tx-checksumming off >/dev/null
 }
 
-run_pkt() {
+conf_for_pkt() {
     # start gtp-guard if not yet started
     start_gtpguard
 
@@ -117,6 +117,8 @@ run_pkt() {
 no bpf-program upf-1
 no carrier-grade-nat upf-1
 no pfcp-router pfcp-1
+no ip pool upf-v4
+no ip pool upf-v6
 "
 
     if [ $with_cgn == "no" ]; then
@@ -138,7 +140,7 @@ carrier-grade-nat upf-1
 " || fail "cannot configure cgn / load bpf"
     fi
 
-    if [ $type == "combined" ]; then
+    if [ $layout == "combined" ]; then
 	gtpg_conf "
 interface upf
  bpf-program upf-1
@@ -184,7 +186,7 @@ pfcp-router pfcp-1
  debug teid add ingress 2 192.168.61.2 1234::1
  debug teid add ingress 3 192.168.61.2 10.0.0.2 1234::2
  debug teid add egress 17 192.168.61.1
- debug teid add egress 18 192.168.61.1
+ debug teid add egress 18 192.168.61.1 1234::1
  debug teid add egress 19 192.168.61.1
  debug teid add fwd 2220 192.168.61.1 192.168.61.2 4
  debug teid add fwd 20 192.168.61.1 192.168.61.3 5
@@ -197,10 +199,6 @@ show interface-rule all
 show interface-rule input
 show bpf pfcp
 "
-
-    gtpg_show "
-capture prog upf-1 start upf
-"
 }
 
 #
@@ -211,7 +209,7 @@ capture prog upf-1 start upf
 # 3th pkt: act as gtp-u proxy
 #
 pkt() {
-    if [ $type == 'combined' ]; then
+    if [ $layout == 'combined' ]; then
 	ingress_ns=cloud
     else
 	ingress_ns=access
@@ -246,7 +244,21 @@ EOF
 
     sleep 1
 
-    if [ $type == "split" -o $type == "combined" ]; then
+    if [ "$test_id" == "nd" ]; then
+	echo "send our special packet"
+	send_py_pkt $ingress_ns veth0 "
+p = [Ether(src='d2:ad:ca:fe:aa:01', dst='d2:f0:0c:ba:bb:01') /
+  IP(src='192.168.61.2', dst='192.168.61.1') /
+  UDP(sport=2152, dport=2152) /
+  GTP_U_Header(teid=18, gtp_type=255) /
+  IPv6(src='fe80::d0ad:caff:fefe:aa01', dst='ff02::2', hlim=255) /
+  ICMPv6ND_RS() /
+  ICMPv6NDOptSrcLLAddr(lladdr='d2:ad:ca:fe:aa:01') /
+  Raw('a' * 30) # xdp buff from skb are 'small', so let xdp_adjust_tail()
+                # with small adjust
+]
+"
+    else
 	send_py_pkt $ingress_ns veth0 "
 p = [Ether(src='d2:ad:ca:fe:aa:01', dst='d2:f0:0c:ba:bb:01') /
   IP(src='192.168.61.2', dst='192.168.61.1') /
@@ -422,14 +434,14 @@ EOF
     "expect report timeout 10 cp_seid 1 urr_id 1 trigger perio"
 
 
-    if [ "$smf_test_id" ]; then
-	if [ "${testset[$smf_test_id]}" ]; then
+    if [ "$test_id" ]; then
+	if [ "${testset[$test_id]}" ]; then
 	    # echo "*****"
-	    # printf '%s' "${testset[$smf_test_id]}"
+	    # printf '%s' "${testset[$test_id]}"
 	    # echo "*****"
-	    echo "${testset[$smf_test_id]}" | $smf_cmd
+	    echo "${testset[$test_id]}" | $smf_cmd
 	else
-	    echo "no such smf-test: $smf_test_id"
+	    echo "no such smf-test: $test_id"
 	fi
     else
 	echo "XXXX run all tests"
@@ -437,12 +449,19 @@ EOF
     
 }
 
+layout=combined
+with_cgn=no
+while getopts "a:l:c:t:" opt; do
+    case $opt in
+	a) action="$OPTARG" ;;
+	l) layout="$OPTARG" ;;
+	c) with_cgn="$OPTARG" ;;
+	t) test_id="$OPTARG" ;;
+    esac
+done
 
-
-action=${1:-setup}
-type=${2:-combined}
-with_cgn=${3:-no}
-smf_test_id=${3}
+shift $((OPTIND - 1))
+action=${1:setup}
 
 case $action in
     clean)
@@ -451,13 +470,13 @@ case $action in
     setup)
 	clean
 	sleep 0.5
-	setup_$type ;;
-    run)
-	run_with_smf ;;
-    run-pkt)
-	run_pkt ;;
+	setup_$layout ;;
+    conf)
+	conf_for_pkt ;;
     pkt)
 	pkt ;;
+    smf)
+	run_with_smf ;;
 
     *) fail "action '$action' not recognized" ;;
 esac
