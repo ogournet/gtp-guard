@@ -495,7 +495,7 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 			} else {
 				ue.flags |= ctx->ue_addr.family == AF_INET ? UE_IPV4 : UE_IPV6;
 				if (ctx->ue_addr.family == AF_INET)
-					ue.v4 = ctx->ue_addr.sin.sin_addr;
+					ue.v4.s_addr = sa_ip4(&ctx->ue_addr);
 				else
 					memcpy(&ue.v6, &ctx->ue_addr.sin6.sin6_addr, sizeof(ue.v6));
 			}
@@ -505,6 +505,8 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 			if (!ur->gtpu_remote_port)
 				ur->gtpu_remote_port = htons(GTP_U_PORT);
 		}
+		if (ctx->ue_addr.family == AF_INET6)
+			memcpy(ur->ue_v6pfx, sa_ip6(&ctx->ue_addr), 8);
 	}
 
 	if (ctx->is_ingress && ctx->has_ue2) {
@@ -513,6 +515,8 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 			ue.v4 = ctx->ue2_addr.sin.sin_addr;
 		else
 			memcpy(&ue.v6, &ctx->ue2_addr.sin6.sin6_addr, sizeof(ue.v6));
+		if (ctx->ue2_addr.family == AF_INET6)
+			memcpy(ur->ue_v6pfx, sa_ip6(&ctx->ue2_addr), 8);
 	} else if (ctx->is_fwd) {
 		uint32_t rteid_count = ctx->rteid_end - ctx->rteid_start + 1;
 		ur->gtpu_remote_teid = htonl(ctx->rteid_start +

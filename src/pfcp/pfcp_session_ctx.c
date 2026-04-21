@@ -889,6 +889,17 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 		if (laddr && laddr->family == AF_INET)
 			u->gtpu_local_addr = sa_ip4(laddr);
 		u->gtpu_local_port = htons(GTP_U_PORT);
+
+	} else {
+		/* we need to have remote teid of the peer that's talking to us,
+		   if we want to send him back packets (RA!) */
+		/* XXX: remove me */
+		struct pdr *p2;
+		list_for_each_entry(p2, &s->pdr_list, next) {
+			if (p2 == p || p2->far == NULL)
+				continue;
+			u->gtpu_remote_teid = p2->far->outer_header_teid;
+		}
 	}
 
 	/* QER handling */
@@ -904,6 +915,9 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 
 	/* URR map index */
 	u->urr_idx = s->bpf_urr_idx;
+
+	/* UE v6 prefix */
+	memcpy(u->ue_v6pfx, s->ue_ip.v6.s6_addr, 8);
 
 	/* Packet capture */
 	u->capture.flags = s->data_cap.flags &

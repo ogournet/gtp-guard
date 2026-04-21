@@ -59,7 +59,7 @@ _log_egress_rule(int action, struct upf_fwd_rule *u, struct pfcp_teid *t, int er
 	    UPF_FWD_FL_ACT_KEEP_OUTER_HEADER) {
 		snprintf(action_str, sizeof (action_str),
 			 "fwd to teid:0x%.8x remote:'%s'",
-			 u->gtpu_remote_teid,
+			 ntohl(u->gtpu_remote_teid),
 			 inet_ntop(AF_INET, &u->gtpu_remote_addr,
 				   gtpu_str, INET6_ADDRSTRLEN));
 	} else {

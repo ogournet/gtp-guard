@@ -64,6 +64,8 @@ struct upf_fwd_rule {
 	__u32		urr_idx;	/* index to upf_urr{,_data} */
 	__u32		li_id;		/* 0: disabled */
 
+	__u8		ue_v6pfx[8];	/* ue v6 prefix */
+
 	struct capture_bpf_entry capture;
 
 }  __attribute__((packed));
