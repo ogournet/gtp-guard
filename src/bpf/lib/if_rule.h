@@ -211,7 +211,8 @@ _if_rule_parse_pkt(struct xdp_md *ctx, struct if_rule_data *d, rule_selector_t r
 		if ((void *)(ip6h + 1) > data_end || ip6h->version != 6)
 			return XDP_DROP;
 
-		if (IN6_IS_ADDR_LINKLOCAL(&ip6h->saddr))
+		if (IN6_IS_ADDR_LINKLOCAL(&ip6h->saddr) ||
+		    IN6_IS_ADDR_LINKLOCAL(&ip6h->daddr))
 			return XDP_PASS;
 
 		d->pl_off = offset;
