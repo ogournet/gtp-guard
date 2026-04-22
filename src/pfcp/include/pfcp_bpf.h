@@ -65,3 +65,4 @@ int pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 		      struct ue_ip_address *ue, struct pfcp_teid *t);
 uint32_t pfcp_bpf_alloc_urr_idx(struct pfcp_session *s);
 void pfcp_bpf_release_urr_idx(struct pfcp_session *s, uint32_t urr_idx);
+uint64_t pfcp_bpf_lookup_seid(struct pfcp_router *r, const struct upf_egress_key *ek);

@@ -26,6 +26,7 @@
 #include "gtp.h"
 #include "gtp_bpf_prog.h"
 #include "pfcp_router.h"
+#include "pfcp_teid.h"
 #include "inet_server.h"
 #include "pfcp_assoc.h"
 #include "pfcp_proto_hdl.h"
@@ -454,6 +455,8 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 	INIT_LIST_HEAD(&rule->next);
 	ur = &rule->rule;
 
+	ur->seid = 1;
+
 	if (!strcmp(ctx->action, "add"))
 		rule->action = PFCP_ACT_CREATE;
 	else if (!strcmp(ctx->action, "del"))
@@ -505,8 +508,6 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 			if (!ur->gtpu_remote_port)
 				ur->gtpu_remote_port = htons(GTP_U_PORT);
 		}
-		if (ctx->ue_addr.family == AF_INET6)
-			memcpy(ur->ue_v6pfx, sa_ip6(&ctx->ue_addr), 8);
 	}
 
 	if (ctx->is_ingress && ctx->has_ue2) {
@@ -515,8 +516,6 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 			ue.v4 = ctx->ue2_addr.sin.sin_addr;
 		else
 			memcpy(&ue.v6, &ctx->ue2_addr.sin6.sin6_addr, sizeof(ue.v6));
-		if (ctx->ue2_addr.family == AF_INET6)
-			memcpy(ur->ue_v6pfx, sa_ip6(&ctx->ue2_addr), 8);
 	} else if (ctx->is_fwd) {
 		uint32_t rteid_count = ctx->rteid_end - ctx->rteid_start + 1;
 		ur->gtpu_remote_teid = htonl(ctx->rteid_start +
@@ -830,6 +829,21 @@ DEFUN(show_pfcp_assoc,
       "NodeID")
 {
 	pfcp_assoc_vty(vty, (argc >= 1) ? argv[0] : NULL);
+
+	return CMD_SUCCESS;
+}
+
+DEFUN(show_pfcp_teid,
+      show_pfcp_teid_cmd,
+      "show pfcp teid",
+      SHOW_STR
+      "PFCP Teid\n")
+{
+	struct pfcp_router *c;
+
+	list_for_each_entry(c, &daemon_data->pfcp_router_ctx, next) {
+		pfcp_teid_vty(vty, c->teid, 0, NULL, NULL);
+	}
 
 	return CMD_SUCCESS;
 }
@@ -1173,9 +1187,11 @@ cmd_ext_pfcp_router_install(void)
 
 	/* Install show commands. */
 	install_element(VIEW_NODE, &show_pfcp_assoc_cmd);
+	install_element(VIEW_NODE, &show_pfcp_teid_cmd);
 	install_element(VIEW_NODE, &show_pfcp_router_cmd);
 	install_element(VIEW_NODE, &show_pfcp_bpf_cmd);
 	install_element(ENABLE_NODE, &show_pfcp_assoc_cmd);
+	install_element(ENABLE_NODE, &show_pfcp_teid_cmd);
 	install_element(ENABLE_NODE, &show_pfcp_router_cmd);
 	install_element(ENABLE_NODE, &show_pfcp_bpf_cmd);
 

@@ -31,6 +31,10 @@
 #include "bitops.h"
 #include "logger.h"
 
+/* Extern data */
+extern struct thread_master *master;
+
+
 
 static struct traffic_endpoint *
 pfcp_session_get_te_by_id(struct pfcp_session *s, uint8_t id)
@@ -368,6 +372,41 @@ pfcp_session_end_marker_teid(struct pfcp_session *s, struct traffic_endpoint *te
 	gtpu_send_end_marker(srv, f);
 	return 0;
 }
+
+static void
+pfcp_session_ipv6_router_advert(struct pfcp_session *s)
+{
+	struct pfcp_router *r = s->router;
+	struct gtp_server *srv;
+	struct pdr *p;
+	struct far *f;
+
+	list_for_each_entry(p, &s->pdr_list, next) {
+		f = p->far;
+		if (f == NULL || !f->outer_header_teid)
+			continue;
+		srv = pfcp_session_get_gtp_server_by_interface(r, f->dst_interface_type);
+		if (!srv)
+			continue;
+		gtpu_send_router_advert(srv, s, f);
+	}
+}
+
+static void
+pfcp_session_ipv6_router_advert_timer(struct thread *t)
+{
+	struct pfcp_session *s = THREAD_ARG(t);
+
+	pfcp_session_ipv6_router_advert(s);
+	if (s->ue_ip_ra_cnt++ < 3)
+		s->ue_ip_ra_timer = thread_add_timer(master,
+						     pfcp_session_ipv6_router_advert_timer,
+						     s, 2 * TIMER_HZ);
+	else
+		s->ue_ip_ra_timer = NULL;
+}
+
+
 
 static int
 pfcp_session_update_far(struct pfcp_session *s, struct pfcp_ie_update_far *uf)
@@ -889,17 +928,6 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 		if (laddr && laddr->family == AF_INET)
 			u->gtpu_local_addr = sa_ip4(laddr);
 		u->gtpu_local_port = htons(GTP_U_PORT);
-
-	} else {
-		/* we need to have remote teid of the peer that's talking to us,
-		   if we want to send him back packets (RA!) */
-		/* XXX: remove me */
-		struct pdr *p2;
-		list_for_each_entry(p2, &s->pdr_list, next) {
-			if (p2 == p || p2->far == NULL)
-				continue;
-			u->gtpu_remote_teid = p2->far->outer_header_teid;
-		}
 	}
 
 	/* QER handling */
@@ -916,14 +944,13 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 	/* URR map index */
 	u->urr_idx = s->bpf_urr_idx;
 
-	/* UE v6 prefix */
-	memcpy(u->ue_v6pfx, s->ue_ip.v6.s6_addr, 8);
-
 	/* Packet capture */
 	u->capture.flags = s->data_cap.flags &
 		(GTP_CAPTURE_FL_DIRECTION_MASK | GTP_CAPTURE_FL_SIDE_MASK);
 	u->capture.cap_len = s->data_cap.cap_len;
 	u->capture.entry_id = s->data_cap.entry_id;
+
+	u->seid = s->seid;
 
 	/* Set data-path */
 	if (u->flags & UPF_FWD_FL_EGRESS) {
@@ -1040,6 +1067,14 @@ pfcp_session_create(struct pfcp_session *s, struct pfcp_session_establishment_re
 
 	/* Create data-path forwarding rules */
 	pfcp_session_create_fwd_rules(s);
+
+	/* Start timer to */
+	if (s->ue_ip.flags & UE_IPV6) {
+		s->ue_ip_ra_timer = thread_add_timer(master,
+						     pfcp_session_ipv6_router_advert_timer,
+						     s, TIMER_HZ / 5);
+	}
+
 	return 0;
 }
 

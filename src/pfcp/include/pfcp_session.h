@@ -206,6 +206,8 @@ struct pfcp_session {
 	struct list_head	te_list;
 
 	struct ue_ip_address	ue_ip;
+	struct thread		*ue_ip_ra_timer;
+	int			ue_ip_ra_cnt;
 	int			teid_cnt;
 
 	struct pfcp_ue		*ue;

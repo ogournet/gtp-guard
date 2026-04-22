@@ -110,7 +110,8 @@ pfcp_gtpu_ingress_process(struct inet_server *srv, sockaddr_t *addr_from)
 	if (ret < 0)
 		return -1;
 
-	inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
+	if (ret == 1)
+		inet_server_snd(srv, srv->fd, srv->pbuff, addr_from);
 	return 0;
 }
 

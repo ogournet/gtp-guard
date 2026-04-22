@@ -6,7 +6,6 @@
 #include <linux/bpf.h>
 #include <linux/errno.h>
 #include <linux/udp.h>
-#include <linux/icmpv6.h>
 #include <bpf_helpers.h>
 #include <bpf_endian.h>
 
@@ -74,152 +73,6 @@ upf_li_pkt(struct xdp_md *ctx, struct upf_fwd_rule *u, __u16 offset, __u16 dir_f
 	bpf_perf_event_output(ctx, &upf_li_perf,
 			      ((__u64)le.payload_len << 32) | BPF_F_CURRENT_CPU,
 			      &le, sizeof(le));
-}
-
-/*
- * router advertisement
- * XXX: should be moved userland
- */
-
-#define ND_ROUTER_SOLICIT           133
-#define ND_ROUTER_ADVERT            134
-
-struct nd_router_advert
-{
-	__u32		nd_ra_reachable;   /* reachable time */
-	__u32		nd_ra_retransmit;  /* retransmit timer */
-
-	/* option: prefix information */
-	__u8		nd_opt_pi_type;
-	__u8		nd_opt_pi_len;
-	__u8		nd_opt_pi_prefix_len;
-	__u8		nd_opt_pi_flags_reserved;
-	__u32		nd_opt_pi_valid_time;
-	__u32		nd_opt_pi_preferred_time;
-	__u32		nd_opt_pi_reserved2;
-	struct in6_addr	nd_opt_pi_prefix;
-};
-
-struct ipv6_pseudo_hdr
-{
-    struct in6_addr saddr;
-    struct in6_addr daddr;
-    __be32          len;      /* upper-layer packet length */
-    __u8            zero[3];
-    __u8            nexthdr;
-} __attribute__((packed));
-
-static __always_inline int
-upf_ra_make(struct xdp_md *ctx, struct if_rule_data *d,
-	    void *data, void *data_end, struct ipv6hdr *ip6h, struct upf_fwd_rule *u)
-{
-	struct icmp6hdr *icmp6;
-	struct nd_router_advert *nd_ra;
-	struct iphdr *iph;
-	struct udphdr *udph;
-	struct gtphdr *gtph;
-	int adj_sz;
-	__u16 off_icmp6, off_ip6;
-	__u8 tmp[16];
-	__u8 nh;
-	__u32 csum = 0;
-
-	if (!IN6_IS_ADDR_LINKLOCAL(&ip6h->saddr))
-		return XDP_DROP;
-
-	/* drop anything that is not a router solicitation message */
-	icmp6 = ipv6_skip_exthdr(ip6h, data_end, &nh);
-	if (icmp6 == NULL ||
-	    nh != IPPROTO_ICMPV6 ||
-	    (void *)(icmp6 + 1) > data_end ||
-	    icmp6->icmp6_type != ND_ROUTER_SOLICIT)
-		return XDP_DROP;
-
-	off_icmp6 = (void *)icmp6 - data;
-	off_ip6 = (void *)ip6h - data;
-	/* adjust packet to reply size */
-	adj_sz = sizeof (*icmp6) + sizeof (*nd_ra) - (data_end - (void *)icmp6);
-	if (bpf_xdp_adjust_tail(ctx, adj_sz) < 0)
-		return XDP_ABORTED;
-
-	/* reset all pointers */
-	data = (void *)(long)ctx->data;
-	data_end = (void *)(long)ctx->data_end;
-
-	iph = (struct iphdr *)(data + d->pl_off);
-	udph = (void *)(iph) + iph->ihl * 4;
-	gtph = (struct gtphdr *)(udph + 1);
-	if (d->pl_off > 256 || (void *)(iph + 1) > data_end ||
-	    udph + 1 > data_end || gtph + 1 > data_end)
-		return XDP_DROP;
-
-	ip6h = data + off_ip6;
-	icmp6 = data + off_icmp6;
-	if (off_icmp6 > 300 ||
-	    off_ip6 > 300 ||
-	    (void *)(ip6h + 1) > data_end ||
-	    (void *)icmp6 + sizeof (*icmp6) + sizeof (*nd_ra) > data_end)
-		return XDP_DROP;
-
-	__u32 atmp = iph->saddr;
-	iph->saddr = iph->daddr;
-	iph->daddr = atmp;
-	iph->tot_len = bpf_htons(bpf_ntohs(iph->tot_len) + adj_sz);
-	iph->check = 0;
-	csum_ipv4(iph, sizeof(*iph), &csum);
-	iph->check = csum;
-
-	__u16 ptmp = udph->dest;
-	udph->dest = udph->source;
-	udph->source = ptmp;
-	udph->check = 0;
-	udph->len = bpf_htons(bpf_ntohs(udph->len) + adj_sz);
-
-	gtph->teid = u->gtpu_remote_teid;
-	gtph->length = bpf_htons(bpf_ntohs(gtph->length) + adj_sz);
-
-	/* set dst_addr = src_addr. use fe80::1 as src_addr */
-	__builtin_memcpy(ip6h->daddr.s6_addr, ip6h->saddr.s6_addr, 16);
-	ip6h->saddr.s6_addr32[0] = __constant_htonl(0xfe800000);
-	ip6h->saddr.s6_addr32[1] = 0;
-	ip6h->saddr.s6_addr32[2] = 0;
-	ip6h->saddr.s6_addr32[3] = __constant_htonl(0x00000001);
-	ip6h->payload_len = bpf_htons(bpf_ntohs(ip6h->payload_len) + adj_sz);;
-
-	/* build router advertisement */
-	icmp6->icmp6_type = ND_ROUTER_ADVERT;
-	icmp6->icmp6_cksum = 0;
-	icmp6->icmp6_hop_limit = 255;
-	icmp6->icmp6_dataun.un_data8[1] = 0;
-	icmp6->icmp6_rt_lifetime = __constant_htons(64800);
-	nd_ra = (struct nd_router_advert *)(icmp6 + 1);
-	nd_ra->nd_ra_reachable = 0;
-	nd_ra->nd_ra_retransmit = 0;
-	nd_ra->nd_opt_pi_type = 3;
-	nd_ra->nd_opt_pi_len = 4;
-	nd_ra->nd_opt_pi_prefix_len = 64;
-	nd_ra->nd_opt_pi_flags_reserved = 0;
-	nd_ra->nd_opt_pi_valid_time = ~0;
-	nd_ra->nd_opt_pi_preferred_time = ~0;
-	nd_ra->nd_opt_pi_reserved2 = 0;
-	__builtin_memcpy(nd_ra->nd_opt_pi_prefix.s6_addr, u->ue_v6pfx, 8);
-	__builtin_memset(nd_ra->nd_opt_pi_prefix.s6_addr + 8, 0x00, 8);
-
-	/* compute icmpv6 checksum */
-	struct ipv6_pseudo_hdr ph = {};
-	ph.saddr = ip6h->saddr;
-	ph.daddr = ip6h->daddr;
-	ph.len = ip6h->payload_len;
-	ph.nexthdr = IPPROTO_ICMPV6;
-	__s64 r = bpf_csum_diff(0, 0, (__be32*)&ph, sizeof(ph), 0);
-	if (r < 0)
-		return XDP_DROP;
-	r = bpf_csum_diff(0, 0, (__be32*)icmp6, (sizeof (*icmp6) + sizeof (*nd_ra)), r);
-	if (r < 0)
-		return XDP_DROP;
-	icmp6->icmp6_cksum = csum_fold_helper(r);
-
-	return if_rule_send_back_pkt(ctx, d);
 }
 
 
@@ -419,7 +272,6 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	/* lookup user */
 	k.gtpu_local_teid = gtph->teid;
 	k.gtpu_local_addr = iph->daddr;
-	k.gtpu_local_port = udph->dest;
 	u = bpf_map_lookup_elem(&user_egress, &k);
 	UPF_DBG("from_gtpu: lookup dst:%pI4:%d teid:%x%s",
 		   &iph->daddr, bpf_ntohs(udph->dest), bpf_ntohl(gtph->teid),
@@ -494,9 +346,10 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 				 ip6h_inner->daddr.s6_addr, 16);
 		d->flags |= IF_RULE_FL_DST_IPV6;
 
-		/* router solicitation from UE, answer */
-		if (IN6_IS_ADDR_MULTICAST(&ip6h_inner->daddr))
-			return upf_ra_make(ctx, d, data, data_end, ip6h_inner, u);
+		/* router solicitation from UE, let userapp handle */
+		if (IN6_IS_ADDR_MULTICAST(&ip6h_inner->daddr) &&
+		    IN6_IS_ADDR_LINKLOCAL(&ip6h_inner->saddr))
+			return XDP_PASS;
 
 		break;
 	default:

@@ -45,7 +45,7 @@
 #define PERF_BUFFER_PAGES		256
 
 /* set max number of running captures per bpf program */
-#define CAPTURE_BPF_MAX_ENTRY		8
+#define CAPTURE_BPF_MAX_ENTRY		12
 
 /* max number of interfaces in pcap file */
 #define CAPTURE_BPF_MAX_INTERFACE	100

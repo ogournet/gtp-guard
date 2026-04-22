@@ -21,6 +21,7 @@ Commands (stdin):
                            [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
   session delete <cp_seid>
   session ping   <cp_seid> [<dst_ip>] [count <n>]
+  session rs     <cp_seid>       — send ND Router Solicitation, print RA prefix
   sessions
 
   expect report [timeout <s>] [cp_seid <n>] [urr_id <n>]
@@ -187,6 +188,7 @@ UEIP_V6    = 0x01
 UEIP_V4    = 0x02
 UEIP_SD    = 0x04
 UEIP_CHV4  = 0x10
+UEIP_CHV6  = 0x20
 
 # F-TEID  (§8.2.3)
 FTEID_V4   = 0x01
@@ -279,6 +281,13 @@ IP_PROTO_ICMP = 1
 ICMP_ECHO_REQ = 8
 ICMP_ECHO_REP = 0
 
+# IPv6 / ICMPv6 / NDP
+IP_PROTO_ICMPV6    = 58
+ICMPV6_RS          = 133
+ICMPV6_RA          = 134
+ND_OPT_PREFIX_INFO = 3
+ALL_ROUTERS_V6     = "ff02::2"
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Dataclasses
@@ -357,6 +366,7 @@ class Session:
     cp_seid:     int
     up_seid:     int       = 0
     ue_ip:       str       = ""
+    ue_ipv6:     str       = ""
     upf_teid:    int       = 0
     upf_gtpu_ip: str       = ""
     urr_ids:     list[int] = field(default_factory=list)
@@ -480,13 +490,70 @@ def parse_gtpu_icmp_reply(data: bytes) -> dict | None:
     return {"icmp_id": icmp_id, "seq": seq, "src_ip": src}
 
 
+# ── IPv6 / ICMPv6 / NDP packet builders ──────────────────────────────────
+def build_ipv6(src: str, dst: str, next_hdr: int, payload: bytes,
+               hop_limit: int = 255) -> bytes:
+    src_b = socket.inet_pton(socket.AF_INET6, src)
+    dst_b = socket.inet_pton(socket.AF_INET6, dst)
+    hdr = struct.pack("!IHBB", 0x6000_0000, len(payload), next_hdr, hop_limit)
+    return hdr + src_b + dst_b + payload
+
+def _icmpv6_checksum(src_b: bytes, dst_b: bytes, data: bytes) -> int:
+    pseudo = src_b + dst_b + struct.pack("!I3xB", len(data), IP_PROTO_ICMPV6)
+    return _checksum(pseudo + data)
+
+def build_rs_packet(src_ll: str, dst: str = ALL_ROUTERS_V6) -> bytes:
+    """Build full IPv6 packet containing an ICMPv6 Router Solicitation."""
+    src_b = socket.inet_pton(socket.AF_INET6, src_ll)
+    dst_b = socket.inet_pton(socket.AF_INET6, dst)
+    # RS: type=133, code=0, checksum=0 (placeholder), reserved=0
+    rs = struct.pack("!BBHI", ICMPV6_RS, 0, 0, 0)
+    csum = _icmpv6_checksum(src_b, dst_b, rs)
+    rs = struct.pack("!BBHI", ICMPV6_RS, 0, csum, 0)
+    return build_ipv6(src_ll, dst, IP_PROTO_ICMPV6, rs)
+
+def parse_gtpu_ra(data: bytes) -> list[tuple[str, int]] | None:
+    """Parse GTP-U → IPv6 → ICMPv6 RA.  Returns [(prefix, prefix_len), ...]."""
+    if len(data) < 8:
+        return None
+    _, msg_type, _, _ = struct.unpack("!BBHI", data[:8])
+    if msg_type != GTPU_GPDU:
+        return None
+    inner = data[8:]
+    if len(inner) < 40 or (inner[0] >> 4) != 6:
+        return None
+    next_hdr = inner[6]
+    if next_hdr != IP_PROTO_ICMPV6:
+        return None
+    icmpv6 = inner[40:]
+    if len(icmpv6) < 16 or icmpv6[0] != ICMPV6_RA:
+        return None
+    # RA fixed: type(1) code(1) csum(2) hop_limit(1) flags(1) router_lifetime(2)
+    #           reachable_time(4) retrans_timer(4) = 16 bytes, then options
+    prefixes = []
+    off = 16
+    while off + 2 <= len(icmpv6):
+        opt_type = icmpv6[off]
+        opt_len  = icmpv6[off + 1] * 8      # units of 8 octets
+        if opt_len == 0:
+            break
+        if opt_type == ND_OPT_PREFIX_INFO and opt_len >= 32:
+            prefix_len   = icmpv6[off + 2]
+            prefix_bytes = icmpv6[off + 16: off + 32]
+            prefix       = socket.inet_ntop(socket.AF_INET6, prefix_bytes)
+            prefixes.append((prefix, prefix_len))
+        off += opt_len
+    return prefixes if prefixes else None
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  GTP-U asyncio protocol + sender
 # ══════════════════════════════════════════════════════════════════════════
 class GTPUProtocol(asyncio.DatagramProtocol):
     def __init__(self):
         self.transport: asyncio.DatagramTransport | None = None
-        self._pending:  dict[int, tuple[asyncio.Future, float]] = {}
+        self._pending:    dict[int, tuple[asyncio.Future, float]] = {}
+        self._ra_waiters: list[asyncio.Future] = []
 
     def connection_made(self, transport):
         self.transport = transport
@@ -495,13 +562,24 @@ class GTPUProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes, addr: tuple):
         recv_time = time.monotonic()
-        result    = parse_gtpu_icmp_reply(data)
-        if result is None:
+        # IPv4 ICMP echo reply
+        result = parse_gtpu_icmp_reply(data)
+        if result is not None:
+            entry = self._pending.pop(result["icmp_id"], None)
+            if entry and not entry[0].done():
+                result["rtt_ms"] = (recv_time - entry[1]) * 1000
+                entry[0].set_result(result)
             return
-        entry = self._pending.pop(result["icmp_id"], None)
-        if entry and not entry[0].done():
-            result["rtt_ms"] = (recv_time - entry[1]) * 1000
-            entry[0].set_result(result)
+        # IPv6 ICMPv6 Router Advertisement
+        ra = parse_gtpu_ra(data)
+        if ra is not None:
+            for prefix, plen in ra:
+                log.info(f"GTP-U ← RA  prefix={prefix}/{plen}")
+            if self._ra_waiters:
+                for fut in self._ra_waiters:
+                    if not fut.done():
+                        fut.set_result(ra)
+                self._ra_waiters.clear()
 
     def error_received(self, exc):
         log.error(f"GTP-U error: {exc}")
@@ -511,6 +589,10 @@ class GTPUProtocol(asyncio.DatagramProtocol):
             if not fut.done():
                 fut.cancel()
         self._pending.clear()
+        for fut in self._ra_waiters:
+            if not fut.done():
+                fut.cancel()
+        self._ra_waiters.clear()
 
     def send_ping(self, teid: int, upf_addr: tuple,
                   icmp_id: int, seq: int,
@@ -569,6 +651,31 @@ class GTPUSender:
                 await asyncio.sleep(1)
         return ok
 
+    async def send_rs(self, sess: Session) -> list[tuple[str, int]] | None:
+        """Send ND Router Solicitation via GTP-U, wait for RA.
+
+        Returns list of (prefix, prefix_len) or None on timeout.
+        """
+        if not sess.upf_gtpu_ip or not sess.upf_teid:
+            log.error("Session missing UPF GTP-U endpoint"); return None
+        upf_addr = (sess.upf_gtpu_ip, GTPU_PORT)
+        src_ll   = "fe80::999:666:333"
+        pkt      = build_gtpu(sess.upf_teid,
+                              build_rs_packet(src_ll))
+        fut = asyncio.get_event_loop().create_future()
+        self._proto._ra_waiters.append(fut)
+        self._proto.transport.sendto(pkt, upf_addr)
+        log.info(f"GTP-U → RS  src={src_ll}  dst={ALL_ROUTERS_V6}  "
+                 f"teid=0x{sess.upf_teid:08X}")
+        try:
+            prefixes = await asyncio.wait_for(fut, timeout=self.TIMEOUT)
+            return prefixes
+        except TimeoutError:
+            log.warning("GTP-U ← RS timeout (no RA received)")
+            self._proto._ra_waiters = [
+                f for f in self._proto._ra_waiters if f is not fut]
+            return None
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  PFCP IE builders — primitives
@@ -616,10 +723,10 @@ def ie_fteid(teid: int, ip: str) -> bytes:
                bytes([FTEID_V4]) + struct.pack("!I", teid) + socket.inet_aton(ip))
 
 def ie_ue_ip_address_ul() -> bytes:
-    return _ie(IET.UE_IP_ADDRESS, bytes([UEIP_CHV4 | UEIP_SD]))
+    return _ie(IET.UE_IP_ADDRESS, bytes([UEIP_CHV4 | UEIP_CHV6 | UEIP_SD]))
 
 def ie_ue_ip_address_dl() -> bytes:
-    return _ie(IET.UE_IP_ADDRESS, bytes([UEIP_CHV4]))
+    return _ie(IET.UE_IP_ADDRESS, bytes([UEIP_CHV4 | UEIP_CHV6]))
 
 def ie_far_id(v: int) -> bytes:
     return _ie(IET.FAR_ID, struct.pack("!I", v))
@@ -1082,8 +1189,15 @@ class SMF:
         for created_pdr_raw in ies.get(IET.CREATED_PDR, []):
             ci = decode_ies(created_pdr_raw)
             ue_ip_raw = ci.get(IET.UE_IP_ADDRESS, [None])[0]
-            if ue_ip_raw and len(ue_ip_raw) >= 5 and (ue_ip_raw[0] & UEIP_V4):
-                sess.ue_ip = socket.inet_ntoa(ue_ip_raw[1:5])
+            if ue_ip_raw and len(ue_ip_raw) >= 1:
+                flags = ue_ip_raw[0]
+                off_ip = 1
+                if flags & UEIP_V4 and len(ue_ip_raw) >= off_ip + 4:
+                    sess.ue_ip = socket.inet_ntoa(ue_ip_raw[off_ip:off_ip+4])
+                    off_ip += 4
+                if flags & UEIP_V6 and len(ue_ip_raw) >= off_ip + 16:
+                    sess.ue_ipv6 = socket.inet_ntop(
+                        socket.AF_INET6, ue_ip_raw[off_ip:off_ip+16])
             fteid_raw = ci.get(IET.FTEID, [None])[0]
             if (fteid_raw and len(fteid_raw) >= 9
                     and (fteid_raw[0] & FTEID_V4)
@@ -1092,10 +1206,11 @@ class SMF:
                 sess.upf_gtpu_ip = socket.inet_ntoa(fteid_raw[5:9])
 
         self.sessions[cp_seid] = sess
+        v6_str = f", ue_ipv6={sess.ue_ipv6}" if sess.ue_ipv6 else ""
         log.info(f"←  {hdr['name']}  "
                  f"(seq={hdr['seq']}, cause={cause_str}, "
                  f"cp_seid=0x{cp_seid:016X}, up_seid=0x{sess.up_seid:016X}, "
-                 f"ue_ip={sess.ue_ip or '?'}, "
+                 f"ue_ip={sess.ue_ip or '?'}{v6_str}, "
                  f"upf_gtpu={sess.upf_gtpu_ip or '?'}:0x{sess.upf_teid:08X})")
         return sess
 
@@ -1303,6 +1418,8 @@ HELP_TEXT = """\
 
   session delete <cp_seid>
   session ping   <cp_seid> [<dst_ip>] [count <n>]
+  session rs     <cp_seid>
+      Send ND Router Solicitation via GTP-U and print the RA prefix(es).
   sessions
 
 ── Expect ────────────────────────────────────────────────────────────────
@@ -1506,9 +1623,10 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                     if not smf.sessions:
                         print("(no active sessions)", flush=True)
                     for s in smf.sessions.values():
+                        v6 = f"  ue_ipv6={s.ue_ipv6}" if s.ue_ipv6 else ""
                         print(f"  cp_seid=0x{s.cp_seid:016X}"
                               f"  up_seid=0x{s.up_seid:016X}"
-                              f"  ue_ip={s.ue_ip or '?':15s}"
+                              f"  ue_ip={s.ue_ip or '?':15s}{v6}"
                               f"  upf_gtpu={s.upf_gtpu_ip or '?'}:0x{s.upf_teid:08X}"
                               f"  urr={s.urr_ids}"
                               f"  imsi={s.imsi or '-'}", flush=True)
@@ -1517,9 +1635,10 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                     params = parse_session_add(rest)
                     sess   = await smf.session_establishment(**params)
                     if sess:
+                        v6 = f" ue_ipv6={sess.ue_ipv6}" if sess.ue_ipv6 else ""
                         print(f"session created"
                               f" cp_seid=0x{sess.cp_seid:016X}"
-                              f" ue_ip={sess.ue_ip or '?'}"
+                              f" ue_ip={sess.ue_ip or '?'}{v6}"
                               f" upf_gtpu={sess.upf_gtpu_ip or '?'}"
                               f":0x{sess.upf_teid:08X}", flush=True)
 
@@ -1543,6 +1662,18 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                         dst_ip, count = parse_session_ping(rest)
                         ok = await gtpu.ping(sess, dst_ip=dst_ip, count=count)
                         print(f"ping {ok}/{count} replies from {dst_ip}", flush=True)
+
+                case ["session", "rs", seid_str]:
+                    sess = smf.sessions.get(int(seid_str, 0))
+                    if sess is None:
+                        print(f"error: unknown cp_seid {seid_str}", flush=True)
+                    else:
+                        prefixes = await gtpu.send_rs(sess)
+                        if prefixes:
+                            for prefix, plen in prefixes:
+                                print(f"  RA prefix {prefix}/{plen}", flush=True)
+                        else:
+                            print("no RA received", flush=True)
 
                 # ── Expect ─────────────────────────────────────────────
                 case ["expect", "no", "report", *rest]:
