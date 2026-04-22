@@ -383,8 +383,8 @@ gtp_apn_ip_pool_alloc(struct gtp_apn *apn, const char *name)
 		free(new);
 		return -1;
 	}
+	new->p = gtp_ip_pool_refinc(new->p);
 
-	INIT_LIST_HEAD(&new->next);
 	list_add_tail(&new->next, &apn->ip_pool);
 	return 0;
 }
@@ -392,12 +392,12 @@ gtp_apn_ip_pool_alloc(struct gtp_apn *apn, const char *name)
 int
 gtp_apn_ip_pool_free(struct gtp_apn_ip_pool *ap)
 {
-	gtp_ip_pool_put(ap->p);
+	gtp_ip_pool_refdec(ap->p);
 	list_head_del(&ap->next);
 	free(ap);
 	return 0;
 }
-	
+
 static int
 gtp_apn_ip_pool_destroy(struct gtp_apn *apn)
 {

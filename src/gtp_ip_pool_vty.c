@@ -42,11 +42,6 @@ DEFUN(ip_pool,
 {
 	struct gtp_ip_pool *new;
 
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
-
 	/* Already existing ? */
 	new = gtp_ip_pool_get(argv[0]);
 	if (!new)
@@ -64,11 +59,6 @@ DEFUN(no_ip_pool,
       "Pool Name")
 {
 	struct gtp_ip_pool *p;
-
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
 
 	/* Already existing ? */
 	p = gtp_ip_pool_get(argv[0]);
@@ -96,12 +86,7 @@ DEFUN(ip_pool_description,
 {
 	struct gtp_ip_pool *p = vty->index;
 
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
-
-	strncat(p->description, argv[0], GTP_STR_MAX_LEN - 1);
+	snprintf(p->description, sizeof (p->description), "%s", argv[0]);
 
 	return CMD_SUCCESS;
 }
@@ -114,11 +99,6 @@ DEFUN(ip_pool_prefix,
 {
 	struct gtp_ip_pool *p = vty->index;
 	struct ip_pool *pool;
-
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
 
 	if (p->pool) {
 		vty_out(vty, "%% ip-pool:'%s' prefix already configured%s"
@@ -210,36 +190,44 @@ DEFUN(show_ip_pool,
 	const char *name = NULL;
 	struct table *tbl;
 	struct ip_pool *pool;
-	char addr_str[INET6_ADDRSTRLEN];
 
 	if (list_empty(&daemon_data->ip_pool)) {
-		vty_out(vty, "%% No ip-pool configured...");
+		vty_out(vty, "%% No ip-pool configured...\n");
 		return CMD_SUCCESS;
 	}
 
 	if (argc == 1)
 		name = argv[0];
 
-	tbl = table_init(6, STYLE_SINGLE_LINE_ROUNDED);
+	tbl = table_init(7, STYLE_SINGLE_LINE_ROUNDED);
 	table_set_column(tbl, "Name", "Prefix", "inuse", "total",
-			 "% used", "% fill-up");
+			 "% used", "% fill-up", "State");
 	table_set_column_align(tbl, ALIGN_CENTER, ALIGN_RIGHT,
 			       ALIGN_RIGHT, ALIGN_RIGHT,
-			       ALIGN_RIGHT, ALIGN_RIGHT);
+			       ALIGN_RIGHT, ALIGN_RIGHT, ALIGN_RIGHT);
 
 	list_for_each_entry(p, &daemon_data->ip_pool, next) {
 		if (name && !strstr(p->name, name))
 			continue;
 
 		pool = p->pool;
-		table_add_row_fmt(tbl, "%s|%s/%d|%u|%u|%.2f%%|%.2f%%"
+		if (pool == NULL) {
+			table_add_row_fmt(tbl, "%s|unset|NA|NA|-|-|%s (ref:%d)",
+					  p->name,
+					  __test_bit(GTP_IP_POOL_FL_SHUTDOWN, &p->flags) ?
+					  "shut" : "active", p->refcnt);
+			continue;
+		}
+
+		table_add_row_fmt(tbl, "%s|%s/%d|%u|%u|%.2f%%|%.2f%%|%s (ref:%d)"
 				     , p->name
-				     , sa_str_r(&pool->prefix, addr_str, INET6_ADDRSTRLEN)
-				     , pool->prefix_bits
+				     , sa_str(&pool->prefix), pool->prefix_bits
 				     , pool->pool.used
 				     , pool->pool.size
 				     , (pool->pool.used * 100.0) / pool->pool.size
-				     , (pool->pool.next_lease_idx * 100.0) / pool->pool.size);
+				     , (pool->pool.next_lease_idx * 100.0) / pool->pool.size
+				     , __test_bit(GTP_IP_POOL_FL_SHUTDOWN, &p->flags) ?
+				       "shut" : "active", p->refcnt);
 	}
 	table_vty_out(tbl, vty);
 	table_destroy(tbl);

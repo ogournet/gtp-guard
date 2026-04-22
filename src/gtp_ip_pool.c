@@ -37,26 +37,26 @@ struct gtp_ip_pool *
 gtp_ip_pool_get(const char *name)
 {
 	struct gtp_ip_pool *p;
-	size_t len = strlen(name);
 
 	list_for_each_entry(p, &daemon_data->ip_pool, next) {
-		if (!memcmp(p->name, name, len)) {
-			__sync_add_and_fetch(&p->refcnt, 1);
+		if (!strcmp(p->name, name))
 			return p;
-		}
 	}
 
 	return NULL;
 }
 
-int
-gtp_ip_pool_put(struct gtp_ip_pool *p)
+struct gtp_ip_pool *
+gtp_ip_pool_refinc(struct gtp_ip_pool *p)
 {
-	if (!p)
-		return -1;
+	++p->refcnt;
+	return p;
+}
 
-	__sync_sub_and_fetch(&p->refcnt, 1);
-	return 0;
+void
+gtp_ip_pool_refdec(struct gtp_ip_pool *p)
+{
+	--p->refcnt;
 }
 
 

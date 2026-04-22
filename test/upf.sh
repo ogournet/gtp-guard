@@ -117,6 +117,10 @@ conf_for_pkt() {
 no bpf-program upf-1
 no carrier-grade-nat upf-1
 no pfcp-router pfcp-1
+access-point-name boa
+ no ip pool upf-v4
+ no ip pool upf-v6
+ exit
 no ip pool upf-v4
 no ip pool upf-v6
 "
@@ -166,7 +170,7 @@ ip pool upf-v4
  no shutdown
 
 ip pool upf-v6
- prefix 2a01:e00:6020::/44
+ prefix 2abc:e00:6020::/44
  no shutdown
 
 access-point-name boa
