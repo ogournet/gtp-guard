@@ -85,7 +85,6 @@ _update_egress_rule(struct pfcp_router *r, struct upf_fwd_rule *u, struct pfcp_t
 	struct upf_egress_key key = {
 		.gtpu_local_teid = htonl(t->id),
 		.gtpu_local_addr = t->ipv4.s_addr,
-		.gtpu_local_port = htons(GTP_U_PORT),
 	};
 	int err;
 
@@ -102,7 +101,6 @@ _delete_egress_rule(struct pfcp_router *r, struct upf_fwd_rule *u, struct pfcp_t
 	struct upf_egress_key key = {
 		.gtpu_local_teid = htonl(t->id),
 		.gtpu_local_addr = t->ipv4.s_addr,
-		.gtpu_local_port = htons(GTP_U_PORT),
 	};
 	int err = bpf_map__delete_elem(r->bpf_data->user_egress, &key,
 				       sizeof(key), 0);
@@ -252,6 +250,23 @@ pfcp_bpf_action(struct pfcp_router *rtr, struct pfcp_fwd_rule *r,
 	return err;
 }
 
+uint64_t
+pfcp_bpf_lookup_seid(struct pfcp_router *r, const struct upf_egress_key *ek)
+{
+	struct upf_fwd_rule ur;
+	int ret;
+
+	if (!r->bpf_data || !r->bpf_data->user_egress)
+		return 0;
+
+	ret = bpf_map__lookup_elem(r->bpf_data->user_egress, ek, sizeof (*ek),
+				   &ur, sizeof (ur), 0);
+	if (ret)
+		return 0;
+
+	return ur.seid;
+}
+
 
 /*************************************************************************/
 /* vty */
@@ -270,7 +285,6 @@ pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 	if (dir == UPF_FWD_FL_EGRESS) {
 		ek.gtpu_local_teid = htonl(t->id);
 		ek.gtpu_local_addr = t->ipv4.s_addr;
-		ek.gtpu_local_port = htons(GTP_U_PORT);
 
 		err = bpf_map__lookup_elem(bd->user_egress, &ek, sizeof(ek),
 					   &rule, sizeof(rule), 0);
@@ -414,8 +428,7 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 			snprintf(action_str, sizeof(action_str), "Decap");
 		}
 
-		sa_from_ip4(&addr, ek.gtpu_local_addr);
-		sa_set_port(&addr, ntohs(ek.gtpu_local_port));
+		sa_from_ip4_port(&addr, ek.gtpu_local_addr, GTP_U_PORT);
 		table_add_row_fmt(tbl, "0x%.8x|%s|%s|%lld|%lld",
 				  ntohl(ek.gtpu_local_teid),
 				  sa_str_r(&addr, buf1, sizeof (buf1)),

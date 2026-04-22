@@ -27,6 +27,8 @@
 #include "id_pool.h"
 #include "list_head.h"
 
+struct vty;
+
 /* Hash table */
 #define TEID_HASHTAB_BITS  20
 #define TEID_HASHTAB_SIZE  (1 << TEID_HASHTAB_BITS)
@@ -70,5 +72,7 @@ struct pfcp_teid *pfcp_teid_alloc(struct hlist_head *h, uint64_t *seed,
 void pfcp_teid_free(struct pfcp_teid *t);
 struct pfcp_teid *pfcp_teid_restore(struct hlist_head *h,
 				    struct pfcp_ie_f_teid *ie);
+int pfcp_teid_vty(struct vty *vty, struct hlist_head *h, uint32_t id,
+		  struct in_addr *ipv4, struct in6_addr *ipv6);
 struct hlist_head *pfcp_teid_init(void);
 int pfcp_teid_destroy(struct hlist_head *h);

@@ -331,6 +331,7 @@ pfcp_session_release(struct pfcp_session *s)
 	if (pfcp_sessions_per_cpu && s->cpu < pfcp_sessions_nr_cpus)
 		__sync_sub_and_fetch(&pfcp_sessions_per_cpu[s->cpu], 1);
 	thread_del(s->timer);
+	thread_del(s->ue_ip_ra_timer);
 	__sync_sub_and_fetch(&s->apn->session_count, 1);
 	gtp_apn_cdr_commit(s->apn, s->cdr);
 	pfcp_session_delete(s);

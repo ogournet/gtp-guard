@@ -28,4 +28,6 @@
 void pfcp_assoc_setup_request_send(struct thread *t);
 int pfcp_proto_hdl(struct pfcp_server *srv, sockaddr_t *addr);
 int gtpu_send_end_marker(struct gtp_server *srv, struct far *f);
+int gtpu_send_router_advert(struct gtp_server *srv, struct pfcp_session *s,
+			    struct far *f);
 int pfcp_gtpu_hdl(struct gtp_server *s, sockaddr_t *addr_from);

@@ -21,7 +21,10 @@
 
 #include <inttypes.h>
 #include <sys/socket.h>
+#include <netinet/ip6.h>
+#include <netinet/icmp6.h>
 #include <errno.h>
+
 #include "gtp.h"
 #include "gtp_utils.h"
 #include "gtp_bpf_capture.h"
@@ -629,6 +632,108 @@ gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 	return inet_server_snd(&srv->s, srv->s.fd, srv->s.pbuff, &addr_to);
 }
 
+struct ipv6_pseudo_hdr
+{
+	struct in6_addr saddr;
+	struct in6_addr daddr;
+	__be32 len;		/* upper-layer packet length */
+	__u8 zero[3];
+	__u8 nexthdr;
+} __attribute__((packed));
+
+static int
+gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
+	      sockaddr_t *addr_to, const struct in6_addr *dst_addr)
+{
+	struct pkt_buffer *pbuff = srv->s.pbuff;
+	struct gtp1_hdr *gtph;
+	struct ip6_hdr *ip6h;
+	struct icmp6_hdr *icmp6;
+	struct nd_router_advert *nd_ra;
+	struct nd_opt_prefix_info *nd_pi;
+	int pl_len;
+
+	if (pbuff == NULL)
+		pbuff = srv->s.pbuff = pkt_buffer_alloc(DEFAULT_PKT_BUFFER_SIZE);
+
+	pl_len = sizeof (*nd_ra) + sizeof (*nd_pi);
+
+	gtph = (struct gtp1_hdr *)pbuff->head;
+	gtph->flags = GTPU_FL_V | GTPU_FL_PT;
+	gtph->type = GTPU_GPDU_TYPE;
+	gtph->length = htons(pl_len + sizeof (*ip6h));
+	gtph->teid = teid;
+
+	ip6h = (void *)gtph + GTPV1C_HEADER_LEN_SHORT;
+	if (dst_addr != NULL) {
+		memmove(ip6h->ip6_dst.s6_addr, dst_addr, sizeof (*dst_addr));
+	} else {
+		ip6h->ip6_dst.s6_addr32[0] = __constant_htonl(0xff020000);
+		ip6h->ip6_dst.s6_addr32[1] = 0;
+		ip6h->ip6_dst.s6_addr32[2] = 0;
+		ip6h->ip6_dst.s6_addr32[3] = __constant_htonl(0x00000001);
+	}
+	ip6h->ip6_flow = 0;
+	ip6h->ip6_vfc = 0x60;
+	ip6h->ip6_plen = htons(pl_len);
+	ip6h->ip6_nxt = IPPROTO_ICMPV6;
+	ip6h->ip6_hlim = 255;
+	ip6h->ip6_src.s6_addr32[0] = __constant_htonl(0xfe800000);
+	ip6h->ip6_src.s6_addr32[1] = 0;
+	ip6h->ip6_src.s6_addr32[2] = 0;
+	ip6h->ip6_src.s6_addr32[3] = __constant_htonl(0x00000001);
+
+	nd_ra = (struct nd_router_advert *)(ip6h + 1);
+	icmp6 = &nd_ra->nd_ra_hdr;
+	icmp6->icmp6_type = ND_ROUTER_ADVERT;
+	icmp6->icmp6_code = 0;
+	icmp6->icmp6_cksum = 0;
+	icmp6->icmp6_data8[0] = 255;
+	icmp6->icmp6_data8[1] = 0;
+	icmp6->icmp6_data16[1] = __constant_htons(64800);
+	nd_ra->nd_ra_reachable = 0;
+	nd_ra->nd_ra_retransmit = 0;
+	nd_pi = (struct nd_opt_prefix_info *)(nd_ra + 1);
+	nd_pi->nd_opt_pi_type = 3;
+	nd_pi->nd_opt_pi_len = 4;
+	nd_pi->nd_opt_pi_prefix_len = 64;
+	nd_pi->nd_opt_pi_flags_reserved = 0x40;
+	nd_pi->nd_opt_pi_valid_time = ~0;
+	nd_pi->nd_opt_pi_preferred_time = ~0;
+	nd_pi->nd_opt_pi_reserved2 = 0;
+	nd_pi->nd_opt_pi_prefix = s->ue_ip.v6;
+
+	/* compute icmpv6 checksum */
+	struct ipv6_pseudo_hdr ph = {
+		.saddr = ip6h->ip6_src,
+		.daddr = ip6h->ip6_dst,
+		.len = ip6h->ip6_plen,
+		.nexthdr = IPPROTO_ICMPV6,
+	};
+        uint16_t csum = in_csum((uint16_t*)&ph, sizeof(ph), 0);
+	csum = in_csum((uint16_t*)icmp6, pl_len, ~csum);
+	icmp6->icmp6_cksum = csum;
+
+	pl_len += sizeof (*ip6h) + GTPV1C_HEADER_LEN_SHORT;
+	pkt_buffer_set_end_pointer(pbuff, pl_len);
+	pkt_buffer_set_data_pointer(pbuff, pl_len);
+
+	gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
+			 addr_to, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
+
+	return inet_server_snd(&srv->s, srv->s.fd, pbuff, addr_to);
+}
+
+int
+gtpu_send_router_advert(struct gtp_server *srv, struct pfcp_session *s, struct far *f)
+{
+	sockaddr_t addr_to;
+
+	sa_from_ip4_port(&addr_to, f->outer_header_ip4.s_addr, GTP_U_PORT);
+	return gtpu_build_ra(srv, s, f->outer_header_teid, &addr_to, NULL);
+}
+
+
 static int
 gtpu_echo_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
@@ -646,7 +751,7 @@ gtpu_echo_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 	rec->type = GTP1_IE_RECOVERY_TYPE;
 	rec->recovery = 0;
 	pkt_buffer_put_data(srv->s.pbuff, sizeof(*rec));
-	return 0;
+	return 1;
 }
 
 static int
@@ -662,12 +767,71 @@ gtpu_end_marker_hdl(struct gtp_server *s, sockaddr_t *addr)
 	return 0;
 }
 
+static int
+gtpu_data_hdl(struct gtp_server *srv, sockaddr_t *addr)
+{
+	struct pkt_buffer *pbuff = srv->s.pbuff;
+	struct gtp1_hdr *gtph;
+	struct ip6_hdr *ip6h;
+	struct icmp6_hdr *icmp6;
+	struct pfcp_session *s = NULL;
+	struct far *f;
+	struct pdr *p;
+	uint32_t teid;
+
+	/* check it is a router solicitation */
+	gtph = (struct gtp1_hdr *)pbuff->head;
+	ip6h = (void *)gtph + GTPV1C_HEADER_LEN_SHORT;
+	icmp6 = (struct icmp6_hdr *)(ip6h + 1);
+	if ((uint8_t *)icmp6 + 1 > pbuff->tail ||
+	    gtph->flags != 0x30 ||
+	    ip6h->ip6_nxt != IPPROTO_ICMPV6 ||
+	    icmp6->icmp6_type != ND_ROUTER_SOLICIT)
+		return 0;
+
+	/* use bpf 'user_egress' map to lookup seid, then retrieve
+	 * pfcp_session. pfcp_teid doesn't have index we wish for */
+	struct upf_egress_key ek = {
+		.gtpu_local_teid = gtph->teid,
+		.gtpu_local_addr = sa_ip4(&srv->s.addr),
+	};
+	uint64_t seid = pfcp_bpf_lookup_seid(srv->ctx, &ek);
+	if (seid)
+		s = pfcp_session_get(seid);
+	if (s == NULL || !(s->ue_ip.flags & UE_IPV6))
+		return 0;
+
+	/* now walk far in session's pdr, to find someone matching
+	 * remote addr. if addr match, then we have the remote teid! */
+	teid = 0;
+	list_for_each_entry(p, &s->pdr_list, next) {
+		f = p->far;
+		if (f == NULL)
+			continue;
+		if (f->outer_header_ip4.s_addr &&
+		    f->outer_header_ip4.s_addr == sa_ip4(addr)) {
+			teid = f->outer_header_teid;
+			break;
+		}
+	}
+	if (!teid)
+		return 0;
+
+	/* build and send RA */
+	sa_set_port(addr, GTP_U_PORT);
+	gtpu_build_ra(srv, s, teid, addr, &ip6h->ip6_src);
+
+	return 0;
+}
+
+
 static const struct {
 	int (*hdl) (struct gtp_server *, sockaddr_t *);
 } gtpu_msg_hdl[1 << 8] = {
 	[GTPU_ECHO_REQ_TYPE]			= { gtpu_echo_request_hdl },
 	[GTPU_ERR_IND_TYPE]			= { gtpu_error_indication_hdl },
 	[GTPU_END_MARKER_TYPE]			= { gtpu_end_marker_hdl	},
+	[GTPU_GPDU_TYPE]			= { gtpu_data_hdl },
 };
 
 int
