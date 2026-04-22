@@ -159,7 +159,7 @@ _update_ingress_rule(struct pfcp_router *r, struct upf_fwd_rule *u, struct ue_ip
 
 	if (ue->flags & UE_IPV4) {
 		key.flags = UE_IPV4;
-		key.ue_addr.ip4 = ue->v4.s_addr;
+		key.ue_ip4 = ue->v4.s_addr;
 
 		err = bpf_map__update_elem(r->bpf_data->user_ingress,
 					   &key, sizeof(key),
@@ -170,7 +170,7 @@ _update_ingress_rule(struct pfcp_router *r, struct upf_fwd_rule *u, struct ue_ip
 
 	if (ue->flags & UE_IPV6) {
 		key.flags = UE_IPV6;
-		memcpy(&key.ue_addr.ip6, &ue->v6, sizeof (ue->v6));
+		memcpy(&key.ue_ip6pfx.addr, &ue->v6, sizeof (key.ue_ip6pfx.addr));
 
 		err = bpf_map__update_elem(r->bpf_data->user_ingress,
 					   &key, sizeof(key),
@@ -190,7 +190,7 @@ _delete_ingress_rule(struct pfcp_router *r, struct upf_fwd_rule *u, struct ue_ip
 
 	if (ue->flags & UE_IPV4) {
 		key.flags = UE_IPV4;
-		key.ue_addr.ip4 = ue->v4.s_addr;
+		key.ue_ip4 = ue->v4.s_addr;
 
 		err = bpf_map__delete_elem(r->bpf_data->user_ingress,
 					   &key, sizeof (key), 0);
@@ -200,7 +200,7 @@ _delete_ingress_rule(struct pfcp_router *r, struct upf_fwd_rule *u, struct ue_ip
 
 	if (ue->flags & UE_IPV6) {
 		key.flags = UE_IPV6;
-		memcpy(&key.ue_addr.ip6, &ue->v6, sizeof (ue->v6));
+		memcpy(&key.ue_ip6pfx.addr, &ue->v6, sizeof (key.ue_ip6pfx.addr));
 
 		err = bpf_map__delete_elem(r->bpf_data->user_ingress,
 					   &key, sizeof (key), 0);
@@ -308,7 +308,7 @@ pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 
 	if (ue->flags & UE_IPV4) {
 		ik.flags = UE_IPV4;
-		ik.ue_addr.ip4 = ue->v4.s_addr;
+		ik.ue_ip4 = ue->v4.s_addr;
 		err = bpf_map__lookup_elem(bd->user_ingress, &ik, sizeof(ik),
 					   &rule, sizeof(rule), 0);
 		if (err) {
@@ -326,7 +326,7 @@ pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 
 	if (ue->flags & UE_IPV6) {
 		ik.flags = UE_IPV6;
-		memcpy(&ik.ue_addr.ip6, &ue->v6, sizeof(ue->v6));
+		memcpy(&ik.ue_ip6pfx, &ue->v6, sizeof(ik.ue_ip6pfx));
 		err = bpf_map__lookup_elem(bd->user_ingress, &ik, sizeof(ik),
 					   &rule, sizeof(rule), 0);
 		if (err) {
@@ -383,9 +383,10 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 				     &c, sizeof(c), 0);
 
 		if (ik.flags & UE_IPV4)
-			sa_from_ip4(&addr_ue, ik.ue_addr.ip4);
-		else if (ik.flags & UE_IPV6)
-			sa_from_ip6_bytes(&addr_ue, ik.ue_addr.ip6.addr);
+			sa_from_ip4(&addr_ue, ik.ue_ip4);
+		else if (ik.flags & UE_IPV6) {
+			sa_from_ip6_pfx(&addr_ue, ik.ue_ip6pfx.addr, 8);
+		}
 		sa_from_ip4_port(&addr, rule.gtpu_remote_addr,
 				 ntohs(rule.gtpu_remote_port));
 		sa_from_ip4_port(&laddr, rule.gtpu_local_addr,

@@ -25,7 +25,13 @@
 struct upf_ingress_key {
 	__u16		flags;
 	__u16		_pad;
-	union v4v6addr  ue_addr;
+	union {
+		__be32	ue_ip4;
+		struct {
+			__be32	addr4[2];
+			__u8	addr[8];
+		} ue_ip6pfx;
+	};
 }  __attribute__((packed));
 
 struct upf_egress_key {
