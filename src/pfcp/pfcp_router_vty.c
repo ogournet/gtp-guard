@@ -375,6 +375,60 @@ DEFUN(pfcp_no_capture,
 	return CMD_SUCCESS;
 }
 
+DEFUN(pfcp_capture_imsi,
+      pfcp_capture_imsi_cmd,
+      "capture imsi IMSI [name CAPENTRY side (input|output|access|core|all)]",
+      "Capture module\n"
+      "Capture entry name\n"
+      "Permanent capture on IMSI\n"
+      "Imsi\n")
+{
+	struct gtp_capture_entry cap = {};
+	struct pfcp_ue *ue;
+	uint64_t v = atoll(argv[0]);
+	char capname[64];
+	int i;
+
+	ue = (struct pfcp_ue *)gtp_conn_get_by_imsi(v);
+	if (ue != NULL) {
+		if (!ue->persistent_capture) {
+			ue->persistent_capture = true;
+			gtp_conn_refinc(&ue->c);
+		} else {
+			return CMD_SUCCESS;
+		}
+	} else {
+		ue = pfcp_ue_alloc(v, 0, 0);
+		if (ue == NULL)
+			return CMD_WARNING;
+		ue->persistent_capture = true;
+		gtp_conn_refinc(&ue->c);
+	}
+
+	snprintf(capname, sizeof (capname), "%ld", v);
+	cap.flags = GTP_CAPTURE_FL_INPUT;
+	for (i = 1; i < argc; i += 2) {
+		if (!strcmp(argv[i], "name")) {
+			snprintf(capname, sizeof (capname), "%s", argv[i + 1]);
+		} else if (!strcmp(argv[i], "side")) {
+			if (!strcmp(argv[i + 1], "input"))
+				cap.flags = GTP_CAPTURE_FL_INPUT;
+			else if (!strcmp(argv[i + 1], "output"))
+				cap.flags = GTP_CAPTURE_FL_OUTPUT;
+			else if (!strcmp(argv[i + 1], "core"))
+				cap.flags = GTP_CAPTURE_FL_CORE;
+			else if (!strcmp(argv[i + 1], "access"))
+				cap.flags = GTP_CAPTURE_FL_ACCESS;
+			else if (!strcmp(argv[i + 1], "all"))
+				cap.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+		}
+	}
+
+	ue->capture = cap;
+	/* XXX: may start if pfcp session is existing */
+
+	return CMD_SUCCESS;
+}
 
 static int
 parse_teid_range(const char *str, uint32_t *start, uint32_t *end)
@@ -1173,6 +1227,7 @@ cmd_ext_pfcp_router_install(void)
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_bind_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_capture_cmd);
+	install_element(PFCP_ROUTER_NODE, &pfcp_capture_imsi_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_no_capture_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_debug_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_debug_teid_cmd);
