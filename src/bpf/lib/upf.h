@@ -199,7 +199,7 @@ upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
 		return XDP_DROP;
 
 	k.flags = UE_IPV6;
-	__builtin_memcpy(k.ue_addr.ip6.addr, ip6h->daddr.s6_addr, 16);
+	__builtin_memcpy(k.ue_ip6pfx.addr, ip6h->daddr.s6_addr, 8);
 	u = bpf_map_lookup_elem(&user_ingress, &k);
 	if (u == NULL)
 		return XDP_DROP;
@@ -228,7 +228,7 @@ upf_handle_pub(struct xdp_md *ctx, struct if_rule_data *d)
 		return XDP_DROP;
 
 	k.flags = UE_IPV4;
-	k.ue_addr.ip4 = iph->daddr;
+	k.ue_ip4 = iph->daddr;
 	u = bpf_map_lookup_elem(&user_ingress, &k);
 	if (u == NULL) {
 #ifdef UPF_N4_IN_DATAPATH

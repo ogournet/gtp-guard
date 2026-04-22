@@ -78,7 +78,7 @@ static void sa_from_ip4h(sockaddr_t *a, uint32_t ipaddr_host);
 static void sa_from_ip4h_port(sockaddr_t *a, uint32_t ipaddr_host, uint16_t port);
 static void sa_from_ip6(sockaddr_t *a, const struct in6_addr *ipaddr);
 static void sa_from_ip6_port(sockaddr_t *a, const struct in6_addr *ipaddr, uint16_t port);
-static void sa_from_ip6_bytes(sockaddr_t *a, const uint8_t *bytes);
+static void sa_from_ip6_pfx(sockaddr_t *a, const uint8_t *bytes, int nbytes);
 static void sa_set_port(sockaddr_t *a, uint16_t port);
 
 /* parsing */
@@ -295,10 +295,13 @@ sa_from_ip6_port(sockaddr_t *a, const struct in6_addr *ipaddr, uint16_t port)
 }
 
 static inline void
-sa_from_ip6_bytes(sockaddr_t *a, const uint8_t *bytes)
+sa_from_ip6_pfx(sockaddr_t *a, const uint8_t *bytes, int nbytes)
 {
 	a->family = AF_INET6;
-	memcpy(a->sin6.sin6_addr.s6_addr, bytes, sizeof (a->sin6.sin6_addr));
+	nbytes = nbytes < 16 ? nbytes : 16;
+	memcpy(a->sin6.sin6_addr.s6_addr, bytes, nbytes);
+	if (nbytes < 16)
+		memset(a->sin6.sin6_addr.s6_addr + nbytes, 0x00, 16 - nbytes);
 	a->sin6.sin6_port = 0;
 	a->sin6.sin6_flowinfo = 0;
 	a->sin6.sin6_scope_id = 0;
