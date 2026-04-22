@@ -55,11 +55,6 @@ DEFUN(pfcp_router,
 {
 	struct pfcp_router *new;
 
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
-
 	/* Already existing ? */
 	new = pfcp_router_get(argv[0]);
 	new = (new) ? : pfcp_router_alloc(argv[0]);
@@ -81,11 +76,6 @@ DEFUN(no_pfcp_router,
       "Instance Name")
 {
 	struct pfcp_router *c;
-
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
 
 	/* Already existing ? */
 	c = pfcp_router_get(argv[0]);
@@ -175,11 +165,6 @@ DEFUN(pfcp_router_peer_list,
 {
 	struct pfcp_router *c = vty->index;
 	struct pfcp_peer_list *plist;
-
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
 
 	plist = pfcp_peer_list_get(argv[0]);
 	if (!plist) {
@@ -506,7 +491,8 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 	int r;
 
 	rule = calloc(1, sizeof(*rule));
-	INIT_LIST_HEAD(&rule->next);
+	if (rule == NULL)
+		return -1;
 	ur = &rule->rule;
 
 	ur->seid = 1;
@@ -517,7 +503,6 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 		rule->action = PFCP_ACT_DELETE;
 	else
 		rule->action = PFCP_ACT_UPDATE;
-	list_add_tail(&rule->next, &c->static_fwd_rules);
 
 	if (!ctx->is_ingress && !ctx->is_fwd) {
 		ur->flags |= UPF_FWD_FL_EGRESS | UPF_FWD_FL_ACT_REMOVE_OUTER_HEADER |
@@ -577,6 +562,7 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 	}
 
 	r = pfcp_bpf_action(c, rule, &t, &ue);
+	free(rule);
 	if (r) {
 		vty_out(vty, "%% cannot %s teid 0x%08x\n", ctx->action, teid);
 		return CMD_WARNING;
@@ -855,15 +841,9 @@ DEFUN(show_pfcp_router,
       "Instance name")
 {
 	struct pfcp_router *c;
-	const char *name = NULL;
+	const char *name;
 
-	if (list_empty(&daemon_data->pfcp_router_ctx)) {
-		vty_out(vty, "%% No pfcp-router instance configured...");
-		return CMD_SUCCESS;
-	}
-
-	if (argc == 1)
-		name = argv[0];
+	name = argc >= 1 ? argv[0] : NULL;
 
 	list_for_each_entry(c, &daemon_data->pfcp_router_ctx, next) {
 		if (name != NULL && strncmp(c->name, name, GTP_NAME_MAX_LEN))
@@ -902,6 +882,16 @@ DEFUN(show_pfcp_teid,
 	return CMD_SUCCESS;
 }
 
+DEFUN(show_pfcp_bpf,
+      show_pfcp_bpf_cmd,
+      "show bpf pfcp",
+      SHOW_STR
+      "BPF UPF Dataplane ruleset\n")
+{
+	gtp_bpf_prog_foreach_vty("upf", vty, argc, argv);
+	return CMD_SUCCESS;
+}
+
 
 /*
  *	PFCP Peers command
@@ -913,11 +903,6 @@ DEFUN(pfcp_peer_list,
       "PFCP Peer list Name")
 {
 	struct pfcp_peer_list *new;
-
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
 
 	/* Already existing ? */
 	new = pfcp_peer_list_get(argv[0]);
@@ -940,11 +925,6 @@ DEFUN(no_pfcp_peer_list,
       "PFCP Peer list Name")
 {
 	struct pfcp_peer_list *p;
-
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
 
 	/* Already existing ? */
 	p = pfcp_peer_list_get(argv[0]);
@@ -981,11 +961,6 @@ DEFUN(pfcp_peer,
 	struct pfcp_peer_list *p = vty->index;
 	int err;
 
-	if (argc < 1) {
-		vty_out(vty, "%% missing arguments%s", VTY_NEWLINE);
-		return CMD_WARNING;
-	}
-
 	err = sa_parse(&p->addr[p->nr_addr], argv[0]);
 	if (err) {
 		vty_out(vty, "%% invalid peer:'%s'%s", argv[0], VTY_NEWLINE);
@@ -1005,19 +980,6 @@ DEFUN(pfcp_peer,
 
 	return CMD_SUCCESS;
 }
-
-
-/* Show */
-DEFUN(show_pfcp_bpf,
-      show_pfcp_bpf_cmd,
-      "show bpf pfcp",
-      SHOW_STR
-      "BPF UPF Dataplane ruleset\n")
-{
-	gtp_bpf_prog_foreach_vty("upf", vty, argc, argv);
-	return CMD_SUCCESS;
-}
-
 
 DEFUN(pfcp_cpu_sched,
       pfcp_cpu_sched_cmd,

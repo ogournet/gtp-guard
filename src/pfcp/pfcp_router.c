@@ -152,12 +152,6 @@ pfcp_router_dump(struct pfcp_router *ctx, char *buffer, size_t bsize)
 	return k;
 }
 
-bool
-pfcp_router_inuse(void)
-{
-	return !list_empty(&daemon_data->pfcp_router_ctx);
-}
-
 void
 pfcp_router_foreach(int (*hdl) (struct pfcp_router *, void *), void *arg)
 {
@@ -229,7 +223,6 @@ pfcp_router_alloc(const char *name)
 	}
 	INIT_LIST_HEAD(&new->next);
 	INIT_LIST_HEAD(&new->bpf_list);
-	INIT_LIST_HEAD(&new->static_fwd_rules);
 	bsd_strlcpy(new->name, name, GTP_NAME_MAX_LEN - 1);
 	new->seed = poor_prng((unsigned int *) &now);
 	memset(new->rp, 0, sizeof(new->rp));

@@ -62,7 +62,6 @@ struct pfcp_router {
 	struct gtp_bpf_prog	*bpf_prog;
 	struct pfcp_bpf_data	*bpf_data;
 	struct list_head	bpf_list;
-	struct list_head	static_fwd_rules;
 	struct pfcp_peer_list	*peer_list;
 	struct pfcp_server	s;
 	unsigned long		debug;
@@ -106,7 +105,6 @@ int pfcp_router_ingress_init(struct inet_server *srv);
 int pfcp_router_ingress_process(struct inet_server *srv,
 				sockaddr_t *addr_from);
 size_t pfcp_router_dump(struct pfcp_router *ctx, char *buffer, size_t bsize);
-bool pfcp_router_inuse(void);
 void pfcp_router_foreach(int (*hdl) (struct pfcp_router *, void *), void *arg);
 struct pfcp_router *pfcp_router_get(const char *name);
 struct pfcp_router *pfcp_router_alloc(const char *name);
