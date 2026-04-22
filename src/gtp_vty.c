@@ -368,7 +368,7 @@ DEFUN(show_workers_request_channel,
 	char addr_str[INET6_ADDRSTRLEN];
 	char flags2str[BUFSIZ];
 
-	if (!srv) {
+	if (!sa_len(&srv->addr)) {
 		vty_out(vty, "%% missing settings: pdn request-channel%s"
 			     , VTY_NEWLINE);
 		return CMD_WARNING;
