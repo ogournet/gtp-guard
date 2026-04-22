@@ -211,8 +211,20 @@ _if_rule_parse_pkt(struct xdp_md *ctx, struct if_rule_data *d, rule_selector_t r
 		if ((void *)(ip6h + 1) > data_end || ip6h->version != 6)
 			return XDP_DROP;
 
-		if (IN6_IS_ADDR_LINKLOCAL(&ip6h->saddr))
+		/* let link-local and multicast to kernel */
+		if (IN6_IS_ADDR_LINKLOCAL(&ip6h->daddr) ||
+		    IN6_IS_ADDR_MULTICAST(&ip6h->daddr))
 			return XDP_PASS;
+
+		/* let icmpv6 Neighbour Discovert to kernel.
+		 * assume there's no ipv6-hdr-opt (otherwise use ipv6_skip_exthdr) */
+		if (ip6h->nexthdr == IPPROTO_ICMPV6) {
+			icmp6 = (struct icmp6hdr *)(ip6h + 1);
+			if ((void *)(icmp6 + 1) > data_end)
+				return XDP_DROP;
+			if (icmp6->icmp6_type >= 133 && icmp6->icmp6_type <= 137)
+				return XDP_PASS;
+		}
 
 		d->pl_off = offset;
 		d->flags |= IF_RULE_FL_SRC_IPV6;
