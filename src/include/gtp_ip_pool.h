@@ -41,7 +41,8 @@ struct gtp_ip_pool {
 
 /* Prototypes */
 struct gtp_ip_pool *gtp_ip_pool_get(const char *name);
-int gtp_ip_pool_put(struct gtp_ip_pool *p);
+struct gtp_ip_pool *gtp_ip_pool_refinc(struct gtp_ip_pool *p);
+void gtp_ip_pool_refdec(struct gtp_ip_pool *p);
 struct gtp_ip_pool *gtp_ip_pool_alloc(const char *name);
 int gtp_ip_pool_free(struct gtp_ip_pool *p);
 int gtp_ip_pool_destroy(void);
