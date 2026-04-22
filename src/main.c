@@ -92,10 +92,8 @@ start_gtp(void)
 	gtp_sessions_init();
 
 	ret = vty_read_config(conf_file, default_conf_file);
-	if (ret < 0) {
+	if (ret < 0)
 		stop_gtp();
-		return;
-	}
 }
 
 /* Terminate handler */
