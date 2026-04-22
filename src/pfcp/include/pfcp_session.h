@@ -182,8 +182,6 @@ struct pdr {
 struct pfcp_fwd_rule {
 	uint8_t			action;
 	struct upf_fwd_rule	rule;
-
-	struct list_head	next;
 };
 
 /* PFCP User Equipement */
