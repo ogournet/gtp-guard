@@ -44,18 +44,11 @@ typedef union sockaddr_any sockaddr_t;
 #define GTP_CAPTURE_FL_USE_TRACEFUNC		0x0010
 #define GTP_CAPTURE_FL_NEED_BPF_UPDATE		0x0020
 
-typedef void (*gtp_capture_entry_cb_t)(void *, struct gtp_capture_entry *);
-
 struct gtp_capture_entry
 {
 	uint16_t			flags;
 	uint16_t			cap_len;
 	uint16_t			entry_id;
-
-	/* called when capture file is closed */
-	gtp_capture_entry_cb_t		opened_cb;
-	gtp_capture_entry_cb_t		closed_cb;
-	void				*cb_ud;
 
 	/* private use */
 	struct gtp_bpf_capture_ctx	*bcc;
