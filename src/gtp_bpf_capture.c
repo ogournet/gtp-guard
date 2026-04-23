@@ -919,7 +919,7 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 
 	/* perf buffer already created */
 	if (bcc->pb != NULL)
-		goto opened;
+		return 0;
 
 	/* create perf buffer */
 	struct perf_event_attr perf_attr = {
@@ -951,10 +951,6 @@ gtp_capture_start(struct gtp_capture_entry *e, struct gtp_bpf_prog *p,
 	bcc->missed_events = 0;
 	bcc->last_missed_events = 0;
 
- opened:
-	if (e->opened_cb != NULL)
-		e->opened_cb(e->cb_ud, e);
-
 	return 0;
 
  err:
@@ -981,8 +977,6 @@ gtp_capture_stop(struct gtp_capture_entry *e)
 		bcc->ae[e->entry_id - 1] = NULL;
 		--bcc->ae_n;
 		e->flags |= GTP_CAPTURE_FL_NEED_BPF_UPDATE;
-		if (e->closed_cb != NULL)
-			e->closed_cb(e->cb_ud, e);
 	}
 	e->bcc = NULL;
 

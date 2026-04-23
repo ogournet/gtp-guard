@@ -456,17 +456,16 @@ EOF
 
 layout=combined
 with_cgn=no
-while getopts "a:l:c:t:" opt; do
-    case $opt in
-	a) action="$OPTARG" ;;
-	l) layout="$OPTARG" ;;
-	c) with_cgn="$OPTARG" ;;
-	t) test_id="$OPTARG" ;;
+action=setup
+while [ $# -gt 0 ]; do
+    case "$1" in
+	-a) action="$2"; shift 2 ;;
+	-l) layout="$2"; shift 2 ;;
+	-c) with_cgn="$2"; shift 2 ;;
+	-t) test_id="$2"; shift 2 ;;
+	*) action=$1; shift ;;
     esac
 done
-
-shift $((OPTIND - 1))
-action=${1:setup}
 
 case $action in
     clean)
