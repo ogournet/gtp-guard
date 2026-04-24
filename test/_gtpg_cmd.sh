@@ -96,12 +96,7 @@ start_gtpguard() {
 	fi
     fi
 
-    bin/gtp-guard \
-	--dump-conf \
-	--dont-fork \
-	--log-console \
-	--log-detail \
-	-f test/conf/minimal.conf &
+    bin/gtp-guard -d -f test/conf/minimal.conf &
     gtpguard_pid=$!
     if [ $? -ne 0 ]; then
 	fail "failed to start gtp-guard"
