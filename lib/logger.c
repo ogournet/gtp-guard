@@ -16,57 +16,136 @@
  *              either version 3.0 of the License, or (at your option) any later
  *              version.
  *
- * Copyright (C) 2023-2025 Alexandre Cassen, <acassen@gmail.com>
+ * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
 #include <stdlib.h>
-#include <syslog.h>
-#include <stdio.h>
 #include <stdarg.h>
-#include <stdbool.h>
 #include <string.h>
+#include <time.h>
 
-/* Boolean flag - send messages to console instead of syslog */
-static bool log_console = false;
+#include "logger.h"
+#include "utils.h"
+
+
+/* ANSI colors per priority */
+static const char *priority_colors[] = {
+	[LOG_EMERG]	= "\033[1;41m",	/* bold on red bg */
+	[LOG_ALERT]	= "\033[1;31m",	/* bold red */
+	[LOG_CRIT]	= "\033[1;31m",	/* bold red */
+	[LOG_ERR]	= "\033[31m",	/* red */
+	[LOG_WARNING]	= "\033[33m",	/* yellow */
+	[LOG_NOTICE]	= "\033[36m",	/* cyan */
+	[LOG_INFO]	= "\033[2m",	/* dim */
+	[LOG_DEBUG]	= "\033[0m",	/* default */
+};
+
+static struct log_options log_opts;
 
 void
-enable_console_log(void)
+log_set_options(const struct log_options *opts)
 {
-	log_console = true;
+	log_opts = *opts;
 }
+
+void
+log_vprintf(const struct log_ctx *ctx, int priority, const char *fmt, va_list ap)
+{
+	enum log_timestamp ts_mode = LOG_TS_NONE;
+	char buf[256];
+	char *p = buf;
+	va_list ap_cp;
+	int off = 0, n;
+
+	if (priority < 0 || priority > LOG_DEBUG)
+		priority = LOG_DEBUG;
+	if (priority == LOG_DEBUG && !log_opts.debug)
+		return;
+
+	if (log_opts.sd_prefix) {
+		/* systemd journal prefix <priority> */
+		off += scnprintf(buf + off, sizeof(buf) - off, "<%d>", priority);
+	} else if (log_opts.color) {
+		/* color start */
+		off += scnprintf(buf + off, sizeof(buf) - off, "%s",
+				 priority_colors[priority]);
+	}
+
+	/* timestamp — per-context override, fallback to global */
+	if (!log_opts.sd_prefix &&
+	    (ts_mode = ctx ? ctx->timestamp : log_opts.timestamp) != LOG_TS_NONE) {
+		struct timespec ts;
+		struct tm tm;
+
+		clock_gettime(CLOCK_REALTIME, &ts);
+		localtime_r(&ts.tv_sec, &tm);
+
+		if (ts_mode == LOG_TS_LONG)
+			off += scnprintf(buf + off, sizeof(buf) - off,
+					 "%04d-%02d-%02d",
+					 tm.tm_year + 1900, tm.tm_mon + 1,
+					 tm.tm_mday);
+		off += scnprintf(buf + off, sizeof(buf) - off,
+				 "%02d:%02d:%02d.%03ld",
+				 tm.tm_hour, tm.tm_min, tm.tm_sec,
+				 ts.tv_nsec / 1000000);
+	}
+
+	/* module prefix */
+	if (ctx && *ctx->prefix)
+		off += scnprintf(buf + off, sizeof(buf) - off, "%s[%s]",
+				 ts_mode != LOG_TS_NONE ? " " : "", ctx->prefix);
+
+	/* color reset */
+	if (log_opts.color)
+		off += scnprintf(buf + off, sizeof(buf) - off, "\033[0m");
+
+	if (ts_mode != LOG_TS_NONE || (ctx && *ctx->prefix))
+		buf[off++] = ' ';
+
+	/* print message.  */
+	va_copy(ap_cp, ap);
+	n = vsnprintf(buf + off, sizeof(buf) - off, fmt, ap);
+	if (off + n >= (int)sizeof(buf) - 1) {
+		/* long message. truncate if going to systemd-log */
+		if (!log_opts.sd_prefix &&
+		    (p = malloc(off + n + 2)) != NULL) {
+			memcpy(p, buf, off);
+			off += vsnprintf(p + off, n + 1, fmt, ap_cp);
+		} else {
+			off = sizeof(buf) - 1;
+		}
+	} else {
+		off += n;
+	}
+	va_end(ap_cp);
+
+	/* add trailing '\n' if there is none */
+	if (off > 0 && p[off - 1] != '\n')
+		p[off++] = '\n';
+
+	fwrite(p, 1, off, stderr);
+
+	if (p != buf)
+		free(p);
+
+}
+
+void
+log_printf(const struct log_ctx *ctx, int priority, const char *fmt, ...)
+{
+	va_list args;
+
+	va_start(args, fmt);
+	log_vprintf(ctx, priority, fmt, args);
+	va_end(args);
+}
+
 
 void
 log_message_va(const int priority, const char *fmt, va_list args)
 {
-	char buf[512];
-	int n;
-
-	if (log_console) {
-		va_list args_cp;
-		char *p = NULL;
-
-		va_copy(args_cp, args);
-		n = vsnprintf(buf, sizeof (buf), fmt, args);
-
-		/* output was truncated, we want full output on stderr */
-		if (n >= sizeof (buf)) {
-			p = malloc(n + 2);
-			if (!p)
-				return;
-			n = vsnprintf(p, n + 1, fmt, args_cp);
-		} else {
-			p = buf;
-		}
-		/* add trailing '\n' if there is none */
-		if (n > 0 && p[n - 1] == '\n')
-			p[n - 1] = 0;
-		fprintf(stderr, "%s\n", p);
-		if (p != buf)
-			free(p);
-	} else {
-		vsnprintf(buf, sizeof (buf), fmt, args);
-		syslog(priority, "%s", buf);
-	}
+	log_vprintf(NULL, priority, fmt, args);
 }
 
 void
@@ -75,21 +154,6 @@ log_message(const int priority, const char *fmt, ...)
 	va_list args;
 
 	va_start(args, fmt);
-	log_message_va(priority, fmt, args);
-	va_end(args);
-}
-
-void
-conf_write(FILE *fp, const char *fmt, ...)
-{
-	va_list args;
-
-	va_start(args, fmt);
-	if (fp) {
-		vfprintf(fp, fmt, args);
-		fprintf(fp, "\n");
-	} else
-		log_message_va(LOG_INFO, fmt, args);
-
+	log_vprintf(NULL, priority, fmt, args);
 	va_end(args);
 }

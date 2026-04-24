@@ -252,7 +252,6 @@ main(int argc, char **argv)
 	int ret = 0;
 
 	srand(time(NULL));
-	enable_console_log();
 	master = thread_make_master(false);
 
 	if (argc > 1)

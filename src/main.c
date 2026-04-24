@@ -42,22 +42,18 @@
 #include "libbpf.h"
 #include "main.h"
 
-
-/* Log facility table */
-struct {
-	int facility;
-} LOG_FACILITY[LOG_FACILITY_MAX + 1] = {
-	{LOG_LOCAL0}, {LOG_LOCAL1}, {LOG_LOCAL2}, {LOG_LOCAL3},
-	{LOG_LOCAL4}, {LOG_LOCAL5}, {LOG_LOCAL6}, {LOG_LOCAL7}
+/* local variables */
+static char *pid_file = PROG_PID_FILE;
+static bool daemonize = true;
+static struct log_options log_opt = {
+	.timestamp = LOG_TS_SHORT,
 };
-
-static char *__prog_pid_file = PROG_PID_FILE;
 
 /* Daemon stop sequence */
 static void
 stop_gtp(void)
 {
-	syslog(LOG_INFO, "Stopping " VERSION_STRING "\n");
+	log_message(LOG_INFO, "Stopping " VERSION_STRING);
 
 	/* Just cleanup memory & exit */
 	vty_terminate();
@@ -70,7 +66,7 @@ stop_gtp(void)
 	memory_free_final("gtp-guard process");
 #endif
 	closelog();
-	pidfile_rm(__prog_pid_file);
+	pidfile_rm(pid_file);
 	exit(EXIT_SUCCESS);
 }
 
@@ -125,10 +121,10 @@ usage(const char *prog)
 	fprintf(stderr,
 		"\nUsage:\n"
 		"  %s\n"
-		"  %s -n\n"
 		"  %s -f gtp-guard.conf\n"
-		"  %s -d\n"
-		"  %s -h\n" "  %s -v\n\n", prog, prog, prog, prog, prog, prog);
+		"  %s -d -t long -b\n"
+		"  %s -h\n"
+		"  %s -v\n\n", prog, prog, prog, prog, prog);
 	fprintf(stderr,
 		"Commands:\n"
 		"Either long or short options are allowed.\n"
@@ -137,13 +133,11 @@ usage(const char *prog)
 		"  %s --use-file           -f    Use the specified configuration file.\n"
 		"                                Default is /etc/gtp-guard/gtp-guard.conf.\n"
 		"  %s --enable-bpf-debug   -b    Enable verbose libbpf log debug.\n"
-		"  %s --dump-conf          -d    Dump the configuration data.\n"
-		"  %s --log-console        -l    Log message to stderr.\n"
-		"  %s --log-detail         -D    Detailed log messages.\n"
-		"  %s --log-facility       -S    0-7 Set syslog facility to LOG_LOCAL[0-7]. (default=LOG_DAEMON)\n"
+		"  %s --log-debug          -d    Enable LOG_DEBUG.\n"
+		"  %s --log-ts-fmt         -t    Console log timestamp fmt [short,long,none].\n"
 		"  %s --help               -h    Display this short inlined help screen.\n"
 		"  %s --version            -v    Display the version number\n",
-		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+		prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 /* Command line parser */
@@ -154,11 +148,8 @@ parse_cmdline(int argc, char **argv)
 	bool bad_option = false;
 
 	struct option long_options[] = {
-		{"log-console",		no_argument,		NULL, 'l'},
-		{"log-detail",		no_argument,		NULL, 'D'},
-		{"log-facility",	required_argument,	NULL, 'S'},
-		{"dont-fork",		no_argument,		NULL, 'n'},
-		{"dump-conf",		no_argument,		NULL, 'd'},
+		{"log-debug",		no_argument,		NULL, 'd'},
+		{"log-ts-fmt",		required_argument,	NULL, 't'},
 		{"enable-bpf-debug",	no_argument,		NULL, 'b'},
 		{"use-file",		required_argument,	NULL, 'f'},
 		{"vty-shell",		optional_argument,	NULL, 'V'},
@@ -173,9 +164,10 @@ parse_cmdline(int argc, char **argv)
 		exit(gtp_vtysh(VTY_UNIX_PATH));
 
 	curind = optind;
-	while (longindex = -1, (c = getopt_long(argc, argv, ":vhlndDbf:V::S:"
-						, long_options, &longindex)) != -1) {
-		if (longindex >= 0 && long_options[longindex].has_arg == required_argument &&
+	while (longindex = -1, (c = getopt_long(argc, argv, ":dt:bf:V::vh",
+						long_options, &longindex)) != -1) {
+		if (longindex >= 0 &&
+		    long_options[longindex].has_arg == required_argument &&
 		    optarg && !optarg[0]) {
 			c = ':';
 			optarg = NULL;
@@ -191,24 +183,23 @@ parse_cmdline(int argc, char **argv)
 			usage(argv[0]);
 			exit(EXIT_SUCCESS);
 			break;
-		case 'l':
-			enable_console_log();
-			debug |= 1;
-			break;
 		case 'n':
-			debug |= 2;
+			daemonize = false;
+			break;
+		case 't':
+			if (!strcmp(optarg, "short"))
+				log_opt.timestamp = LOG_TS_SHORT;
+			else if (!strcmp(optarg, "long"))
+				log_opt.timestamp = LOG_TS_LONG;
+			else
+				log_opt.timestamp = LOG_TS_NONE;
 			break;
 		case 'd':
-			debug |= 4;
-			break;
-		case 'D':
 			debug |= 8;
+			log_opt.debug = true;
 			break;
 		case 'b':
 			debug |= 16;
-			break;
-		case 'S':
-			log_facility = LOG_FACILITY[atoi(optarg)].facility;
 			break;
 		case 'f':
 			conf_file = optarg;
@@ -232,6 +223,7 @@ parse_cmdline(int argc, char **argv)
 			bad_option = true;
 			break;
 		default:
+			fprintf(stderr, "Unexpected option: '%c'\n", c);
 			exit(EXIT_FAILURE);
 			break;
 		}
@@ -265,24 +257,28 @@ main(int argc, char **argv)
 	 */
 	parse_cmdline(argc, argv);
 
-	openlog(PROG, LOG_PID | ((debug & 1) ? LOG_PERROR : 0), log_facility);
-	syslog(LOG_INFO, "Starting " VERSION_STRING "\n");
+	/* Init logger library */
+	log_opt.sd_prefix = !isatty(STDERR_FILENO);
+	log_opt.color = !log_opt.sd_prefix && !getenv("NO_COLOR");
+	log_set_options(&log_opt);
+
+	log_info("Starting " VERSION_STRING);
 
 	if (getenv("GTP_GUARD_PID_FILE"))
-		__prog_pid_file = getenv("GTP_GUARD_PID_FILE");
+		pid_file = getenv("GTP_GUARD_PID_FILE");
 
 	/* Check if gtp-guard is already running */
-	if (process_running(__prog_pid_file)) {
-		syslog(LOG_INFO, "daemon is already running");
+	if (process_running(pid_file)) {
+		log_message(LOG_INFO, "daemon is already running");
 		goto end;
 	}
 
 	/* daemonize process */
-	if (!(debug & 2))
+	if (daemonize)
 		xdaemon(0, 0, 0);
 
 	/* write the pidfile */
-	if (!pidfile_write(__prog_pid_file, getpid()))
+	if (!pidfile_write(pid_file, getpid()))
 		goto end;
 
 	/* Increase maximum fd limit */
@@ -309,7 +305,7 @@ main(int argc, char **argv)
 	 * Reached when terminate signal catched.
 	 * finally return from system
 	 */
-      end:
+ end:
 	closelog();
 	exit(EXIT_SUCCESS);
 }
