@@ -8,7 +8,6 @@ lib_src = files(
   'ethtool.c',
   'buffer.c',
   'command.c',
-  'daemon.c',
   'disk.c',
   'inet_server.c',
   'inet_utils.c',

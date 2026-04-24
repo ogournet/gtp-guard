@@ -37,14 +37,12 @@
 #include "utils.h"
 #include "logger.h"
 #include "memory.h"
-#include "daemon.h"
 #include "config.h"
 #include "libbpf.h"
 #include "main.h"
 
 /* local variables */
 static char *pid_file = PROG_PID_FILE;
-static bool daemonize = true;
 static struct log_options log_opt = {
 	.timestamp = LOG_TS_SHORT,
 };
@@ -128,7 +126,6 @@ usage(const char *prog)
 	fprintf(stderr,
 		"Commands:\n"
 		"Either long or short options are allowed.\n"
-		"  %s --dont-fork          -n    Dont fork the daemon process.\n"
 		"  %s --vty-shell/--cli    -V    Open VTY Shell with local daemon.\n"
 		"  %s --use-file           -f    Use the specified configuration file.\n"
 		"                                Default is /etc/gtp-guard/gtp-guard.conf.\n"
@@ -137,7 +134,7 @@ usage(const char *prog)
 		"  %s --log-ts-fmt         -t    Console log timestamp fmt [short,long,none].\n"
 		"  %s --help               -h    Display this short inlined help screen.\n"
 		"  %s --version            -v    Display the version number\n",
-		prog, prog, prog, prog, prog, prog, prog, prog);
+		prog, prog, prog, prog, prog, prog, prog);
 }
 
 /* Command line parser */
@@ -182,9 +179,6 @@ parse_cmdline(int argc, char **argv)
 		case 'h':
 			usage(argv[0]);
 			exit(EXIT_SUCCESS);
-			break;
-		case 'n':
-			daemonize = false;
 			break;
 		case 't':
 			if (!strcmp(optarg, "short"))
@@ -272,10 +266,6 @@ main(int argc, char **argv)
 		log_message(LOG_INFO, "daemon is already running");
 		goto end;
 	}
-
-	/* daemonize process */
-	if (daemonize)
-		xdaemon(0, 0, 0);
 
 	/* write the pidfile */
 	if (!pidfile_write(pid_file, getpid()))

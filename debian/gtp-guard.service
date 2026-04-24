@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 LimitCORE=infinity
-ExecStart=/usr/sbin/gtp-guard -n -d
+ExecStart=/usr/sbin/gtp-guard
 Restart=always
 
 [Install]
