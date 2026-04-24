@@ -32,13 +32,13 @@
 #include "ethtool.h"
 #include "memory.h"
 #include "bitops.h"
-#include "logger.h"
 #include "utils.h"
 
 
 /* Extern data */
 extern struct data *daemon_data;
 
+/* Local data */
 struct gtp_interface_event_storage
 {
 	gtp_interface_event_cb_t	cb;
@@ -284,7 +284,7 @@ gtp_interface_start(struct gtp_interface *iface)
 	/* run without bpf program */
 	if (!p) {
 		__set_bit(GTP_INTERFACE_FL_RUNNING_BIT, &iface->flags);
-		log_message(LOG_INFO, "gtp_interface: started '%s'", iface->ifname);
+		logc_info(iface->l, "started");
 		_trigger_on_change(iface, GTP_INTERFACE_EV_PRG_START);
 		return 0;
 	}
@@ -293,8 +293,7 @@ gtp_interface_start(struct gtp_interface *iface)
 	if (gtp_bpf_prog_attach(p, iface) < 0)
 		return -1;
 
-	log_message(LOG_INFO, "gtp_interface: started '%s' with bpf-program:'%s'"
-			    , iface->ifname, p->name);
+	logc_info(iface->l, "started with bpf-program:'%s'", p->name);
 
 	/* Metrics init */
 	err = 0;
@@ -308,8 +307,7 @@ gtp_interface_start(struct gtp_interface *iface)
 		err = (err) ? : gtp_bpf_rt_metrics_init(p,
 							iface->ifindex, IF_METRICS_IPIP);
 	if (err) {
-		log_message(LOG_WARNING, "error initializing metrics for interface:'%s'"
-				       , iface->ifname);
+		logc_warn(iface->l, "error initializing metrics");
 	}
 
 	/* allocate per-queue stats once; queue count is a hardware property
@@ -339,22 +337,22 @@ gtp_interface_stop(struct gtp_interface *iface)
 	    !__test_bit(GTP_INTERFACE_FL_RUNNING_BIT, &iface->flags))
 		return;
 
-	log_message(LOG_DEBUG, "gtp_interface: stopping '%s'", iface->ifname);
+	logc_debug(iface->l, "stopping");
 
 	__clear_bit(GTP_INTERFACE_FL_RUNNING_BIT, &iface->flags);
 	_trigger_on_change(iface, GTP_INTERFACE_EV_PRG_STOP);
 
 	/* no bpf-program attached */
 	if (iface->bpf_prog == NULL) {
-		log_message(LOG_INFO, "gtp_interface: stopped '%s'", iface->ifname);
+		logc_info(iface->l, "stopped");
 		return;
 	}
 
 	/* stop bpf-program */
 	gtp_bpf_prog_detach(iface->bpf_prog, iface);
 
-	log_message(LOG_INFO, "gtp_interface: stopped '%s', detached from "
-		    "bpf-program:'%s'", iface->ifname, iface->bpf_prog->name);
+	logc_info(iface->l, "stopped, detached from "
+		    "bpf-program:'%s'", iface->bpf_prog->name);
 }
 
 /* add 'slave' as a sub-interface of 'master' */
@@ -405,12 +403,13 @@ gtp_interface_alloc(const char *name, int ifindex)
 		return NULL;
 
 	snprintf(iface->ifname, sizeof (iface->ifname), "%s", name);
+	snprintf(iface->l.prefix, sizeof (iface->l.prefix), "iface/%s", name);
 	iface->ifindex = ifindex;
 	INIT_LIST_HEAD(&iface->flow_steering_list);
 	__set_bit(GTP_INTERFACE_FL_SHUTDOWN_BIT, &iface->flags);
 	list_add_tail(&iface->next, &daemon_data->interfaces);
 
-	log_message(LOG_INFO, "gtp_interface: adding '%s'", name);
+	logc_info(iface->l, "adding");
 
 	return iface;
 }
@@ -423,7 +422,7 @@ gtp_interface_destroy(struct gtp_interface *iface)
 	gtp_interface_stop(iface);
 	gtp_interface_trigger_event(iface, GTP_INTERFACE_EV_DESTROYING, NULL);
 
-	log_message(LOG_INFO, "gtp_interface: deleted '%s'", iface->ifname);
+	logc_info(iface->l, "deleted");
 
 	list_for_each_entry(if_child, &daemon_data->interfaces, next) {
 		if (if_child->link_iface == iface)

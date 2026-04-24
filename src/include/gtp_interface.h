@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <netinet/if_ether.h>
 #include "addr.h"
+#include "logger.h"
 #include "gtp_bpf_prog.h"
 #include "ethtool.h"
 
@@ -129,6 +130,7 @@ struct gtp_interface {
 	/* flow-steering policies bound to this interface */
 	struct list_head		flow_steering_list;
 
+	struct log_ctx			l;
 	struct list_head		next;
 	unsigned long			flags;
 };
