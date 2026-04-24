@@ -541,7 +541,6 @@ main(int argc, char **argv)
 	/* global initializations */
 	daemon_data = malloc(sizeof (*daemon_data));
 	INIT_LIST_HEAD(&daemon_data->cgn);
-	enable_console_log();
 
 	switch (test_id) {
 	case 1:
