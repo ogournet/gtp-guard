@@ -145,9 +145,6 @@ inet_server_udp_async_recv_thread(struct thread *t)
 	sockaddr_t addr_from;
 	ssize_t nbytes;
 
-	if (t->type == THREAD_READ_TIMEOUT)
-		goto next_read;
-
 	if (s->pbuff == NULL)
 		s->pbuff = pkt_buffer_alloc(DEFAULT_PKT_BUFFER_SIZE);
 
@@ -177,7 +174,7 @@ inet_server_udp_async_recv_thread(struct thread *t)
 
 next_read:
 	s->r_thread = thread_add_read(t->master, inet_server_udp_async_recv_thread
-					       , s, s->fd, INET_SRV_TIMEOUT, 0);
+					       , s, s->fd, TIMER_DISABLED, 0);
 }
 
 
@@ -589,7 +586,7 @@ inet_server_start(struct inet_server *s, struct thread_master *m)
 	switch (s->type) {
 	case SOCK_DGRAM:
 		s->r_thread = thread_add_read(m, inet_server_udp_async_recv_thread
-					       , s, s->fd, INET_SRV_TIMEOUT, 0);
+					       , s, s->fd, TIMER_DISABLED, 0);
 		break;
 	case SOCK_STREAM:
 		return inet_server_worker_launch(s);

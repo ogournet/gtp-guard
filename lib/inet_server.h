@@ -37,7 +37,6 @@
 #define INET_SOCKBUF_SIZE		(64 * 1024)
 
 /* Default TCP timer */
-#define INET_SRV_TIMEOUT	(3 * TIMER_HZ)
 #define INET_SRV_LISTENER_TIMER	(3 * TIMER_HZ)
 #define INET_SRV_TIMER		(3 * TIMER_HZ)
 
