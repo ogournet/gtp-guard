@@ -49,7 +49,7 @@ struct upf_egress_key {
 	(UPF_FWD_FL_ACT_CREATE_OUTER_HEADER |	\
 	 UPF_FWD_FL_ACT_REMOVE_OUTER_HEADER)
 
-/* rules set by userapp. bpf doesn't write into. */
+/* rules set by userapp. */
 struct upf_fwd_rule {
 	__be32		gtpu_remote_teid;
 	__be32		gtpu_remote_addr;
@@ -69,6 +69,13 @@ struct upf_fwd_rule {
 	__u64		seid;
 	struct capture_bpf_entry capture;
 
+	/* metrics. pkt counters can wrap, it's only metric */
+	__u32		drop_v4_pkt;
+	__u32		drop_v6_pkt;
+	__u32		fwd_v4_pkt;
+	__u32		fwd_v6_pkt;
+	__u64		fwd_v4_bytes;
+	__u64		fwd_v6_bytes;
 }  __attribute__((packed));
 
 
@@ -114,12 +121,12 @@ struct upf_urr {
 	__u64		dl_pkt;
 
 	/* cache line 2 (datapath, hot) 64B */
-	__u64		dl_drop_pkt;
+	__u64		_unused_1;
 	__u64		dl_th_next;
 	__u64		dl_qu_next;
 	__u64		ul_bytes;
 	__u64		ul_pkt;
-	__u64		ul_drop_pkt;
+	__u64		_unused_2;
 	__u64		ul_th_next;
 	__u64		ul_qu_next;
 
@@ -191,10 +198,8 @@ struct upf_urr_report_data {
 
 	__u64		dl_bytes;
 	__u64		dl_pkt;
-	__u64		dl_drop_pkt;
 	__u64		ul_bytes;
 	__u64		ul_pkt;
-	__u64		ul_drop_pkt;
 	__u32		report_first_pkt;	/* first pkt seen */
 	__u32		report_last_pkt;	/* last pkt seen */
 	__u32		duration;		/* total duraction (wrt inactive time) */

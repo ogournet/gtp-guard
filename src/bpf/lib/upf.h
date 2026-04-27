@@ -81,7 +81,7 @@ upf_li_pkt(struct xdp_md *ctx, struct upf_fwd_rule *u, __u16 offset, __u16 dir_f
  */
 
 static __always_inline int
-_encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
+_encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, int v6)
 {
 	struct upf_urr *uu;
 	struct iphdr *iph;
@@ -160,6 +160,13 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
 	d->dst_addr.ip4 = u->gtpu_remote_addr;
 
 	/* metrics */
+	if (v6) {
+		++u->fwd_v6_pkt;
+		u->fwd_v6_bytes += pkt_len;
+	} else {
+		++u->fwd_v4_pkt;
+		u->fwd_v4_bytes += pkt_len;
+	}
 	++uu->dl_pkt;
 	uu->dl_bytes += pkt_len;
 
@@ -176,7 +183,10 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u)
 	return XDP_IFR_FORWARD;
 
  drop:
-	++uu->dl_drop_pkt;
+	if (v6)
+		++u->drop_v6_pkt;
+	else
+		++u->drop_v4_pkt;
 
 	return XDP_DROP;
 }
@@ -204,7 +214,7 @@ upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
 	if (u == NULL)
 		return XDP_DROP;
 
-	return _encap_gtpu(ctx, d, u);
+	return _encap_gtpu(ctx, d, u, 1);
 }
 
 /*
@@ -233,7 +243,7 @@ upf_handle_pub(struct xdp_md *ctx, struct if_rule_data *d)
 	if (u == NULL)
 		return XDP_DROP;
 
-	return _encap_gtpu(ctx, d, u);
+	return _encap_gtpu(ctx, d, u, 0);
 }
 
 
@@ -246,7 +256,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	struct upf_egress_key k;
 	struct upf_fwd_rule *u;
 	struct upf_urr *uu;
-	struct iphdr *ip4h_inner;
+	struct iphdr *ip4h_inner = NULL;
 	struct ipv6hdr *ip6h_inner;
 	struct gtphdr *gtph;
 	int adjust_sz, pkt_len;
@@ -314,6 +324,8 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 			   bpf_ntohl(gtph->teid));
 
 		/* metrics */
+		++u->fwd_v4_pkt;
+		u->fwd_v4_bytes += pkt_len;
 		++uu->ul_pkt;
 		uu->ul_bytes += pkt_len;
 
@@ -328,6 +340,8 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	switch (ip4h_inner->version) {
 	case 4:
 		d->dst_addr.ip4 = ip4h_inner->daddr;
+		++u->fwd_v4_pkt;
+		u->fwd_v4_bytes += pkt_len;
 		break;
 	case 6:
 		ip6h_inner = (struct ipv6hdr *)ip4h_inner;
@@ -342,6 +356,8 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		    IN6_IS_ADDR_LINKLOCAL(&ip6h_inner->saddr))
 			return XDP_PASS;
 
+		++u->fwd_v6_pkt;
+		u->fwd_v6_bytes += pkt_len;
 		break;
 	default:
 		goto drop;
@@ -356,7 +372,6 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	capture_xdp_to_userspc_out(d, &u->capture, BPF_CAPTURE_EFL_OUTPUT |
 				   BPF_CAPTURE_EFL_CORE);
 
-	/* metrics */
 	++uu->ul_pkt;
 	uu->ul_bytes += pkt_len - adjust_sz;
 
@@ -368,7 +383,11 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	return XDP_IFR_FORWARD;
 
  drop:
-	++uu->ul_drop_pkt;
+	ip4h_inner = (struct iphdr *)(gtph + 1);
+	if (ip4h_inner + 1 < data_end && ip4h_inner->version == 6)
+		++u->drop_v6_pkt;
+	else
+		++u->drop_v4_pkt;
 
 	return XDP_DROP;
 }

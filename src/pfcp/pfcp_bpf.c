@@ -278,7 +278,6 @@ pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 	struct pfcp_bpf_data *bd = gtp_bpf_prog_tpl_data_get(p, "upf");
 	struct upf_egress_key ek = {};
 	struct upf_ingress_key ik = {};
-	struct upf_urr c = {};
 	struct upf_fwd_rule rule;
 	int err;
 
@@ -293,13 +292,13 @@ pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 				   , VTY_NEWLINE);
 			return -1;
 		}
-		bpf_map__lookup_elem(bd->upf_urr,
-				     &rule.urr_idx, sizeof(rule.urr_idx),
-				     &c, sizeof(c), 0);
 
-		vty_out(vty, "            packets:%lld bytes:%lld\n"
-			     "            drop:%lld\n"
-			   , c.ul_pkt, c.ul_bytes, c.ul_drop_pkt);
+		vty_out(vty, "            ipv4 packets:%d bytes:%lld\n"
+			     "            ipv6 packets:%d bytes:%lld\n"
+			     "            drop: v4:%d v6:%d\n"
+			   , rule.fwd_v4_pkt, rule.fwd_v4_bytes
+			   , rule.fwd_v6_pkt, rule.fwd_v6_bytes
+			   , rule.drop_v4_pkt, rule.drop_v6_pkt);
 		return 0;
 	}
 
@@ -315,12 +314,9 @@ pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 			vty_out(vty, "              IPv4 - no data-plane ?!!%s"
 				   , VTY_NEWLINE);
 		} else {
-			bpf_map__lookup_elem(bd->upf_urr,
-					     &rule.urr_idx, sizeof(rule.urr_idx),
-					     &c, sizeof(c), 0);
-			vty_out(vty, "              IPv4 - packets:%lld bytes:%lld\n"
-				     "                     drop:%lld\n"
-				   , c.dl_pkt, c.dl_bytes, c.dl_drop_pkt);
+			vty_out(vty, "              IPv4 - packets:%d bytes:%lld\n"
+				     "                     drop:%d\n"
+				   , rule.fwd_v4_pkt, rule.fwd_v4_bytes, rule.drop_v4_pkt);
 		}
 	}
 
@@ -333,12 +329,9 @@ pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 			vty_out(vty, "              IPv6 - no data-plane ?!!%s"
 				   , VTY_NEWLINE);
 		} else {
-			bpf_map__lookup_elem(bd->upf_urr,
-					     &rule.urr_idx, sizeof(rule.urr_idx),
-					     &c, sizeof(c), 0);
-			vty_out(vty, "              IPv6 - packets:%lld bytes:%lld\n"
-				     "                     drop:%lld\n"
-				   , c.dl_pkt, c.dl_bytes, c.dl_drop_pkt);
+			vty_out(vty, "              IPv6 - packets:%d bytes:%lld\n"
+				     "                     drop:%d\n"
+				   , rule.fwd_v6_pkt, rule.fwd_v6_bytes, rule.drop_v6_pkt);
 		}
 	}
 

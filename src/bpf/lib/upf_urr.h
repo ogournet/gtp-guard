@@ -35,10 +35,8 @@ _urr_send_report(struct upf_urr *uu, __u16 trigger_fl, __u16 request_id)
 	ur.r.request_id = request_id;
 	ur.dl_bytes = uu->dl_bytes;
 	ur.dl_pkt = uu->dl_pkt;
-	ur.dl_drop_pkt = uu->dl_drop_pkt;
 	ur.ul_bytes = uu->ul_bytes;
 	ur.ul_pkt = uu->ul_pkt;
-	ur.ul_drop_pkt = uu->ul_drop_pkt;
 	ur.report_first_pkt = ((__u64)uu->report_first_pkt << 24) / NSEC_PER_SEC;
 	ur.report_last_pkt = ((__u64)uu->report_last_pkt << 24) / NSEC_PER_SEC;
 	ur.duration = uu->duration ?
@@ -304,12 +302,10 @@ int urr_ctl(struct upf_urr_cmd_req *c)
 		/* Create URR: Reset all counters */
 		uu->total_th_next = uu->total_th;
 		uu->total_qu_next = uu->total_qu;
-		uu->ul_drop_pkt = 0;
 		uu->ul_pkt = 0;
 		uu->ul_bytes = 0;
 		uu->ul_th_next = uu->ul_th;
 		uu->ul_qu_next = uu->ul_qu;
-		uu->dl_drop_pkt = 0;
 		uu->dl_pkt = 0;
 		uu->dl_bytes = 0;
 		uu->dl_th_next = uu->dl_th;
