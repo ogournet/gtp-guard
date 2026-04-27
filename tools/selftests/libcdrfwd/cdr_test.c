@@ -10,6 +10,7 @@
  * Copyright (C) 2011, 2018, 2024, 2025 Olivier Gournet, <gournet.olivier@gmail.com>
  */
 
+#include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
 #include <assert.h>
@@ -18,7 +19,6 @@
 #include "tools.h"
 #include "signals.h"
 #include "cdr_fwd-priv.h"
-#include "cdr_avp.h"
 
 
 /* globals */
