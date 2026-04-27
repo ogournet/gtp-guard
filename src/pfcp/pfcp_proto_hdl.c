@@ -192,6 +192,9 @@ pfcp_assoc_setup_request_send(struct thread *t)
 	struct pkt *p;
 	int err = 0, i;
 
+	if (srv->ctx == NULL)
+		return;
+
 	p = __pkt_queue_get(&srv->pkt_q);
 	if (!p) {
 		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server %s"
