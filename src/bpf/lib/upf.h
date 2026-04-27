@@ -230,17 +230,8 @@ upf_handle_pub(struct xdp_md *ctx, struct if_rule_data *d)
 	k.flags = UE_IPV4;
 	k.ue_ip4 = iph->daddr;
 	u = bpf_map_lookup_elem(&user_ingress, &k);
-	if (u == NULL) {
-#ifdef UPF_N4_IN_DATAPATH
-		/* allow pfcp */
-		struct udphdr *udph = (void *)(iph) + iph->ihl * 4;
-		if (udph + 1 > data_end)
-			return XDP_DROP;
-		if (udph->dest == __constant_htons(8805))
-			return XDP_PASS;
-#endif
+	if (u == NULL)
 		return XDP_DROP;
-	}
 
 	return _encap_gtpu(ctx, d, u);
 }

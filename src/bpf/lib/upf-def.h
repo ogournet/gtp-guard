@@ -7,8 +7,6 @@
 
 //#define UPF_DEBUG
 
-#define UPF_N4_IN_DATAPATH
-
 #ifdef UPF_DEBUG
 # define UPF_DBG(Fmt, ...) bpf_printk(Fmt, ## __VA_ARGS__)
 #else
