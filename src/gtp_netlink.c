@@ -26,6 +26,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/if_link.h>
 #include <linux/if_ether.h>
+#include <linux/if_addr.h>
 #include <linux/if_tunnel.h>
 #include <linux/veth.h>
 
@@ -122,7 +123,7 @@ parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta, size_t len, unsign
 /* Parse Netlink message */
 int
 netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *, void *arg),
-		   struct nl_handle *nl, struct nlmsghdr *n, void *filter_arg, bool read_all)
+		   struct nl_handle *nl, void *filter_arg, bool read_all)
 {
 	ssize_t len;
 	int ret = 0;
@@ -277,6 +278,7 @@ netlink_open(struct nl_handle *nl, unsigned group, ...)
 	struct sockaddr_nl snl;
 	unsigned rcvbuf_sz = NL_DEFAULT_BUFSIZE;
 	va_list gp;
+	int set = 1;
 	int err = 0;
 
 	memset(nl, 0, sizeof (*nl));
@@ -298,6 +300,10 @@ netlink_open(struct nl_handle *nl, unsigned group, ...)
 		nl->fd = -1;
 		return -1;
 	}
+
+	err = setsockopt(nl->fd, SOL_NETLINK, NETLINK_GET_STRICT_CHK, &set, sizeof(set));
+	if (err)
+		log_message(LOG_INFO, "Cannot set NETLINK_GET_STRICT_CHK (%m)");
 
 	/* Join the requested groups */
 	va_start(gp, group);
@@ -590,9 +596,104 @@ kernel_netlink(struct thread *thread)
 	struct nl_handle *nl = THREAD_ARG(thread);
 
 	if (thread->type != THREAD_READ_TIMEOUT)
-		netlink_parse_info(netlink_filter, nl, NULL, NULL, true);
+		netlink_parse_info(netlink_filter, nl, NULL, true);
 
 	nl->thread = thread_add_read(master, kernel_netlink, nl, nl->fd, TIMER_NEVER, 0);
+}
+
+
+/*
+ *	Netlink Address lookup
+ */
+
+static int
+netlink_ifa_filter(__attribute__((unused)) struct sockaddr_nl *snl,
+		   struct nlmsghdr *h, void *arg)
+{
+	struct gtp_interface *iface = arg;
+	struct ifaddrmsg *ifa = NLMSG_DATA(h);
+	struct rtattr *tb[IFA_MAX + 1];
+	int len = h->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa));
+	sockaddr_t laddr, *ifladdr;
+	void *addr_ptr;
+	int i;
+
+	if (len < 0)
+		return -1;
+	if (h->nlmsg_type != RTM_NEWADDR ||
+	    ifa->ifa_scope != RT_SCOPE_UNIVERSE ||
+	    !(ifa->ifa_flags & IFA_F_PERMANENT))
+		return 0;
+
+	parse_rtattr(tb, IFA_MAX, IFA_RTA(ifa), len, 0);
+
+	if (tb[IFA_LOCAL])
+		addr_ptr = RTA_DATA(tb[IFA_LOCAL]);
+	else if (tb[IFA_ADDRESS])
+		addr_ptr = RTA_DATA(tb[IFA_ADDRESS]);
+	else
+		return 0;
+
+	if (ifa->ifa_family == AF_INET) {
+		sa_from_ip4(&laddr, *(uint32_t *)addr_ptr);
+		ifladdr = iface->local_addr4;
+	} else if (ifa->ifa_family == AF_INET6) {
+		sa_from_ip6_pfx(&laddr, addr_ptr, 16);
+		ifladdr = iface->local_addr6;
+	} else
+		return -1;
+
+	for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR; i++) {
+		if (!sa_len(&ifladdr[i])) {
+			sa_cpy(&ifladdr[i], &laddr);
+			break;
+		}
+	}
+	if (i == IF_RULE_MAX_LOCAL_ADDR)
+		logc_info(iface->l, "ignoring address from netlink: %s",
+			  sa_str(&laddr));
+
+	return 0;
+}
+
+
+static int
+netlink_ifa_request(struct nl_handle *nl, int ifindex)
+{
+	struct sockaddr_nl snl = { .nl_family = AF_NETLINK };
+	struct {
+		struct nlmsghdr nlh;
+		struct ifaddrmsg a;
+	} req = {
+		.nlh.nlmsg_len = NLMSG_LENGTH(sizeof req.a),
+		.nlh.nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST,
+		.nlh.nlmsg_type = RTM_GETADDR,
+		.nlh.nlmsg_pid = 0,
+		.nlh.nlmsg_seq = ++nl->seq,
+		.a.ifa_family = AF_UNSPEC,
+		.a.ifa_index = ifindex,
+	};
+	ssize_t status;
+
+	status = sendto(nl->fd, (void *) &req, sizeof (req), 0,
+			(struct sockaddr *) &snl, sizeof(snl));
+	if (status < 0) {
+		log_message(LOG_INFO, "Netlink: sendto() failed: %m");
+		return -1;
+	}
+
+	return 0;
+}
+
+
+static int
+netlink_ifa_get(struct gtp_interface *iface)
+{
+	if (netlink_ifa_request(&nl_cmd, iface->ifindex) < 0)
+		return -1;
+	netlink_parse_info(netlink_ifa_filter, &nl_cmd, iface, false);
+
+	return 0;
 }
 
 
@@ -641,7 +742,7 @@ netlink_if_get_ll_addr(struct gtp_interface *iface, struct rtattr *tb[])
 }
 
 static int
-netlink_if_request(struct nl_handle *nl, unsigned char family, uint16_t type, int ifindex, bool stats)
+netlink_if_request(struct nl_handle *nl, int ifindex, bool stats)
 {
 	ssize_t status;
 	struct sockaddr_nl snl = { .nl_family = AF_NETLINK };
@@ -652,10 +753,10 @@ netlink_if_request(struct nl_handle *nl, unsigned char family, uint16_t type, in
 	} req = {
 		.nlh.nlmsg_len = NLMSG_LENGTH(sizeof req.i),
 		.nlh.nlmsg_flags = (ifindex == 0 ? NLM_F_DUMP : 0) | NLM_F_REQUEST,
-		.nlh.nlmsg_type = type,
+		.nlh.nlmsg_type = RTM_GETLINK,
 		.nlh.nlmsg_pid = 0,
 		.nlh.nlmsg_seq = ++nl->seq,
-		.i.ifi_family = family,
+		.i.ifi_family = AF_PACKET,
 		.i.ifi_index = ifindex,
 	};
 	__u32 filt_mask = 0;
@@ -797,6 +898,9 @@ netlink_if_link_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct n
 			return ret;
 		}
 
+		/* get local ipv4 address(es)  */
+		netlink_ifa_get(iface);
+
 		ret = netlink_if_link_info(tb[IFLA_LINKINFO], iface);
 		if (ret == 1) {
 			/* IFLA_LINK point to physical interface (real device)
@@ -832,13 +936,13 @@ netlink_if_stats_update(__attribute__((unused)) struct thread *t)
 		}
 	}
 
-	err = netlink_if_request(&nl_cmd, AF_PACKET, RTM_GETLINK, 0, true);
+	err = netlink_if_request(&nl_cmd, 0, true);
 	if (err) {
 		netlink_close(&nl_cmd);
 		goto end;
 	}
 
-	netlink_parse_info(netlink_if_link_filter, &nl_cmd, NULL, (void *)0, false);
+	netlink_parse_info(netlink_if_link_filter, &nl_cmd, (void *)0, false);
  end:
 	nl_cmd.thread = thread_add_timer(master, netlink_if_stats_update
 					       , NULL, TIMER_HZ);
@@ -847,9 +951,10 @@ netlink_if_stats_update(__attribute__((unused)) struct thread *t)
 int
 gtp_netlink_if_lookup(int ifindex)
 {
-	if (netlink_if_request(&nl_cmd, AF_PACKET, RTM_GETLINK, ifindex, true) < 0)
+	if (netlink_if_request(&nl_cmd, ifindex, true) < 0)
 		return -1;
-	netlink_parse_info(netlink_if_link_filter, &nl_cmd, NULL, (void *)1, false);
+	netlink_parse_info(netlink_if_link_filter, &nl_cmd, (void *)1, false);
+
 	return 0;
 }
 
@@ -873,7 +978,8 @@ gtp_netlink_init(void)
 					 NULL, TIMER_HZ);
 
 	/* Register Kernel netlink reflector */
-	err = netlink_open(&nl_kernel, RTNLGRP_NEIGH, RTNLGRP_LINK, 0);
+	err = netlink_open(&nl_kernel, RTNLGRP_NEIGH, RTNLGRP_LINK,
+			   RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV6_IFADDR, 0);
 	if (err) {
 		log_message(LOG_INFO, "Error while registering Kernel netlink "
 			    "reflector channel");

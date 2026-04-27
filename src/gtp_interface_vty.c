@@ -197,6 +197,7 @@ gtp_interface_show(struct gtp_interface *iface, void *arg)
 	struct vty *vty = arg;
 	char addr_str[INET6_ADDRSTRLEN];
 	char addr2_str[INET6_ADDRSTRLEN];
+	int i;
 
 	vty_out(vty, "interface %s {%s%s }\n"
 		   , iface->ifname
@@ -235,6 +236,12 @@ gtp_interface_show(struct gtp_interface *iface, void *arg)
 						 sizeof (addr_str))
 			   , ETHER_BYTES(iface->direct_tx_hw_addr)
 			   , VTY_NEWLINE);
+	for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR; i++)
+		if (sa_len(&iface->local_addr4[i]))
+			vty_out(vty, " local-addr:%s\n", sa_str(&iface->local_addr4[i]));
+	for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR; i++)
+		if (sa_len(&iface->local_addr6[i]))
+			vty_out(vty, " local-addr:%s\n", sa_str(&iface->local_addr6[i]));
 
 	gtp_bpf_rt_stats_vty(p, iface, vty);
 

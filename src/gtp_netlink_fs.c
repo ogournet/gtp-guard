@@ -645,5 +645,5 @@ gtp_netlink_fs_show(struct vty *vty, struct gtp_interface *iface,
 
 	vty_out(vty, "      [kernel]%s", VTY_NEWLINE);
 	if (!tc_flower_dump_request(ifindex))
-		netlink_parse_info(tc_flower_dump_filter, &nl_cmd, NULL, vty, false);
+		netlink_parse_info(tc_flower_dump_filter, &nl_cmd, vty, false);
 }

@@ -59,6 +59,7 @@ _acl_ipv4(struct xdp_md	*ctx, struct if_rule_data *d,
 {
 	struct if_rule_key_base *k = &d->k.b;
 	int action;
+	int i;
 
 	IFR_DBG("acl: in if:%d, searching if:%d vlan:%d tun:%pI4|%pI4",
 		ctx->ingress_ifindex, k->ifindex, k->vlan_id,
@@ -69,6 +70,14 @@ _acl_ipv4(struct xdp_md	*ctx, struct if_rule_data *d,
 	if (d->r == NULL) {
 		IFR_DBG("no rule found");
 		return action;
+	}
+
+#pragma unroll
+	for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR; i++) {
+		if (d->r->local_ip4[i] == iph->daddr) {
+			IFR_DBG("iph_dst:%pI4 is for kernel", &iph->daddr);
+			return XDP_PASS;
+		}
 	}
 
 	IFR_DBG("got the rule! action:%d table:%d", d->r->action, d->r->table_id);
@@ -83,6 +92,7 @@ static __always_inline int
 _acl_ipv6(struct xdp_md	*ctx, struct if_rule_data *d, struct ipv6hdr *ip6h)
 {
 	struct if_rule_key_base *k = &d->k.b;
+	int i;
 
 	IFR_DBG("acl: in6 if:%d, searching if:%d vlan:%d",
 		ctx->ingress_ifindex, k->ifindex, k->vlan_id);
@@ -91,6 +101,14 @@ _acl_ipv6(struct xdp_md	*ctx, struct if_rule_data *d, struct ipv6hdr *ip6h)
 
 	if (d->r == NULL)
 		return XDP_PASS;
+
+#pragma unroll
+	for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR; i++) {
+		if (!__builtin_memcmp(&d->r->local_ip6[i], ip6h->daddr.s6_addr, 16)) {
+			IFR_DBG("iph_dst:%pI6 is for kernel", &ip6h->daddr);
+			return XDP_PASS;
+		}
+	}
 
 	IFR_DBG("got the 6rule! action:%d table:%d", d->r->action, d->r->table_id);
 

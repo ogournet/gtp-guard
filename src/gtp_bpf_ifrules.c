@@ -275,6 +275,7 @@ _in_rule_install(struct gtp_bpf_ifrules *bir, struct gtp_if_rule *r,
 	      bool overwrite)
 {
 	uint32_t nr_cpus = bpf_num_possible_cpus();
+	struct gtp_interface *iface = r->from;
 	struct if_rule_key_base *k = r->key;
 	struct if_rule aar[nr_cpus];
 	struct if_rule *ar = &aar[0];
@@ -291,6 +292,15 @@ _in_rule_install(struct gtp_bpf_ifrules *bir, struct gtp_if_rule *r,
 	ar->table_id = r->table_id ?: r->from ? r->from->table_id : 0;
 	ar->force_ifindex = r->force_ifindex;
 	ar->xsk_base_idx = r->xsk_base_idx;
+
+	if (iface != NULL) {
+		for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR &&
+			     sa_len(&iface->local_addr4[i]); i++)
+			ar->local_ip4[i] = sa_ip4(&iface->local_addr4[i]);
+		for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR &&
+			     sa_len(&iface->local_addr6[i]); i++)
+			memcpy(&ar->local_ip6[i], sa_ip6(&iface->local_addr6[i]), 16);
+	}
 
 	/* printf("add input rule if:%d vlan:%d ip-table:%d tun:%d/%x/%x\n", */
 	/*        k->ifindex, k->vlan_id, ar->table_id, */

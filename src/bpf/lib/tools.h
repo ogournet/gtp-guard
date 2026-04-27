@@ -3,10 +3,11 @@
 #pragma once
 
 #include <linux/bpf.h>
+#ifdef EBPF_SRC
 #include <linux/in.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-
+#endif
 
 /*********************************/
 /* compiler stuff */
@@ -74,6 +75,8 @@ union v4v6addr
 /*********************************/
 /* gre stuff */
 
+#ifdef EBPF_SRC
+
 /* GRE Version field */
 # define GRE_VERSION_1701	0x00
 # define GRE_VERSION_PPTP	0x01
@@ -108,6 +111,7 @@ struct gre_hdr_pptp
 	__u16 call_id;		/* peer's call_id for this session */
 } __attribute__((packed));
 
+#endif
 
 /*********************************/
 /* gtp-u stuff */
@@ -295,12 +299,4 @@ ipv6_skip_exthdr(struct ipv6hdr *ip6h, void *data_end, __u8 *out_nh)
 /*********************************/
 
 #define	NSEC_PER_SEC		1000000000
-
-/* Program statistics */
-enum pkt_stats_type {
-	PKT_STAT_FRAG_FWD = 0,
-	PKT_STAT_FRAG_REORDER,
-	PKT_STAT_FRAG_NOMATCH_DROP,
-	PKT_STAT_MAX,
-};
 

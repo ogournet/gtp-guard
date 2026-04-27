@@ -15,6 +15,7 @@
 #endif
 
 #define IF_RULE_MAX_RULE	2048
+#define IF_RULE_MAX_LOCAL_ADDR	2
 
 #define IF_RULE_FL_TUNNEL_GRE	0x0001
 #define IF_RULE_FL_TUNNEL_IPIP	0x0002
@@ -39,13 +40,17 @@ struct if_rule_key_base {
 } __attribute__((packed));
 
 struct if_rule {
-	int	action;
-	__u32	table_id;
-	__u32	force_ifindex;	/* bypass first fib_loookup */
-	__u32	xsk_base_idx;	/* base idx for xsks lookup */
+	int		action;
+	__u32		table_id;
+	__u32		force_ifindex;	/* bypass first fib_loookup */
+	__u32		xsk_base_idx;	/* base idx for xsks lookup */
+
+	/* returns XDP_PASS for these ips */
+	__be32		local_ip4[IF_RULE_MAX_LOCAL_ADDR];
+	__u8		local_ip6[16][IF_RULE_MAX_LOCAL_ADDR];
 
 	/* metrics */
-	__u64	pkt_in;
-	__u64	bytes_in;
-	__u64	pkt_fwd;
+	__u64		pkt_in;
+	__u64		bytes_in;
+	__u64		pkt_fwd;
 } __attribute__((packed));

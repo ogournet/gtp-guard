@@ -30,6 +30,7 @@
 #include "logger.h"
 #include "gtp_bpf_prog.h"
 #include "ethtool.h"
+#include "bpf/lib/if_rule-def.h"
 
 /* Interface events */
 enum gtp_interface_event {
@@ -80,6 +81,10 @@ struct gtp_interface {
 	sockaddr_t			direct_tx_gw;
 	uint8_t				direct_tx_hw_addr[ETH_ALEN];
 	char				description[GTP_STR_MAX_LEN];
+
+	/* local ip address(es) */
+	sockaddr_t			local_addr4[IF_RULE_MAX_LOCAL_ADDR];
+	sockaddr_t			local_addr6[IF_RULE_MAX_LOCAL_ADDR];
 
 	/* attached bfp-prog. if not set, all the following are unused */
 	struct gtp_bpf_prog		*bpf_prog;
