@@ -696,16 +696,18 @@ pfcp_ie_put_usage_report(struct pkt_buffer *pbuff, uint8_t type, uint32_t id,
 	err = (err) ? : pfcp_ie_put_ur_trigger(pbuff, ie_usage_report, rtrig);
 	err = (err) ? : pfcp_ie_put_start_time(pbuff, ie_usage_report, start_time);
 	err = (err) ? : pfcp_ie_put_end_time(pbuff, ie_usage_report, end_time);
-	if (pkt_first && pkt_last) {
-		err = (err) ? : pfcp_ie_put_time_first_pkt(pbuff, ie_usage_report, pkt_first);
-		err = (err) ? : pfcp_ie_put_time_last_pkt(pbuff, ie_usage_report, pkt_last);
-	}
 	if (uplink && downlink)
 		err = (err) ? : pfcp_ie_put_volume_measurement(pbuff, ie_usage_report,
 							       uplink, downlink);
 	if (duration >= 0)
 		err = (err) ? : pfcp_ie_put_duration_measurement(pbuff, ie_usage_report,
 								 duration);
+	if (pkt_first && pkt_last) {
+		err = (err) ? : pfcp_ie_put_time_first_pkt(pbuff, ie_usage_report,
+							   pkt_first);
+		err = (err) ? : pfcp_ie_put_time_last_pkt(pbuff, ie_usage_report,
+							  pkt_last);
+	}
 	if (query_urr_ref)
 		err  = (err) ? : pfcp_ie_put_query_urr_ref(pbuff, ie_usage_report,
 							   query_urr_ref);

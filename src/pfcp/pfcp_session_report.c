@@ -49,8 +49,10 @@ _put_usage_report(struct pkt_buffer *pbuff, struct urr *u, int type,
 {
 	struct pfcp_metrics_pkt ul, dl;
 	bool vol = u->measurement_method.volum;
-	int duration;
+	int duration = -1;
 
+	u->start_time = u->end_time;
+	u->end_time = time_now_to_ntp();
 	if (vol) {
 		pfcp_metrics_pkt_sub(&u->ul, &u->last_report_ul, &ul);
 		pfcp_metrics_pkt_sub(&u->dl, &u->last_report_dl, &dl);
@@ -60,11 +62,9 @@ _put_usage_report(struct pkt_buffer *pbuff, struct urr *u, int type,
 	if (u->measurement_method.durat) {
 		duration = u->duration - u->last_report_duration;
 		u->last_report_duration = u->duration;
-	} else {
-		duration = -1;
 	}
 
-	return pfcp_ie_put_usage_report(pbuff, type, u->id, u->seqn, rtrig, qurr_ref,
+	return pfcp_ie_put_usage_report(pbuff, type, u->id, u->seqn++, rtrig, qurr_ref,
 					u->pkt_first_time, u->pkt_last_time,
 					u->start_time, u->end_time, duration,
 					vol ? &ul : NULL, vol ? &dl : NULL);
@@ -78,7 +78,7 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	struct pkt *p;
 	struct pkt_buffer *pbuff;
 	struct f_seid *remote_seid = &s->remote_seid;
-	int err, i, nr_report_urr = 0;
+	int err, i;
 
 	p = __pkt_queue_get(&srv->pkt_q);
 	if (!p) {
@@ -91,21 +91,16 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	/* Pkt building */
 	pbuff = p->pbuff;
 	pfcp_msg_header_init(pbuff, PFCP_SESSION_REPORT_REQUEST, remote_seid->id,
-			     htonl(srv->seqn++ << 8));
+			     htonl(++srv->seqn << 8));
 	err = pfcp_ie_put_report_type(pbuff, PFCP_IE_REPORT_TYPE_USAR);
 	if (err)
 		goto end;
 
-	for (i = 0; i < r->urr_n; i++) {
+	for (i = 0; !err && i < r->urr_n; i++) {
 		err = _put_usage_report(pbuff, r->urr[i], PFCP_IE_USAGE_REPORT,
 					r->rtrig[i], r->query_urr_ref);
-		if (!err)
-			nr_report_urr++;
 	}
 
-	/* Sollicited report, add additional usage infos */
-	err = (err) ? : pfcp_ie_put_additional_usage_reports_info(pbuff, false,
-								  nr_report_urr);
 	if (err) {
 		log_message(LOG_INFO, "%s(): Error building report pkt for server %s"
 				    , __FUNCTION__

@@ -511,6 +511,8 @@ pfcp_session_create_urr(struct pfcp_session *s, struct urr *urr,
 	urr->end_time = urr->start_time;
 
 	urr->measurement_method = ie->measurement_method->v;
+	if (!urr->measurement_method.durat)
+		urr->duration = -1;
 
 	urr->triggers = ie->reporting_triggers->v;
 
@@ -623,8 +625,8 @@ pfcp_session_merge_urr(struct pfcp_session *s, struct upf_urr_cmd_req *uc)
 			continue;
 		/* not used in all pdr, problems ahead */
 		if (pdr_urr_cnt != pdr_cnt)
-			printf("urr[%d]: included in %d/%d pdr\n",
-			       urr->id, pdr_urr_cnt, pdr_cnt);
+			log_debug("urr[%d]: included in %d/%d pdr",
+				  urr->id, pdr_urr_cnt, pdr_cnt);
 
 		urr->urr_idx = uc->urr_idx;
 
@@ -745,8 +747,6 @@ pfcp_session_urr_report(struct pfcp_session *s, struct upf_urr_report_data *rd)
 		if (u->urr_idx != rd->r.urr_idx)
 			continue;
 
-		u->start_time = u->end_time;
-		u->end_time = time_now_to_ntp();
 		u->pkt_first_time = rd->report_first_pkt ?
 			rd->report_first_pkt + s->router->mono2ntptime_off : 0;
 		u->pkt_last_time = rd->report_last_pkt ?
@@ -761,8 +761,6 @@ pfcp_session_urr_report(struct pfcp_session *s, struct upf_urr_report_data *rd)
 
 		if (u->measurement_method.durat)
 			u->duration = rd->duration;
-		else
-			u->duration = -1;
 	}
 
 	return 0;
