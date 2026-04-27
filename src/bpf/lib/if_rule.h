@@ -187,17 +187,23 @@ _if_rule_parse_pkt(struct xdp_md *ctx, struct if_rule_data *d, rule_selector_t r
 				k->tun_local = ip4h->daddr;
 				k->tun_remote = ip4h->saddr;
 				k->flags |= IF_RULE_FL_TUNNEL_GRE;
-
 				offset += sizeof (*gre);
-				ip4h_in = (struct iphdr *)(data + offset);
-				if ((void *)(ip4h_in + 1) > data_end)
-					return XDP_DROP;
 				d->pl_off = offset;
+
 				switch (gre->proto) {
 				case __constant_htons(ETH_P_IP):
+					ip4h_in = (struct iphdr *)(data + offset);
+					if ((void *)(ip4h_in + 1) > data_end)
+						return XDP_DROP;
 					return _acl_ipv4(ctx, d, rscb, ip4h_in);
+				case __constant_htons(ETH_P_IPV6):
+					ip6h = (struct ipv6hdr *)(data + offset);
+					if ((void *)(ip6h + 1) > data_end)
+						return XDP_DROP;
+					d->flags |= IF_RULE_FL_SRC_IPV6;
+					return _acl_ipv6(ctx, d, ip6h);
 				default:
-					return XDP_PASS;
+					return XDP_DROP;
 				}
 			}
 		}
