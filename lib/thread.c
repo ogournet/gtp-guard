@@ -311,6 +311,7 @@ thread_make_master(bool nosignal)
 		add_signal_read_thread(new);
 	}
 
+	set_time_now();
 	return new;
 }
 
@@ -474,7 +475,6 @@ thread_compute_sands(timeval_t *sands, uint64_t timer)
 		sands->tv_usec = 0;
 		return;
 	}
-	set_time_now();
 	*sands = timer_add_ll(time_now, timer);
 }
 

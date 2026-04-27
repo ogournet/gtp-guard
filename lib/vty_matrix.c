@@ -19,6 +19,7 @@
  * Copyright (C) 2023-2026 Alexandre Cassen, <acassen@gmail.com>
  */
 
+#include <stdlib.h>
 #include "vty_matrix.h"
 
 /*

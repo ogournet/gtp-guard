@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <stdlib.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/un.h>
