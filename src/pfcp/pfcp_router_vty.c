@@ -238,22 +238,31 @@ ALIAS(pfcp_listen,
       "Bind to interface\n"
       "Interface name\n")
 
-DEFUN(pfcp_debug,
-      pfcp_debug_cmd,
-      "debug (ingress_msg|egress_msg)",
-      "activate PFCP debug option\n"
-      "dump ingress messages\n"
-      "dump egress messages\n")
+DEFUN(pfcp_urr_static_link,
+      pfcp_urr_static_link_cmd,
+      "urr-static-link URR-ID",
+      "Statically link URR-ID to all PDRs\n"
+      "URR ID (-1 to clear all)\n")
 {
 	struct pfcp_router *c = vty->index;
+	int urr_id = atoi(argv[0]);
+	int i;
 
-	if (!strcmp(argv[0], "ingress_msg"))
-		__set_bit(PFCP_DEBUG_FL_INGRESS_MSG, &c->debug);
-	if (!strcmp(argv[0], "egress_msg"))
-		__set_bit(PFCP_DEBUG_FL_EGRESS_MSG, &c->debug);
+	if (urr_id < 0) {
+		memset(c->urr_static_pdr_link, 0x00, sizeof (c->urr_static_pdr_link));
+
+	} else if (urr_id > 0) {
+		for (i = 0; i < ARRAY_SIZE(c->urr_static_pdr_link) &&
+			     c->urr_static_pdr_link[i] &&
+			     c->urr_static_pdr_link[i] != urr_id; i++)
+			/* void */;
+		if (i < ARRAY_SIZE(c->urr_static_pdr_link))
+			c->urr_static_pdr_link[i] = urr_id;
+	}
 
 	return CMD_SUCCESS;
 }
+
 
 DEFUN(pfcp_capture,
       pfcp_capture_cmd,
@@ -682,6 +691,23 @@ DEFUN(pfcp_debug_teid,
 	return CMD_SUCCESS;
 }
 
+DEFUN(pfcp_debug,
+      pfcp_debug_cmd,
+      "debug (ingress_msg|egress_msg)",
+      "activate PFCP debug option\n"
+      "dump ingress messages\n"
+      "dump egress messages\n")
+{
+	struct pfcp_router *c = vty->index;
+
+	if (!strcmp(argv[0], "ingress_msg"))
+		__set_bit(PFCP_DEBUG_FL_INGRESS_MSG, &c->debug);
+	if (!strcmp(argv[0], "egress_msg"))
+		__set_bit(PFCP_DEBUG_FL_EGRESS_MSG, &c->debug);
+
+	return CMD_SUCCESS;
+}
+
 DEFUN(no_pfcp_debug,
       no_pfcp_debug_cmd,
       "no debug",
@@ -1089,6 +1115,7 @@ config_pfcp_router_write(struct vty *vty)
 	struct list_head *l = &daemon_data->pfcp_router_ctx;
 	char node_id[GTP_STR_MAX_LEN];
 	struct pfcp_router *c;
+	int i;
 
 	list_for_each_entry(c, l, next) {
 		vty_out(vty, "pfcp-router %s%s", c->name, VTY_NEWLINE);
@@ -1139,6 +1166,11 @@ config_pfcp_router_write(struct vty *vty)
 			vty_out(vty, " capture %s\n", name);
 		}
 
+		for (i = 0; i < ARRAY_SIZE(c->urr_static_pdr_link) &&
+			     c->urr_static_pdr_link[i]; i++)
+			vty_out(vty, " urr-static-link %d\n",
+				c->urr_static_pdr_link[i]);
+
 		vty_out(vty, "!\n");
 	}
 
@@ -1188,6 +1220,7 @@ cmd_ext_pfcp_router_install(void)
 	install_element(PFCP_ROUTER_NODE, &pfcp_router_peer_list_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_bind_cmd);
+	install_element(PFCP_ROUTER_NODE, &pfcp_urr_static_link_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_capture_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_capture_imsi_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_no_capture_cmd);

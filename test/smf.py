@@ -16,7 +16,7 @@ Commands (stdin):
   session add [imsi <d>] [msisdn <d>] [imei <d>]
               [dnn <n>] [pool <n>]
               [enb-ip <ip>] [enb-teid <teid>]
-              [urr <id,...>]
+              [urr <id[:nolink],...>]
   session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
                            [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
   session delete <cp_seid>
@@ -1136,9 +1136,12 @@ class SMF:
         enb_ip:           str | None = None,
         enb_teid:         int | None = None,
         urr_ids:          list[int] | None = None,
+        pdr_urr_ids:      list[int] | None = None,
     ) -> Session | None:
         if urr_ids is None:
             urr_ids = list(self.urr_configs.keys())
+        if pdr_urr_ids is None:
+            pdr_urr_ids = list(urr_ids)
         missing = [uid for uid in urr_ids if uid not in self.urr_configs]
         if missing:
             log.error(f"URR(s) not configured: {missing}"); return None
@@ -1155,8 +1158,8 @@ class SMF:
         body = (
             ie_node_id_ipv4(self.local_ip)                            +
             ie_fseid(cp_seid, self.local_ip)                          +
-            ie_create_pdr_ul(network_instance, urr_ids)               +
-            ie_create_pdr_dl(network_instance, urr_ids)               +
+            ie_create_pdr_ul(network_instance, pdr_urr_ids)           +
+            ie_create_pdr_dl(network_instance, pdr_urr_ids)           +
             ie_create_far_ul()                                        +
             far_dl                                                    +
             b"".join(ie_create_urr_from_config(self.urr_configs[uid])
@@ -1408,7 +1411,8 @@ HELP_TEXT = """\
   session add [imsi <d>] [msisdn <d>] [imei <d>]
               [dnn <n>] [pool <n>]
               [enb-ip <ip>] [enb-teid <teid>]
-              [urr <id,...>]
+              [urr <id[:nolink],...>]
+      id:nolink — include URR in establish request but do not reference it in PDR.
 
   session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
                            [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
@@ -1514,7 +1518,17 @@ def parse_session_add(tokens: list[str]) -> dict:
             case "pool":     params["pool_name"]        = next(it)
             case "enb-ip":   params["enb_ip"]           = next(it)
             case "enb-teid": params["enb_teid"]         = int(next(it), 0)
-            case "urr":      params["urr_ids"]          = [int(x) for x in next(it).split(",")]
+            case "urr":
+                all_ids, pdr_ids = [], []
+                for tok in next(it).split(","):
+                    if tok.endswith(":nolink"):
+                        all_ids.append(int(tok[:-7]))
+                    else:
+                        uid = int(tok)
+                        all_ids.append(uid)
+                        pdr_ids.append(uid)
+                params["urr_ids"]     = all_ids
+                params["pdr_urr_ids"] = pdr_ids
             case _:          raise ValueError(f"Unknown session option: {key!r}")
     return params
 

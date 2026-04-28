@@ -114,6 +114,7 @@ struct urr {
 	uint8_t			action;
 	bool			queried;
 	bool			reported;
+	bool			auto_attach;
 
 	union pfcp_measurement_method	measurement_method;
 	union pfcp_measurement_information measurement_info;

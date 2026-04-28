@@ -385,6 +385,21 @@ run_with_smf() {
     "urr set id 4 measure volume linked 2,3"	\
     "expect report timeout 10 cp_seid 1 urr_id 2 trigger volth total_min 176 urr_id 4 trigger liusa total_min 176 urr_id 3 trigger liusa"
 
+    # statically linked urr
+    _hash_set testset volth6 <<EOF
+urr set id 2 triggers volth measure volume volth total 200
+urr set id 10 triggers volth,liusa measure volume,duration volth total 176 linked 2
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 2,10:nolink
+session ping 1 8.8.8.8 count 3
+expect report timeout 10 cp_seid 1 urr_id 10 trigger volth total_min 176
+session delete 1
+EOF
+
+    smf_more_adv_urr testset volth5 ''			\
+    "urr set id 2 triggers volth measure volume volth total 200"	\
+    "urr set id 10 triggers volth measure volume,duration volth total 176 linked 2"	\
+    "expect report timeout 10 cp_seid 1 urr_id 2 trigger volth total_min 176 urr_id 10 trigger liusa total_min 176 urr_id 3 trigger liusa"
+
     # no measure vol, do not expect report
     smf_basic_urr testset volth10			\
     "triggers volth volth ul 160 volth dl 120"		\

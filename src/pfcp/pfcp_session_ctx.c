@@ -579,6 +579,10 @@ pfcp_session_create_urr(struct pfcp_session *s, struct urr *urr,
 	for (i = 0; i < PFCP_MAX_NR_ELEM && i < ie->nr_linked_urr_id; i++)
 		urr->linked_urr_id[i] = ntohl(ie->linked_urr_id[i]->value);
 
+	for (i = 0; i < ARRAY_SIZE(s->router->urr_static_pdr_link); i++)
+		if (s->router->urr_static_pdr_link[i] == urr->id)
+			urr->auto_attach = true;
+
 	return 0;
 }
 
@@ -621,10 +625,10 @@ pfcp_session_merge_urr(struct pfcp_session *s, struct upf_urr_cmd_req *uc)
 				}
 		}
 		/* not used, skip it */
-		if (!pdr_urr_cnt)
+		if (!urr->auto_attach && !pdr_urr_cnt)
 			continue;
 		/* not used in all pdr, problems ahead */
-		if (pdr_urr_cnt != pdr_cnt)
+		if (!urr->auto_attach && pdr_urr_cnt != pdr_cnt)
 			log_debug("urr[%d]: included in %d/%d pdr",
 				  urr->id, pdr_urr_cnt, pdr_cnt);
 

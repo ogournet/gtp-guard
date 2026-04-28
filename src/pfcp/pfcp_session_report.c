@@ -142,13 +142,47 @@ pfcp_session_report_send_delayed(struct pfcp_report *r)
 }
 #endif
 
+static inline void
+_add_urr_to_report(struct pfcp_report *r, struct urr *urr,
+		   union pfcp_usage_report_trigger rtrig)
+{
+	int i;
+
+	for (i = 0; i < r->urr_n; i++) {
+		if (r->urr[i] == urr) {
+			r->rtrig[i].trigger_flags |= rtrig.trigger_flags;
+			return;
+		}
+	}
+	if (r->urr_n < PFCP_MAX_NR_ELEM) {
+		r->rtrig[r->urr_n] = rtrig;
+		r->urr[r->urr_n++] = urr;
+	}
+}
+
+static inline bool
+_check_volume_th(struct urr *u)
+{
+	if (u->volume_threshold_to &&
+	    u->ul.bytes - u->last_report_ul.bytes +
+	    u->dl.bytes - u->last_report_dl.bytes >= u->volume_threshold_to)
+		return true;
+	if (u->volume_threshold_dl &&
+	    u->dl.bytes - u->last_report_dl.bytes >= u->volume_threshold_dl)
+		return true;
+	if (u->volume_threshold_ul &&
+	    u->ul.bytes - u->last_report_ul.bytes >= u->volume_threshold_ul)
+		return true;
+	return false;
+}
+
 void
 pfcp_session_report_triggered(struct pfcp_session *s,
 			      struct upf_urr_report_data *urd)
 {
+	const union pfcp_usage_report_trigger liusa = { .liusa = 1 };
 	union pfcp_usage_report_trigger rtrig;
 	struct urr *urr, *lu;
-	uint32_t urr_id;
 	struct pfcp_report r = {
 		.s = s,
 	};
@@ -159,57 +193,38 @@ pfcp_session_report_triggered(struct pfcp_session *s,
 		if (urr->urr_idx != urd->r.urr_idx)
 			continue;
 
-		urr_id = 0;
 		rtrig.trigger_flags = 0;
 
 		if ((urd->r.report_flags & UPF_TRIG_FL_VOLTH) &&
-		    urr->triggers.volth &&
-		    urr->volume_threshold_to != ~0) {
-			urr_id = urr->id;
+		    urr->triggers.volth && _check_volume_th(urr))
 			rtrig.volth = 1;
-		}
 		if ((urd->r.report_flags & UPF_TRIG_FL_VOLQU) &&
-		    urr->triggers.volqu) {
-			urr_id = urr->id;
+		    urr->triggers.volqu)
 			rtrig.volqu = 1;
-		}
 		if ((urd->r.report_flags & UPF_TRIG_FL_TIMTH) &&
-		    urr->triggers.timth) {
-			urr_id = urr->id;
+		    urr->triggers.timth)
 			rtrig.timth = 1;
-		}
 		if ((urd->r.report_flags & UPF_TRIG_FL_TIMQU) &&
-		    urr->triggers.timqu) {
-			urr_id = urr->id;
+		    urr->triggers.timqu)
 			rtrig.timqu = 1;
-		}
 		if ((urd->r.report_flags & UPF_TRIG_FL_PERIO) &&
-		    urr->triggers.perio) {
-			urr_id = urr->id;
+		    urr->triggers.perio)
 			rtrig.perio = 1;
-		}
 		if ((urd->r.report_flags & UPF_TRIG_FL_QUHTI) &&
-		    urr->triggers.quhti) {
-			urr_id = urr->id;
+		    urr->triggers.quhti)
 			rtrig.quhti = 1;
-		}
 
-		if (!urr_id)
+		if (!rtrig.trigger_flags)
 			continue;
 
 		/* add this urr and linked urrs */
-		if (r.urr_n >= PFCP_MAX_NR_ELEM)
-			break;
-		r.rtrig[r.urr_n] = rtrig;
-		r.urr[r.urr_n++] = urr;
+		_add_urr_to_report(&r, urr, rtrig);
 		list_for_each_entry(lu, &s->urr_list, next) {
 			if (r.urr_n >= PFCP_MAX_NR_ELEM)
 				break;
 			for (i = 0; i < PFCP_MAX_NR_ELEM && lu->linked_urr_id[i]; i++)
-				if (lu->linked_urr_id[i] == urr->id) {
-					r.rtrig[r.urr_n].liusa = 1;
-					r.urr[r.urr_n++] = lu;
-				}
+				if (lu->linked_urr_id[i] == urr->id)
+					_add_urr_to_report(&r, lu, liusa);
 		}
 	}
 

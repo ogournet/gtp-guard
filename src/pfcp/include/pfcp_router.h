@@ -87,6 +87,9 @@ struct pfcp_router {
 	/* indexed by gtp_range_partition_type */
 	struct gtp_range_partition *rp[GTP_RANGE_PARTITION_TYPE_MAX];
 
+	/* static hacks for urr */
+	int			urr_static_pdr_link[4];
+
 	unsigned long		flags;
 
 	struct list_head	next;
