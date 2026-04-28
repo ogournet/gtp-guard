@@ -75,8 +75,9 @@ _acl_ipv4(struct xdp_md	*ctx, struct if_rule_data *d,
 #pragma unroll
 	for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR; i++) {
 		if (d->r->local_ip4[i] == iph->daddr) {
-			IFR_DBG("iph_dst:%pI4 is for kernel", &iph->daddr);
-			return XDP_PASS;
+			IFR_DBG("iph_dst:%pI4 is our local addr", &iph->daddr);
+			d->flags |= IF_RULE_FL_IS_LOCAL_DST;
+			break;
 		}
 	}
 
@@ -105,8 +106,9 @@ _acl_ipv6(struct xdp_md	*ctx, struct if_rule_data *d, struct ipv6hdr *ip6h)
 #pragma unroll
 	for (i = 0; i < IF_RULE_MAX_LOCAL_ADDR; i++) {
 		if (!__builtin_memcmp(&d->r->local_ip6[i], ip6h->daddr.s6_addr, 16)) {
-			IFR_DBG("iph_dst:%pI6 is for kernel", &ip6h->daddr);
-			return XDP_PASS;
+			IFR_DBG("iph_dst:%pI6 is our local addr", &ip6h->daddr);
+			d->flags |= IF_RULE_FL_IS_LOCAL_DST;
+			break;
 		}
 	}
 

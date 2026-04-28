@@ -212,7 +212,7 @@ upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
 	__builtin_memcpy(k.ue_ip6pfx.addr, ip6h->daddr.s6_addr, 8);
 	u = bpf_map_lookup_elem(&user_ingress, &k);
 	if (u == NULL)
-		return XDP_DROP;
+		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ? XDP_PASS : XDP_DROP;
 
 	return _encap_gtpu(ctx, d, u, 1);
 }
@@ -241,7 +241,7 @@ upf_handle_pub(struct xdp_md *ctx, struct if_rule_data *d)
 	k.ue_ip4 = iph->daddr;
 	u = bpf_map_lookup_elem(&user_ingress, &k);
 	if (u == NULL)
-		return XDP_DROP;
+		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ? XDP_PASS : XDP_DROP;
 
 	return _encap_gtpu(ctx, d, u, 0);
 }
@@ -410,14 +410,14 @@ upf_handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d)
 		return XDP_DROP;
 
 	if (iph->protocol != IPPROTO_UDP)
-		return XDP_DROP;
+		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ? XDP_PASS : XDP_DROP;
 
 	udph = (void *)(iph) + iph->ihl * 4;
 	if (udph + 1 > data_end)
 		return XDP_DROP;
 
 	if (udph->dest != __constant_htons(GTPU_PORT))
-		return XDP_DROP;
+		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ? XDP_PASS : XDP_DROP;
 
 	return _handle_gtpu(ctx, d, iph, udph);
 }

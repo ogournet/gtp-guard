@@ -24,6 +24,7 @@ typedef int (*rule_selector_t)(struct if_rule_data *d, struct iphdr *iph);
 #define IF_RULE_FL_SRC_IPV6		0x0001
 #define IF_RULE_FL_DST_IPV6		0x0002
 #define IF_RULE_FL_XDP_ADJUSTED		0x0004
+#define IF_RULE_FL_IS_LOCAL_DST		0x0008
 
 struct if_rule_data
 {
