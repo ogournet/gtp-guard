@@ -457,8 +457,7 @@ _thread_urr_ctl(struct pfcp_bpf_data *bd, struct upf_urr_cmd_req *uc)
 
 	ret = bpf_prog_test_run_opts(bd->urr_ctl_prog_fd, &rcfg);
 	if (ret) {
-		log_message(LOG_INFO, "%s: run bpf failed: %m",
-			    __func__);
+		logf_warn("run bpf failed (%m)");
 		return -1;
 	}
 
@@ -508,7 +507,7 @@ _thread_start(struct pfcp_bpf_data *bd, int cpu)
 	th->run = true;
 	ret = pthread_create(&th->task, NULL, _thread_main_loop, th);
 	if (ret < 0) {
-		log_message(LOG_INFO, "pthread_create: %m");
+		logf_err("pthread_create: %m");
 		free(th);
 		return NULL;
 	}
@@ -614,15 +613,15 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 	} else if (sizeof (*ur)) {
 		ur = data;
 	} else {
-		log_message(LOG_INFO, "%s: unexpected size: %ld", __func__, size);
+		logf_warn("unexpected size: %ld", size);
 		return 0;
 	}
 
 	/* get pfcp session */
 	s = pfcp_session_get(ur->seid);
 	if (s == NULL) {
-		log_message(LOG_DEBUG, "%s: report (size:%ld) for unknown seid %lld",
-			    __func__, size, ur->seid);
+		logf_debug("report (size:%ld) for unknown seid %lld",
+			   size, ur->seid);
 		return 0;
 	}
 
@@ -645,8 +644,7 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 			goto next;
 		}
 	}
-	log_message(LOG_DEBUG, "urr request_id %d doesn't match any request",
-		    ur->request_id);
+	log_debug("urr request_id %d doesn't match any request", ur->request_id);
 
  next:
 	/* no more pending urr command, send reply */
@@ -699,7 +697,7 @@ pfcp_bpf_ring_buffer_event_cb(struct thread *th)
 
 	ret = ring_buffer__consume(bd->rbuf);
 	if (ret < 0)
-		log_message(LOG_INFO, "ring_buffer consume: %m");
+		logf_warn("ring_buffer consume: %m");
 
 	bd->rbuf_th = thread_add_read(master, pfcp_bpf_ring_buffer_event_cb,
 				      bd, THREAD_FD(th), TIMER_NEVER, 0);
@@ -775,7 +773,7 @@ pfcp_bpf_loaded(struct gtp_bpf_prog *p, void *udata, bool reload)
 
 	prg = bpf_object__find_program_by_name(p->obj_load, "urr_ctl");
 	if (prg == NULL) {
-		log_message(LOG_INFO, "cannot find urr_ctl in ebpf prog");
+		logf_err("cannot find urr_ctl in ebpf prog");
 		return -1;
 	}
 	bd->urr_ctl_prog_fd = bpf_program__fd(prg);
