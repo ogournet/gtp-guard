@@ -2066,6 +2066,7 @@ struct pfcp_ie_apn_dnn {
 #define PFCP_3GPP_INTERFACE_S5U	1
 #define PFCP_3GPP_INTERFACE_N3	11
 #define PFCP_3GPP_INTERFACE_SGI	16
+#define PFCP_3GPP_INTERFACE_N6	17
 #define PFCP_3GPP_INTERFACE_S8U	19
 #define PFCP_3GPP_INTERFACE_N9	23
 struct pfcp_ie_3gpp_interface_type {
