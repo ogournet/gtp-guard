@@ -105,7 +105,7 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 		upf_li_pkt(ctx, u, d->pl_off, UPF_LI_FL_DIR_INGRESS);
 
 	/* encap in gtp-u, make room */
-	adjust_sz = sizeof(*iph) + sizeof(*udph) + sizeof(*gtph);
+	adjust_sz = sizeof(*iph) + sizeof(*udph) + GTP_HDR_LEN_SHORT;
 	if (bpf_xdp_adjust_head(ctx, -adjust_sz) < 0)
 		return XDP_ABORTED;
 
@@ -151,9 +151,9 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	udph->len = bpf_htons(pkt_len);
 	udph->check = 0;
 
-	pkt_len -= sizeof(*udph) + sizeof(*gtph);
-	gtph->flags = GTPU_FLAGS;
-	gtph->type = GTPU_TPDU;
+	pkt_len -= sizeof(*udph) + GTP_HDR_LEN_SHORT;
+	gtph->flags = GTP_FL_V1 | GTP_FL_GTP;
+	gtph->type = GTP_TYPE_TPDU;
 	gtph->length = bpf_htons(pkt_len);
 	gtph->teid = u->gtpu_remote_teid;
 
@@ -259,7 +259,8 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	struct iphdr *ip4h_inner = NULL;
 	struct ipv6hdr *ip6h_inner;
 	struct gtphdr *gtph;
-	int adjust_sz, pkt_len;
+	int adjust_sz, pkt_len, i;
+	__u16 gtph_len;
 	__u32 sum;
 
 	gtph = (struct gtphdr *)(udph + 1);
@@ -289,6 +290,32 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 
 	if (uu->flags & UPF_FL_QUOTA_REACHED)
 		goto drop;
+
+	if (gtph->flags & GTP_FL_EXTHDR) {
+		gtph_len = GTP_HDR_LEN_LONG;
+		__u8 gtph_et = gtph->exthdr;
+		__u8 *gtph_e = (__u8 *)(gtph + 1);
+#pragma unroll
+		for (i = 0; gtph_et && i < GTP_EXTHDR_MAX; i++) {
+			if (unlikely(gtph_e + 1 > data_end))
+				return XDP_DROP;
+			__u8 gtph_el = *gtph_e << 2;
+			if (unlikely(!gtph_el || gtph_e + gtph_el > data_end))
+				return XDP_DROP;
+			gtph_et = gtph_e[gtph_el - 1];
+			gtph_len += gtph_el;
+		}
+		if (unlikely(gtph_et)) {
+			UPF_DBG("increase GTP_EXTHDR_MAX");
+			return XDP_DROP;
+		}
+
+	} else if (gtph->flags & (GTP_FL_SEQ_NUM | GTP_FL_NPDU_NUM)) {
+		gtph_len = GTP_HDR_LEN_LONG;
+
+	} else {
+		gtph_len = GTP_HDR_LEN_SHORT;
+	}
 
 #if __clang_major__ == 21 && __clang_minor__ == 1
 	pkt_len = data_end - data;
@@ -323,7 +350,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 			   &iph->daddr, bpf_ntohs(udph->dest),
 			   bpf_ntohl(gtph->teid));
 
-		/* metrics */
+		/* metrics (pkt_len includes gtpu) */
 		++u->fwd_v4_pkt;
 		u->fwd_v4_bytes += pkt_len;
 		++uu->ul_pkt;
@@ -333,8 +360,11 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		return XDP_IFR_FORWARD;
 	}
 
+	ip4h_inner = (struct iphdr *)((void *)gtph + gtph_len);
+	adjust_sz = (void *)(ip4h_inner) - (void *)iph;
+	pkt_len -= adjust_sz;
+
 	/* for futur nh lookup */
-	ip4h_inner = (struct iphdr *)(gtph + 1);
 	if (ip4h_inner + 1 > data_end)
 		goto drop;
 	switch (ip4h_inner->version) {
@@ -360,11 +390,11 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		u->fwd_v6_bytes += pkt_len;
 		break;
 	default:
+		UPF_DBG("unknown ipproto_version=%d in inner", ip4h_inner->version);
 		goto drop;
 	}
 
 	/* decap gtp-u */
-	adjust_sz = (void *)(gtph + 1) - (void *)iph;
 	if (bpf_xdp_adjust_head(ctx, adjust_sz) < 0)
 		return XDP_ABORTED;
 	d->flags |= IF_RULE_FL_XDP_ADJUSTED;
@@ -373,7 +403,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 				   BPF_CAPTURE_EFL_CORE);
 
 	++uu->ul_pkt;
-	uu->ul_bytes += pkt_len - adjust_sz;
+	uu->ul_bytes += pkt_len;
 
 	upf_urr_check_ul(uu);
 
