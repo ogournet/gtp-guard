@@ -925,6 +925,10 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 		u->gtpu_remote_addr = f->outer_header_ip4.s_addr;
 		u->gtpu_remote_port = htons(GTP_U_PORT);
 
+		if (f->dst_interface_type == PFCP_3GPP_INTERFACE_N3 ||
+		    f->dst_interface_type == PFCP_3GPP_INTERFACE_N9)
+			u->flags |= UPF_FWD_FL_GTP_EXTHDR;
+
 		laddr = pfcp_session_get_addr_by_interface(s->router,
 							   f->dst_interface_type);
 		if (laddr && laddr->family == AF_INET)

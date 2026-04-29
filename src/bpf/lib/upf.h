@@ -106,6 +106,8 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 
 	/* encap in gtp-u, make room */
 	adjust_sz = sizeof(*iph) + sizeof(*udph) + GTP_HDR_LEN_SHORT;
+	if (u->flags & UPF_FWD_FL_GTP_EXTHDR)
+		adjust_sz += 8;
 	if (bpf_xdp_adjust_head(ctx, -adjust_sz) < 0)
 		return XDP_ABORTED;
 
@@ -156,6 +158,20 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	gtph->type = GTP_TYPE_TPDU;
 	gtph->length = bpf_htons(pkt_len);
 	gtph->teid = u->gtpu_remote_teid;
+	if (u->flags & UPF_FWD_FL_GTP_EXTHDR) {
+		pkt_len -= 8;
+		gtph->flags |= GTP_FL_EXTHDR;
+		gtph->seqnum = 0;
+		gtph->npdu_num = 0;
+		gtph->exthdr = 0x85;
+		__u8 *ext_e = (__u8 *)(gtph + 1);
+		if (ext_e + 4 > data_end)
+			goto drop;
+		ext_e[0] = 1;	/* len */
+		ext_e[1] = 0;
+		ext_e[2] = 5;	/* qfi */
+		ext_e[3] = 0;	/* next ext hdr */
+	}
 
 	d->dst_addr.ip4 = u->gtpu_remote_addr;
 

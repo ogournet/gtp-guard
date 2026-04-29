@@ -48,6 +48,7 @@ struct upf_egress_key {
 #define UPF_FWD_FL_ACT_KEEP_OUTER_HEADER	\
 	(UPF_FWD_FL_ACT_CREATE_OUTER_HEADER |	\
 	 UPF_FWD_FL_ACT_REMOVE_OUTER_HEADER)
+#define UPF_FWD_FL_GTP_EXTHDR			(1 << 8)
 
 /* rules set by userapp. */
 struct upf_fwd_rule {
@@ -63,10 +64,11 @@ struct upf_fwd_rule {
 	__u8		tos_tclass;
 	__u8		tos_mask;
 	__u16		flags;
+
 	__u32		urr_idx;	/* index to upf_urr{,_data} */
 	__u32		li_id;		/* 0: disabled */
-
 	__u64		seid;
+
 	struct capture_bpf_entry capture;
 
 	/* metrics. pkt counters can wrap, it's only metric */
