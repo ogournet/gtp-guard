@@ -620,15 +620,31 @@ end:
 int
 gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 {
-	struct gtpuhdr *h = (struct gtpuhdr *)srv->s.pbuff->head;
+	struct gtpuhdr *gtph = (struct gtpuhdr *)srv->s.pbuff->head;
 	sockaddr_t addr_to;
+	int gtph_len = GTPU_HLEN_SHORT;
 
-	memset(h, 0, sizeof (*h));
-	h->flags = GTPU_FL_V1 | GTPU_FL_PT;
-	h->type = GTPU_TYPE_END_MARKER;
-	h->teid = f->outer_header_teid;
-	pkt_buffer_set_end_pointer(srv->s.pbuff, GTPU_HLEN_SHORT);
-	pkt_buffer_set_data_pointer(srv->s.pbuff, GTPU_HLEN_SHORT);
+	gtph->flags = GTPU_FL_V1 | GTPU_FL_PT;
+	gtph->type = GTPU_TYPE_END_MARKER;
+	gtph->length = 0;
+	gtph->teid = f->outer_header_teid;
+
+	if (f->dst_interface_type == PFCP_3GPP_INTERFACE_N3 ||
+	    f->dst_interface_type == PFCP_3GPP_INTERFACE_N9) {
+		gtph_len += 8;
+		gtph->length = htons(8);
+		gtph->flags |= GTPU_FL_E;
+		gtph->seqnum = 0;
+		gtph->npdu_num = 0;
+		gtph->exthdr_type = GTPU_ETYPE_PDU_SESSION_CONTAINER;
+		gtph->exthdr[0] = 1;
+		gtph->exthdr[1] = 0;
+		gtph->exthdr[2] = 0;
+		gtph->exthdr[3] = GTPU_ETYPE_NONE;
+	}
+
+	pkt_buffer_set_end_pointer(srv->s.pbuff, gtph_len);
+	pkt_buffer_set_data_pointer(srv->s.pbuff, gtph_len);
 
 	sa_from_ip4_port(&addr_to, f->outer_header_ip4.s_addr, GTP_U_PORT);
 
@@ -646,7 +662,8 @@ struct ipv6_pseudo_hdr
 
 static int
 gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
-	      sockaddr_t *addr_to, const struct in6_addr *dst_addr)
+	      sockaddr_t *addr_to, const struct in6_addr *dst_addr,
+	      bool add_gtp_exthdr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
 	struct gtpuhdr *gtph;
@@ -654,7 +671,7 @@ gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
 	struct icmp6_hdr *icmp6;
 	struct nd_router_advert *nd_ra;
 	struct nd_opt_prefix_info *nd_pi;
-	int pl_len;
+	int pl_len, gtph_len = GTPU_HLEN_SHORT;
 
 	if (pbuff == NULL)
 		pbuff = srv->s.pbuff = pkt_buffer_alloc(DEFAULT_PKT_BUFFER_SIZE);
@@ -664,10 +681,23 @@ gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
 	gtph = (struct gtpuhdr *)pbuff->head;
 	gtph->flags = GTPU_FL_V1 | GTPU_FL_PT;
 	gtph->type = GTPU_TYPE_TPDU;
-	gtph->length = htons(pl_len + sizeof (*ip6h));
 	gtph->teid = teid;
+	if (add_gtp_exthdr) {
+		gtph->flags |= GTPU_FL_E;
+		gtph->length = htons(8 + sizeof (*ip6h) + pl_len);
+		gtph->seqnum = 0;
+		gtph->npdu_num = 0;
+		gtph->exthdr_type = GTPU_ETYPE_PDU_SESSION_CONTAINER;
+		gtph->exthdr[0] = 1;
+		gtph->exthdr[1] = 0;
+		gtph->exthdr[2] = 0;
+		gtph->exthdr[3] = GTPU_ETYPE_NONE;
+		gtph_len += 8;
+	} else {
+		gtph->length = htons(sizeof (*ip6h) + pl_len);
+	}
 
-	ip6h = (void *)gtph + GTPV1C_HEADER_LEN_SHORT;
+	ip6h = (void *)gtph + gtph_len;
 	if (dst_addr != NULL) {
 		memmove(ip6h->ip6_dst.s6_addr, dst_addr, sizeof (*dst_addr));
 	} else {
@@ -717,7 +747,7 @@ gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
 	csum = in_csum((uint16_t*)icmp6, pl_len, ~csum);
 	icmp6->icmp6_cksum = csum;
 
-	pl_len += sizeof (*ip6h) + GTPV1C_HEADER_LEN_SHORT;
+	pl_len += sizeof (*ip6h) + gtph_len;
 	pkt_buffer_set_end_pointer(pbuff, pl_len);
 	pkt_buffer_set_data_pointer(pbuff, pl_len);
 
@@ -733,7 +763,9 @@ gtpu_send_router_advert(struct gtp_server *srv, struct pfcp_session *s, struct f
 	sockaddr_t addr_to;
 
 	sa_from_ip4_port(&addr_to, f->outer_header_ip4.s_addr, GTP_U_PORT);
-	return gtpu_build_ra(srv, s, f->outer_header_teid, &addr_to, NULL);
+	return gtpu_build_ra(srv, s, f->outer_header_teid, &addr_to, NULL,
+			     f->dst_interface_type == PFCP_3GPP_INTERFACE_N3 ||
+			     f->dst_interface_type == PFCP_3GPP_INTERFACE_N9);
 }
 
 
@@ -782,13 +814,18 @@ gtpu_data_hdl(struct gtp_server *srv, sockaddr_t *addr)
 	struct far *f;
 	struct pdr *p;
 	uint32_t teid;
+	int hlen;
+
+	hlen = gtpu_get_header_len(pbuff);
+	if (hlen < 0)
+		return 0;
 
 	/* check it is a router solicitation */
 	gtph = (struct gtpuhdr *)pbuff->head;
-	ip6h = (void *)gtph + GTPV1C_HEADER_LEN_SHORT;
+	ip6h = (void *)gtph + hlen;
 	icmp6 = (struct icmp6_hdr *)(ip6h + 1);
 	if ((uint8_t *)icmp6 + 1 > pbuff->tail ||
-	    gtph->flags != 0x30 ||
+	    (gtph->flags & 0xf0) != 0x30 ||
 	    ip6h->ip6_nxt != IPPROTO_ICMPV6 ||
 	    icmp6->icmp6_type != ND_ROUTER_SOLICIT)
 		return 0;
@@ -823,7 +860,7 @@ gtpu_data_hdl(struct gtp_server *srv, sockaddr_t *addr)
 
 	/* build and send RA */
 	sa_set_port(addr, GTP_U_PORT);
-	gtpu_build_ra(srv, s, teid, addr, &ip6h->ip6_src);
+	gtpu_build_ra(srv, s, teid, addr, &ip6h->ip6_src, gtph->flags & GTPU_FL_E);
 
 	return 0;
 }

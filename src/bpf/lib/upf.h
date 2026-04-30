@@ -164,14 +164,13 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 		gtph->flags |= GTPU_FL_E;
 		gtph->seqnum = 0;
 		gtph->npdu_num = 0;
-		gtph->exthdr = 0x85;
-		__u8 *ext_e = (__u8 *)(gtph + 1);
-		if (ext_e + 4 > data_end)
+		gtph->exthdr_type = GTPU_ETYPE_PDU_SESSION_CONTAINER;
+		if (gtph->exthdr + 4 > data_end)
 			goto drop;
-		ext_e[0] = 1;	/* len */
-		ext_e[1] = 0;
-		ext_e[2] = 5;	/* qfi */
-		ext_e[3] = 0;	/* next ext hdr */
+		gtph->exthdr[0] = 1;	/* len */
+		gtph->exthdr[1] = 0;
+		gtph->exthdr[2] = 5;	/* qfi */
+		gtph->exthdr[3] = GTPU_ETYPE_NONE;
 	}
 
 	d->dst_addr.ip4 = u->gtpu_remote_addr;
@@ -310,7 +309,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 
 	if (gtph->flags & GTPU_FL_E) {
 		gtph_len = GTPU_HLEN_LONG;
-		__u8 gtph_et = gtph->exthdr;
+		__u8 gtph_et = gtph->exthdr_type;
 		__u8 *gtph_e = (__u8 *)(gtph + 1);
 #pragma unroll
 		for (i = 0; gtph_et && i < GTPU_EXTHDR_MAX; i++) {

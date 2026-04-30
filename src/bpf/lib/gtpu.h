@@ -12,7 +12,8 @@ struct gtpuhdr {
 	/* following fields are present if flag & 0x07 is non-zero */
 	__be16		seqnum;
 	__u8		npdu_num;
-	__u8		exthdr;
+	__u8		exthdr_type;
+	__u8		exthdr[];
 } __attribute__ ((__packed__));
 
 #define GTPU_HLEN_SHORT		8
@@ -36,3 +37,11 @@ struct gtpuhdr {
 #define GTPU_TYPE_SUPP_EXTHDR	31
 #define GTPU_TYPE_END_MARKER	254
 #define GTPU_TYPE_TPDU		255
+
+/* GTP-U Extension Header Type */
+#define GTPU_ETYPE_NONE				0
+#define GTPU_ETYPE_UDP_PORT			0x80
+#define GTPU_ETYPE_RAN_CONTAINER		0x81
+#define GTPU_ETYPE_XW_RAN_CONTAINER		0x83
+#define GTPU_ETYPE_NR_RAN_CONTAINER		0x84
+#define GTPU_ETYPE_PDU_SESSION_CONTAINER	0x85
