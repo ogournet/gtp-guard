@@ -275,8 +275,10 @@ MEASURE_NAMES: dict[str, int] = {
 MEASURE_NAMES_INV = {v: k.upper() for k, v in MEASURE_NAMES.items()}
 
 # GTP-U
-GTPU_FLAGS    = 0x30
-GTPU_GPDU     = 0xFF
+GTPU_FLAGS       = 0x30          # Version=1, PT=1
+GTPU_FLAGS_EXT   = 0x34          # Version=1, PT=1, E=1
+GTPU_GPDU        = 0xFF
+GTPU_EXT_PDU_SESSION = 0x85      # PDU Session Container (TS 38.415)
 IP_PROTO_ICMP = 1
 ICMP_ECHO_REQ = 8
 ICMP_ECHO_REP = 0
@@ -467,16 +469,47 @@ def build_ipv4(src: str, dst: str, proto: int, payload: bytes) -> bytes:
                        0x45, 0, tlen, ip_id, 0x4000, 64, proto, csum,
                        socket.inet_aton(src), socket.inet_aton(dst)) + payload
 
-def build_gtpu(teid: int, payload: bytes) -> bytes:
-    return struct.pack("!BBHI", GTPU_FLAGS, GTPU_GPDU, len(payload), teid) + payload
+def build_gtpu(teid: int, payload: bytes, sa5g: bool = False,
+               qfi: int = 1) -> bytes:
+    if not sa5g:
+        return struct.pack("!BBHI", GTPU_FLAGS, GTPU_GPDU,
+                           len(payload), teid) + payload
+    # Extension header: seq(2) + npdu(1) + next_ext_type(1) = 4 bytes
+    # PDU Session Container (UL, type=1): length=1 (4 bytes), 2 bytes content,
+    # next_ext_type=0
+    psc = struct.pack("!BBBB", 1, 0x10, qfi & 0x3F, 0)  # len=1, type=UL|spare, QFI, next=0
+    ext = struct.pack("!HBB", 0, 0, GTPU_EXT_PDU_SESSION) + psc
+    total = len(ext) + len(payload)
+    return (struct.pack("!BBHI", GTPU_FLAGS_EXT, GTPU_GPDU, total, teid)
+            + ext + payload)
 
-def parse_gtpu_icmp_reply(data: bytes) -> dict | None:
+def _gtpu_inner(data: bytes) -> bytes | None:
+    """Extract inner payload from a GTP-U packet, skipping extension headers."""
     if len(data) < 8:
         return None
-    _, msg_type, _, _ = struct.unpack("!BBHI", data[:8])
+    flags, msg_type = data[0], data[1]
     if msg_type != GTPU_GPDU:
         return None
-    inner = data[8:]
+    off = 8
+    if flags & 0x07:                       # any of E, S, PN set
+        if len(data) < 12:
+            return None
+        next_ext = data[11]
+        off = 12
+        while next_ext:                    # walk extension headers
+            if off >= len(data):
+                return None
+            ext_len = data[off] * 4
+            if ext_len == 0 or off + ext_len > len(data):
+                return None
+            next_ext = data[off + ext_len - 1]
+            off += ext_len
+    return data[off:]
+
+def parse_gtpu_icmp_reply(data: bytes) -> dict | None:
+    inner = _gtpu_inner(data)
+    if inner is None:
+        return None
     if len(inner) < 20:
         return None
     ihl   = (inner[0] & 0x0F) * 4
@@ -514,12 +547,9 @@ def build_rs_packet(src_ll: str, dst: str = ALL_ROUTERS_V6) -> bytes:
 
 def parse_gtpu_ra(data: bytes) -> list[tuple[str, int]] | None:
     """Parse GTP-U → IPv6 → ICMPv6 RA.  Returns [(prefix, prefix_len), ...]."""
-    if len(data) < 8:
+    inner = _gtpu_inner(data)
+    if inner is None:
         return None
-    _, msg_type, _, _ = struct.unpack("!BBHI", data[:8])
-    if msg_type != GTPU_GPDU:
-        return None
-    inner = data[8:]
     if len(inner) < 40 or (inner[0] >> 4) != 6:
         return None
     next_hdr = inner[6]
@@ -596,9 +626,11 @@ class GTPUProtocol(asyncio.DatagramProtocol):
 
     def send_ping(self, teid: int, upf_addr: tuple,
                   icmp_id: int, seq: int,
-                  ue_ip: str, dst_ip: str) -> asyncio.Future:
+                  ue_ip: str, dst_ip: str,
+                  sa5g: bool = False) -> asyncio.Future:
         pkt = build_gtpu(teid, build_ipv4(ue_ip, dst_ip, IP_PROTO_ICMP,
-                                          build_icmp_echo_request(icmp_id, seq)))
+                                          build_icmp_echo_request(icmp_id, seq)),
+                         sa5g=sa5g)
         fut = asyncio.get_event_loop().create_future()
         self._pending[icmp_id] = (fut, time.monotonic())
         self.transport.sendto(pkt, upf_addr)
@@ -608,8 +640,9 @@ class GTPUProtocol(asyncio.DatagramProtocol):
 class GTPUSender:
     TIMEOUT = 5.0
 
-    def __init__(self, local_ip: str):
+    def __init__(self, local_ip: str, sa5g: bool = False):
         self.local_ip  = local_ip
+        self.sa5g      = sa5g
         self._proto: GTPUProtocol | None = None
         self._icmp_id  = random.randint(1, 0xFFFE)
         self._icmp_seq = 0
@@ -638,7 +671,8 @@ class GTPUSender:
                      f"upf={sess.upf_gtpu_ip}  teid=0x{sess.upf_teid:08X}  "
                      f"id={icmp_id}  seq={seq}")
             fut = self._proto.send_ping(sess.upf_teid, upf_addr,
-                                        icmp_id, seq, sess.ue_ip, dst_ip)
+                                        icmp_id, seq, sess.ue_ip, dst_ip,
+                                        sa5g=self.sa5g)
             try:
                 r = await asyncio.wait_for(fut, timeout=self.TIMEOUT)
                 log.info(f"GTP-U ← reply from {r['src_ip']}  "
@@ -661,7 +695,8 @@ class GTPUSender:
         upf_addr = (sess.upf_gtpu_ip, GTPU_PORT)
         src_ll   = "fe80::999:666:333"
         pkt      = build_gtpu(sess.upf_teid,
-                              build_rs_packet(src_ll))
+                              build_rs_packet(src_ll),
+                              sa5g=self.sa5g)
         fut = asyncio.get_event_loop().create_future()
         self._proto._ra_waiters.append(fut)
         self._proto.transport.sendto(pkt, upf_addr)
@@ -1759,7 +1794,7 @@ async def hb_sender(smf: SMF, interval: int):
 # ══════════════════════════════════════════════════════════════════════════
 async def amain(args: argparse.Namespace):
     smf  = SMF(args.smf_ip, args.upf_ip, args.upf_port)
-    gtpu = GTPUSender(args.gtpu_ip)
+    gtpu = GTPUSender(args.gtpu_ip, sa5g=args.sa5g)
     await smf.start()
     await gtpu.start()
     stop_event = asyncio.Event()
@@ -1803,6 +1838,8 @@ Examples:
     p.add_argument("--upf-port",    type=int, default=PFCP_PORT)
     p.add_argument("--hb-interval", type=int, default=0,
                    help="Seconds between Heartbeat Requests (0=disabled)")
+    p.add_argument("--5gsa", dest="sa5g", action="store_true", default=False,
+                   help="5G SA mode: add PDU Session Container extension header to GTP-U")
     args = p.parse_args()
     if args.gtpu_ip is None:
         args.gtpu_ip = args.smf_ip

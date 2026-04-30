@@ -358,6 +358,7 @@ EOF
 
 run_with_smf() {
     smf_cmd="ip netns exec cloud python3 ./test/smf.py --smf-ip 192.168.61.193 --upf-ip 192.168.61.194 --gtpu-ip 192.168.61.2 --upf-port 8805"
+    test -n "$smf_5gsa" && smf_cmd+=" --5gsa"
 
     declare -A testset
 
@@ -478,6 +479,7 @@ while [ $# -gt 0 ]; do
 	-l) layout="$2"; shift 2 ;;
 	-c) with_cgn="$2"; shift 2 ;;
 	-t) test_id="$2"; shift 2 ;;
+	-5) smf_5gsa=1; shift ;;
 	*) action=$1; shift ;;
     esac
 done
