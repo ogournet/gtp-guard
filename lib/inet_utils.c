@@ -28,6 +28,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <netinet/tcp.h>
+#include <netinet/ip6.h>
 #include <linux/filter.h>
 #include <linux/ip.h>
 #include <linux/if_packet.h>
@@ -109,6 +110,31 @@ udp_csum(const void *buffer, size_t len, uint32_t src_addr, uint32_t dest_addr)
 	/* Return the one's complement of sum */
 	return (uint16_t)~sum;
 }
+
+/* Compute ipv6 pseudo header checksum */
+uint16_t
+ipv6_pshdr_csum(const struct ip6_hdr *ip6h)
+{
+	uint32_t sum = 0;
+	int i;
+
+	for (i = 0; i < 8; i++)
+		sum += ip6h->ip6_src.s6_addr16[i];
+	for (i = 0; i < 8; i++)
+		sum += ip6h->ip6_dst.s6_addr16[i];
+
+	sum += htons(ip6h->ip6_nxt);
+	sum += ip6h->ip6_plen;
+
+	/* Add the carries */
+	while (sum >> 16)
+		sum = (sum & 0xFFFF) + (sum >> 16);
+
+	/* Return the one's complement of sum */
+	return (uint16_t)~sum;
+}
+
+
 
 /* string to FQDN formating */
 ssize_t

@@ -651,15 +651,6 @@ gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 	return inet_server_snd(&srv->s, srv->s.fd, srv->s.pbuff, &addr_to);
 }
 
-struct ipv6_pseudo_hdr
-{
-	struct in6_addr saddr;
-	struct in6_addr daddr;
-	__be32 len;		/* upper-layer packet length */
-	__u8 zero[3];
-	__u8 nexthdr;
-} __attribute__((packed));
-
 static int
 gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
 	      sockaddr_t *addr_to, const struct in6_addr *dst_addr,
@@ -737,13 +728,7 @@ gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
 	nd_pi->nd_opt_pi_prefix = s->ue_ip.v6;
 
 	/* compute icmpv6 checksum */
-	struct ipv6_pseudo_hdr ph = {
-		.saddr = ip6h->ip6_src,
-		.daddr = ip6h->ip6_dst,
-		.len = ip6h->ip6_plen,
-		.nexthdr = IPPROTO_ICMPV6,
-	};
-        uint16_t csum = in_csum((uint16_t*)&ph, sizeof(ph), 0);
+	uint16_t csum = ipv6_pshdr_csum(ip6h);
 	csum = in_csum((uint16_t*)icmp6, pl_len, ~csum);
 	icmp6->icmp6_cksum = csum;
 
