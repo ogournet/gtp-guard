@@ -14,13 +14,13 @@ Commands (stdin):
   urr clear [<id>]
 
   session add [imsi <d>] [msisdn <d>] [imei <d>]
-              [dnn <n>] [pool <n>]
+              [dnn <n>] [pool <n>] [pdn {v4|v6|v4v6}]
               [enb-ip <ip>] [enb-teid <teid>]
               [urr <id[:nolink],...>]
   session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
                            [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
   session delete <cp_seid>
-  session ping   <cp_seid> [<dst_ip>] [count <n>]
+  session ping   <cp_seid> [<dst_ip>] [count <n>] [v6]
   session rs     <cp_seid>       — send ND Router Solicitation, print RA prefix
   sessions
 
@@ -285,6 +285,8 @@ ICMP_ECHO_REP = 0
 
 # IPv6 / ICMPv6 / NDP
 IP_PROTO_ICMPV6    = 58
+ICMPV6_ECHO_REQ    = 128
+ICMPV6_ECHO_REP    = 129
 ICMPV6_RS          = 133
 ICMPV6_RA          = 134
 ND_OPT_PREFIX_INFO = 3
@@ -545,6 +547,33 @@ def build_rs_packet(src_ll: str, dst: str = ALL_ROUTERS_V6) -> bytes:
     rs = struct.pack("!BBHI", ICMPV6_RS, 0, csum, 0)
     return build_ipv6(src_ll, dst, IP_PROTO_ICMPV6, rs)
 
+def build_icmpv6_echo_request(src: str, dst: str, icmp_id: int, seq: int,
+                              payload: bytes = b"pfcp-smf-ping6\x00\x00") -> bytes:
+    """Build full IPv6 packet with ICMPv6 Echo Request."""
+    src_b = socket.inet_pton(socket.AF_INET6, src)
+    dst_b = socket.inet_pton(socket.AF_INET6, dst)
+    echo = struct.pack("!BBHHH", ICMPV6_ECHO_REQ, 0, 0, icmp_id, seq) + payload
+    csum = _icmpv6_checksum(src_b, dst_b, echo)
+    echo = struct.pack("!BBHHH", ICMPV6_ECHO_REQ, 0, csum, icmp_id, seq) + payload
+    return build_ipv6(src, dst, IP_PROTO_ICMPV6, echo)
+
+def parse_gtpu_icmpv6_echo_reply(data: bytes) -> dict | None:
+    """Parse GTP-U → IPv6 → ICMPv6 Echo Reply."""
+    inner = _gtpu_inner(data)
+    if inner is None or len(inner) < 40 or (inner[0] >> 4) != 6:
+        return None
+    next_hdr = inner[6]
+    if next_hdr != IP_PROTO_ICMPV6:
+        return None
+    src = socket.inet_ntop(socket.AF_INET6, inner[8:24])
+    icmpv6 = inner[40:]
+    if len(icmpv6) < 8:
+        return None
+    t, _, _, icmp_id, seq = struct.unpack("!BBHHH", icmpv6[:8])
+    if t != ICMPV6_ECHO_REP:
+        return None
+    return {"icmp_id": icmp_id, "seq": seq, "src_ip": src}
+
 def parse_gtpu_ra(data: bytes) -> list[tuple[str, int]] | None:
     """Parse GTP-U → IPv6 → ICMPv6 RA.  Returns [(prefix, prefix_len), ...]."""
     inner = _gtpu_inner(data)
@@ -594,6 +623,8 @@ class GTPUProtocol(asyncio.DatagramProtocol):
         recv_time = time.monotonic()
         # IPv4 ICMP echo reply
         result = parse_gtpu_icmp_reply(data)
+        if result is None:
+            result = parse_gtpu_icmpv6_echo_reply(data)
         if result is not None:
             entry = self._pending.pop(result["icmp_id"], None)
             if entry and not entry[0].done():
@@ -636,6 +667,18 @@ class GTPUProtocol(asyncio.DatagramProtocol):
         self.transport.sendto(pkt, upf_addr)
         return fut
 
+    def send_ping6(self, teid: int, upf_addr: tuple,
+                   icmp_id: int, seq: int,
+                   ue_ipv6: str, dst_ip: str,
+                   sa5g: bool = False) -> asyncio.Future:
+        pkt = build_gtpu(teid,
+                         build_icmpv6_echo_request(ue_ipv6, dst_ip, icmp_id, seq),
+                         sa5g=sa5g)
+        fut = asyncio.get_event_loop().create_future()
+        self._pending[icmp_id] = (fut, time.monotonic())
+        self.transport.sendto(pkt, upf_addr)
+        return fut
+
 
 class GTPUSender:
     TIMEOUT = 5.0
@@ -657,22 +700,34 @@ class GTPUSender:
         if self._proto and self._proto.transport:
             self._proto.transport.close()
 
-    async def ping(self, sess: Session, dst_ip: str = "8.8.8.8", count: int = 1) -> int:
-        if not sess.ue_ip or not sess.upf_gtpu_ip or not sess.upf_teid:
-            log.error("Session missing UE IP or UPF GTP-U endpoint")
-            return 0
+    async def ping(self, sess: Session, dst_ip: str = "8.8.8.8",
+                   count: int = 1, v6: bool = False) -> int:
+        if v6:
+            if not sess.ue_ipv6 or not sess.upf_gtpu_ip or not sess.upf_teid:
+                log.error("Session missing UE IPv6 or UPF GTP-U endpoint")
+                return 0
+        else:
+            if not sess.ue_ip or not sess.upf_gtpu_ip or not sess.upf_teid:
+                log.error("Session missing UE IP or UPF GTP-U endpoint")
+                return 0
+        ue_src = sess.ue_ipv6 if v6 else sess.ue_ip
         upf_addr = (sess.upf_gtpu_ip, GTPU_PORT)
         ok = 0
         for i in range(count):
             self._icmp_seq = (self._icmp_seq + 1) & 0xFFFF
             icmp_id        = self._icmp_id
             seq            = self._icmp_seq
-            log.info(f"GTP-U → ping {dst_ip}  ue={sess.ue_ip}  "
+            log.info(f"GTP-U → ping{'6' if v6 else ''} {dst_ip}  ue={ue_src}  "
                      f"upf={sess.upf_gtpu_ip}  teid=0x{sess.upf_teid:08X}  "
                      f"id={icmp_id}  seq={seq}")
-            fut = self._proto.send_ping(sess.upf_teid, upf_addr,
-                                        icmp_id, seq, sess.ue_ip, dst_ip,
-                                        sa5g=self.sa5g)
+            if v6:
+                fut = self._proto.send_ping6(sess.upf_teid, upf_addr,
+                                             icmp_id, seq, ue_src, dst_ip,
+                                             sa5g=self.sa5g)
+            else:
+                fut = self._proto.send_ping(sess.upf_teid, upf_addr,
+                                            icmp_id, seq, ue_src, dst_ip,
+                                            sa5g=self.sa5g)
             try:
                 r = await asyncio.wait_for(fut, timeout=self.TIMEOUT)
                 log.info(f"GTP-U ← reply from {r['src_ip']}  "
@@ -757,11 +812,11 @@ def ie_fteid(teid: int, ip: str) -> bytes:
     return _ie(IET.FTEID,
                bytes([FTEID_V4]) + struct.pack("!I", teid) + socket.inet_aton(ip))
 
-def ie_ue_ip_address_ul() -> bytes:
-    return _ie(IET.UE_IP_ADDRESS, bytes([UEIP_CHV4 | UEIP_CHV6 | UEIP_SD]))
+def ie_ue_ip_address_ul(pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
+    return _ie(IET.UE_IP_ADDRESS, bytes([pdn | UEIP_SD]))
 
-def ie_ue_ip_address_dl() -> bytes:
-    return _ie(IET.UE_IP_ADDRESS, bytes([UEIP_CHV4 | UEIP_CHV6]))
+def ie_ue_ip_address_dl(pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
+    return _ie(IET.UE_IP_ADDRESS, bytes([pdn]))
 
 def ie_far_id(v: int) -> bytes:
     return _ie(IET.FAR_ID, struct.pack("!I", v))
@@ -853,29 +908,31 @@ def ie_user_id(msisdn: str | None = None,
 # ══════════════════════════════════════════════════════════════════════════
 #  PFCP IE builders — grouped
 # ══════════════════════════════════════════════════════════════════════════
-def ie_pdi_ul(network_instance: str) -> bytes:
+def ie_pdi_ul(network_instance: str, pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
     return _ie(IET.PDI,
                ie_source_interface(IF_ACCESS)        +
                ie_network_instance(network_instance) +
                ie_fteid_ch()                         +
-               ie_ue_ip_address_ul())
+               ie_ue_ip_address_ul(pdn))
 
-def ie_pdi_dl(network_instance: str) -> bytes:
+def ie_pdi_dl(network_instance: str, pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
     return _ie(IET.PDI,
                ie_source_interface(IF_CORE)          +
                ie_network_instance(network_instance) +
-               ie_ue_ip_address_dl())
+               ie_ue_ip_address_dl(pdn))
 
-def ie_create_pdr_ul(network_instance: str, urr_ids: list[int]) -> bytes:
+def ie_create_pdr_ul(network_instance: str, urr_ids: list[int],
+                     pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
     return _ie(IET.CREATE_PDR,
                ie_pdr_id(1) + ie_precedence(100) +
-               ie_pdi_ul(network_instance) + ie_far_id(1) +
+               ie_pdi_ul(network_instance, pdn) + ie_far_id(1) +
                b"".join(ie_urr_id(u) for u in urr_ids))
 
-def ie_create_pdr_dl(network_instance: str, urr_ids: list[int]) -> bytes:
+def ie_create_pdr_dl(network_instance: str, urr_ids: list[int],
+                     pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
     return _ie(IET.CREATE_PDR,
                ie_pdr_id(2) + ie_precedence(200) +
-               ie_pdi_dl(network_instance) + ie_far_id(2) +
+               ie_pdi_dl(network_instance, pdn) + ie_far_id(2) +
                b"".join(ie_urr_id(u) for u in urr_ids))
 
 def ie_create_far_ul() -> bytes:
@@ -1172,6 +1229,7 @@ class SMF:
         enb_teid:         int | None = None,
         urr_ids:          list[int] | None = None,
         pdr_urr_ids:      list[int] | None = None,
+        pdn:              int = UEIP_CHV4 | UEIP_CHV6,
     ) -> Session | None:
         if urr_ids is None:
             urr_ids = list(self.urr_configs.keys())
@@ -1193,8 +1251,8 @@ class SMF:
         body = (
             ie_node_id_ipv4(self.local_ip)                            +
             ie_fseid(cp_seid, self.local_ip)                          +
-            ie_create_pdr_ul(network_instance, pdr_urr_ids)           +
-            ie_create_pdr_dl(network_instance, pdr_urr_ids)           +
+            ie_create_pdr_ul(network_instance, pdr_urr_ids, pdn)      +
+            ie_create_pdr_dl(network_instance, pdr_urr_ids, pdn)      +
             ie_create_far_ul()                                        +
             far_dl                                                    +
             b"".join(ie_create_urr_from_config(self.urr_configs[uid])
@@ -1444,9 +1502,10 @@ HELP_TEXT = """\
 
 ── Session ───────────────────────────────────────────────────────────────
   session add [imsi <d>] [msisdn <d>] [imei <d>]
-              [dnn <n>] [pool <n>]
+              [dnn <n>] [pool <n>] [pdn {v4|v6|v4v6}]
               [enb-ip <ip>] [enb-teid <teid>]
               [urr <id[:nolink],...>]
+      pdn: PDN type — v4 (IPv4 only), v6 (IPv6 only), v4v6 (dual-stack, default).
       id:nolink — include URR in establish request but do not reference it in PDR.
 
   session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
@@ -1456,7 +1515,8 @@ HELP_TEXT = """\
       qaurr: set PFCPSMREQ-Flags QAURR bit (query all URRs).
 
   session delete <cp_seid>
-  session ping   <cp_seid> [<dst_ip>] [count <n>]
+  session ping   <cp_seid> [<dst_ip>] [count <n>] [v6]
+      v6: send ICMPv6 Echo Request using the session's UE IPv6 address.
   session rs     <cp_seid>
       Send ND Router Solicitation via GTP-U and print the RA prefix(es).
   sessions
@@ -1553,6 +1613,13 @@ def parse_session_add(tokens: list[str]) -> dict:
             case "pool":     params["pool_name"]        = next(it)
             case "enb-ip":   params["enb_ip"]           = next(it)
             case "enb-teid": params["enb_teid"]         = int(next(it), 0)
+            case "pdn":
+                pdn_map = {"v4": UEIP_CHV4, "v6": UEIP_CHV6,
+                           "v4v6": UEIP_CHV4 | UEIP_CHV6}
+                val = next(it)
+                if val not in pdn_map:
+                    raise ValueError(f"pdn must be v4, v6, or v4v6 (got {val!r})")
+                params["pdn"] = pdn_map[val]
             case "urr":
                 all_ids, pdr_ids = [], []
                 for tok in next(it).split(","):
@@ -1583,13 +1650,16 @@ def parse_session_modify(tokens: list[str]) -> dict:
     return params
 
 
-def parse_session_ping(tokens: list[str]) -> tuple[str, int]:
-    dst_ip, count = "8.8.8.8", 1
+def parse_session_ping(tokens: list[str]) -> tuple[str, int, bool]:
+    dst_ip, count, v6 = None, 1, False
     it = iter(tokens)
     for tok in it:
-        if tok == "count": count = int(next(it))
-        else:              dst_ip = tok
-    return dst_ip, count
+        if   tok == "count": count = int(next(it))
+        elif tok == "v6":    v6 = True
+        else:                dst_ip = tok
+    if dst_ip is None:
+        dst_ip = "2001:4860:4860::8888" if v6 else "8.8.8.8"
+    return dst_ip, count, v6
 
 
 def parse_expect_report(tokens: list[str]) -> dict:
@@ -1708,9 +1778,10 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                     if sess is None:
                         print(f"error: unknown cp_seid {seid_str}", flush=True)
                     else:
-                        dst_ip, count = parse_session_ping(rest)
-                        ok = await gtpu.ping(sess, dst_ip=dst_ip, count=count)
-                        print(f"ping {ok}/{count} replies from {dst_ip}", flush=True)
+                        dst_ip, count, v6 = parse_session_ping(rest)
+                        ok = await gtpu.ping(sess, dst_ip=dst_ip, count=count, v6=v6)
+                        print(f"ping{'6' if v6 else ''} {ok}/{count} replies from {dst_ip}",
+                              flush=True)
 
                 case ["session", "rs", seid_str]:
                     sess = smf.sessions.get(int(seid_str, 0))

@@ -430,6 +430,15 @@ pause 1
 session delete 1
 EOF
 
+    _hash_set testset v6only <<EOF
+urr set id 66 measure volume,duration inactivity 5
+urr set id 55 triggers quhti measure volume qht 5
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 66,55 pdn v6
+session rs 1
+session ping 1 8::8 count 3 v6
+session delete 1
+EOF
+
     # volume quota
     smf_basic_urr testset volqu1			\
     "triggers volqu measure volume volquota total 120"	\
@@ -475,7 +484,6 @@ with_cgn=no
 action=setup
 while [ $# -gt 0 ]; do
     case "$1" in
-	-a) action="$2"; shift 2 ;;
 	-l) layout="$2"; shift 2 ;;
 	-c) with_cgn="$2"; shift 2 ;;
 	-t) test_id="$2"; shift 2 ;;

@@ -11,6 +11,7 @@ bpf_sources = files(
   'gtp_mirror.c',
   'mape.c',
   'upf.c',
+  'upf_mape.c',
   'upf_cgn.c',
 #  'test_cgn.c',
   'xdp_pass.c',

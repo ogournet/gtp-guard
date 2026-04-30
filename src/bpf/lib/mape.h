@@ -293,40 +293,51 @@ mape_encap(struct xdp_md *ctx, struct if_rule_data *d)
 
 
 /*
- * uplink traffic, remove ipv6 encap header and fwd ipv4.
+ * uplink traffic.
  *
- * as it comes from trusted source, do not check inner ipv4.
+ * check first if it's encapsulated map-e traffic: ipv6->nh and
+ *  ipv6->daddr[10..13] matching inner_ipv4->daddr
  */
-static __no_inline int
+static __always_inline int
 mape_decap(struct xdp_md *ctx, struct if_rule_data *d)
 {
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
 	struct ipv6hdr *ip6h;
+	struct iphdr *ip4h;
 	void *payload;
-	__u32 dst_addr;
+	__be32 src_addr;
 	__u8 nh;
 
 	ip6h = data + d->pl_off;
 	if (d->pl_off > 256 || (void *)(ip6h + 1) > data_end)
 		return XDP_DROP;
 
-	dst_addr =
-		(ip6h->daddr.s6_addr[10]) |
-		(ip6h->daddr.s6_addr[11] << 8) |
-		(ip6h->daddr.s6_addr[12] << 16) |
-		(ip6h->daddr.s6_addr[13] << 24);
-
 	payload = ipv6_skip_exthdr(ip6h, data_end, &nh);
-	if (payload == NULL || nh != IPPROTO_IPIP)
+	if (payload == NULL)
 		return XDP_DROP;
+
+	if (nh != IPPROTO_IPIP)
+		return XDP_IFR_NOT_HANDLED;
+
+	ip4h = payload;
+	if ((void *)(ip4h + 1) > data_end)
+		return XDP_DROP;
+
+	src_addr =
+		(ip6h->saddr.s6_addr[10]) |
+		(ip6h->saddr.s6_addr[11] << 8) |
+		(ip6h->saddr.s6_addr[12] << 16) |
+		(ip6h->saddr.s6_addr[13] << 24);
+	if (src_addr != ip4h->saddr)
+		return XDP_IFR_NOT_HANDLED;
+
+	/* to resolve nh */
+	d->dst_addr.ip4 = ip4h->daddr;
 
 	if (bpf_xdp_adjust_head(ctx, payload - (void *)ip6h) < 0)
 		return XDP_DROP;
 	d->flags |= IF_RULE_FL_XDP_ADJUSTED;
-
-	/* to resolve nh */
-	d->dst_addr.ip4 = dst_addr;
 
 	return XDP_IFR_FORWARD;
 }

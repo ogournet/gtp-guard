@@ -8,7 +8,6 @@ clean() {
     clean_netns "cloud"
 }
 
-# MAPE_BR has everything on one interface
 setup_combined() {
     setup_netns "cloud"
     sleep 0.5
@@ -95,31 +94,36 @@ EOF
 
     sleep 1
     
-#     send_py_pkt cloud veth0 "
-# p = [Ether(src='d2:ad:ca:fe:aa:01', dst='d2:f0:0c:ba:bb:01') /
-#   IPv6(src='2a01:e456::55', dst='2a01:ffff::1', nh=4) /
-#   IP(src='87.12.255.85 ', dst='8.8.8.8') /
-#   ICMP(type='echo-request', id=18000, seq=33),
-# ]
-# "
-
     send_py_pkt cloud veth0 "
 p = [Ether(src='d2:ad:ca:fe:aa:01', dst='d2:f0:0c:ba:bb:01') /
-  IPv6(src='2a01:e456::55', dst='2a01:ffff::1', nh=4) /
-  IP(src='87.12.255.85', dst='8.8.8.8') /
-  ICMP(type='echo-request', id=38000, seq=33) /
-  Raw('X' + 'Y' * 1820 + 'Z')
+  IPv6(src='2a01:e456::570c:ff55:1', dst='2a01:ffff::1', nh=4) /
+  IP(src='87.12.255.85 ', dst='8.8.8.8') /
+  ICMP(type='echo-request', id=18000, seq=33),
 ]
-p = fragment(p, fragsize=1400)
 "
+
+#     send_py_pkt cloud veth0 "
+# p = [Ether(src='d2:ad:ca:fe:aa:01', dst='d2:f0:0c:ba:bb:01') /
+#   IPv6(src='2a01:e456::570c:ff55:1', dst='2a01:ffff::1', nh=4) /
+#   IP(src='87.12.255.85', dst='8.8.8.8') /
+#   ICMP(type='echo-request', id=38000, seq=33) /
+#   Raw('X' + 'Y' * 1820 + 'Z')
+# ]
+# p = fragment(p, fragsize=1400)
+# "
 
     sleep 1
     echo "done"
 }
 
-
-action=${1:-setup}
-type=${2:-combined}
+action=setup
+layout=combined
+while [ $# -gt 0 ]; do
+    case "$1" in
+	-l) layout="$2"; shift 2 ;;
+	*) action=$1; shift ;;
+    esac
+done
 
 case $action in
     clean)
@@ -127,9 +131,9 @@ case $action in
     setup)
 	clean
 	sleep 0.5
-	setup_$type ;;
+	setup_$layout ;;
     run)
-	run_$type ;;
+	run_$layout ;;
     pkt)
 	pkt ;;
 

@@ -211,7 +211,7 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
  *	Ingress direction (UE pov), ipv6 traffic from internet
  */
 static __always_inline int
-upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
+_upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
 {
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
@@ -233,6 +233,13 @@ upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
 	return _encap_gtpu(ctx, d, u, 1);
 }
 
+static __no_inline int
+upf_handle_pubv6(struct xdp_md *ctx, struct if_rule_data *d)
+{
+	return _upf_handle_pubv6(ctx, d);
+}
+
+
 /*
  *	Ingress direction (UE pov), ipv4 traffic from internet
  */
@@ -246,7 +253,7 @@ upf_handle_pub(struct xdp_md *ctx, struct if_rule_data *d)
 	struct iphdr *iph;
 
 	if (d->flags & IF_RULE_FL_SRC_IPV6)
-		return upf_handle_pubv6(ctx, d);
+		return _upf_handle_pubv6(ctx, d);
 
 	/* lookup user */
 	iph = (struct iphdr *)(data + d->pl_off);
@@ -295,7 +302,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		   &iph->daddr, bpf_ntohs(udph->dest), bpf_ntohl(gtph->teid),
 		   u == NULL ? " => NOT FOUND" : "");
 	if (u == NULL)
-		return XDP_DROP;
+		return XDP_IFR_NOT_HANDLED;
 
 	capture_xdp_to_userspc_in(ctx, &u->capture, BPF_CAPTURE_EFL_INPUT |
 				  BPF_CAPTURE_EFL_ACCESS);
@@ -442,7 +449,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 /*
  *	Egress direction (UE pov), traffic from GTP-U endpoint
  */
-static __attribute__((noinline)) int
+static __no_inline int
 upf_handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d)
 {
 	void *data = (void *)(long)ctx->data;
@@ -456,14 +463,16 @@ upf_handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d)
 		return XDP_DROP;
 
 	if (iph->protocol != IPPROTO_UDP)
-		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ? XDP_PASS : XDP_DROP;
+		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ?
+			XDP_PASS : XDP_IFR_NOT_HANDLED;
 
 	udph = (void *)(iph) + iph->ihl * 4;
 	if (udph + 1 > data_end)
 		return XDP_DROP;
 
 	if (udph->dest != __constant_htons(GTPU_PORT))
-		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ? XDP_PASS : XDP_DROP;
+		return (d->flags & IF_RULE_FL_IS_LOCAL_DST) ?
+			XDP_PASS : XDP_IFR_NOT_HANDLED;
 
 	return _handle_gtpu(ctx, d, iph, udph);
 }
@@ -472,7 +481,7 @@ upf_handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d)
 /*
  *	Choose between gtp-u and l3 side
  */
-static __attribute__((noinline)) int
+static __no_inline int
 upf_traffic_selector(struct xdp_md *ctx, struct if_rule_data *d)
 {
 	void *data = (void *)(long)ctx->data;
@@ -481,7 +490,7 @@ upf_traffic_selector(struct xdp_md *ctx, struct if_rule_data *d)
 	struct udphdr *udph;
 
 	if (d->flags & IF_RULE_FL_SRC_IPV6)
-		return upf_handle_pubv6(ctx, d);
+		return _upf_handle_pubv6(ctx, d);
 
 	/* check input gtp-u (proto udp and port) */
 	iph = (struct iphdr *)(data + d->pl_off);

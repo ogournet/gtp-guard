@@ -20,8 +20,11 @@ int upf_entry(struct xdp_md *ctx)
 		return action;
 
 	/* phase 2: execute action */
-	if (action == XDP_IFR_DEFAULT_ROUTE)
+	if (action == XDP_IFR_DEFAULT_ROUTE) {
 		action = upf_traffic_selector(ctx, &d);
+		if (action == XDP_IFR_NOT_HANDLED)
+			action = XDP_DROP;
+	}
 
 	/* phase 3: rewrite to dst interface */
 	if (action == XDP_IFR_FORWARD)

@@ -26,6 +26,8 @@ int mape_entry(struct xdp_md *ctx)
 			action = mape_encap(ctx, &d);
 	}
 
+	if (action == XDP_IFR_NOT_HANDLED)
+		return XDP_DROP;
 	if (action == XDP_IFR_FORWARD)
 		return if_rule_rewrite_pkt(ctx, &d);
 

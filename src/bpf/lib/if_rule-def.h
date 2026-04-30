@@ -3,6 +3,7 @@
 #pragma once
 
 /* extends XDP_PASS, XDP_DROP, ... */
+#define XDP_IFR_NOT_HANDLED	7
 #define XDP_IFR_DEFAULT_ROUTE	8
 #define XDP_IFR_FORWARD		9
 
