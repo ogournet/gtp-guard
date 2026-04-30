@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 #include "inet_server.h"
+#include "bpf/lib/gtpu.h"
 
 /* Flags */
 enum gtp_flags {
@@ -44,8 +45,6 @@ enum gtp_flags {
 #define GTP_MAX_PACKET_SIZE		4096
 #define GTPV1C_HEADER_LEN_SHORT		8
 #define GTPV1C_HEADER_LEN_LONG		12
-#define GTPV1U_HEADER_LEN		8
-#define GTPV1U_EXTENSION_HEADER_LEN	4
 #define GTPV2C_HEADER_LEN		12
 #define GTP_TEID_LEN			4
 #define GTP_C_PORT			2123
@@ -114,20 +113,6 @@ enum gtp_flags {
 #define GTP_FL_PDN_IPV4					(1 << 0)
 #define GTP_FL_PDN_IPV6					(1 << 1)
 
-/* GTP-U Message Type */
-#define GTPU_ECHO_REQ_TYPE				1
-#define GTPU_ECHO_RSP_TYPE				2
-#define GTPU_ERR_IND_TYPE				26
-#define GTPU_SUPP_EXTHDR_NOTI_TYPE			31
-#define GTPU_END_MARKER_TYPE				254
-#define GTPU_GPDU_TYPE					255
-
-/* GTP-U Flags */
-#define GTPU_FL_PN					(1 << 0)
-#define GTPU_FL_S					(1 << 1)
-#define GTPU_FL_E					(1 << 2)
-#define GTPU_FL_PT					(1 << 4)
-#define GTPU_FL_V					(1 << 5)
 
 /*
  *	GTPv1 IE
@@ -496,6 +481,8 @@ struct gtp_ie_apn_restriction {
 /*
  *	GTP Protocol headers
  */
+
+/* GTPv2-C (TS 29.274) */
 struct gtp_hdr {
 	union {
 		struct {
@@ -529,6 +516,7 @@ struct gtp_hdr {
 } __attribute__((packed));
 
 
+/* GTPv1-C (TS 29.060) */
 struct gtp1_hdr {
 	union {
 		struct {

@@ -113,34 +113,6 @@ struct gre_hdr_pptp
 
 #endif
 
-/*********************************/
-/* gtp-u stuff */
-
-struct gtphdr {
-	__u8		flags;
-	__u8		type;
-	__be16		length;
-	__be32		teid;
-	/* following fields are present if flag & 0x07 is non-zero */
-	__be16		seqnum;
-	__u8		npdu_num;
-	__u8		exthdr;
-} __attribute__ ((__packed__));
-
-#define GTP_HDR_LEN_SHORT	8
-#define GTP_HDR_LEN_LONG	12
-#define GTP_TYPE_TPDU		0xff
-#define GTP_FL_VERSION_MASK	0xe0
-#define GTP_FL_V1		0x20
-#define GTP_FL_GTP		0x10
-#define GTP_FL_EXTHDR		0x04
-#define GTP_FL_SEQ_NUM		0x02
-#define GTP_FL_NPDU_NUM		0x01
-#define GTPU_PORT		2152
-#define GTPC_PORT		2123
-#define GTPU_ECHO_REQ_TYPE	1
-
-#define GTP_EXTHDR_MAX		2
 
 /*********************************/
 /* checksum helpers */

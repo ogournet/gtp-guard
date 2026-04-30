@@ -9,6 +9,7 @@
 #include <bpf_helpers.h>
 #include <bpf_endian.h>
 
+#include "gtpu.h"
 #include "upf-def.h"
 #include "capture.h"
 #include "if_rule.h"
@@ -86,9 +87,9 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	struct upf_urr *uu;
 	struct iphdr *iph;
 	struct udphdr *udph;
-	struct gtphdr *gtph;
+	struct gtpuhdr *gtph;
 	void *data, *data_end;
-	int adjust_sz, pkt_len;
+	int adjust_sz, pl_len;
 	__u32 csum = 0;
 
 	capture_xdp_to_userspc_in(ctx, &u->capture, BPF_CAPTURE_EFL_INPUT |
@@ -105,7 +106,7 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 		upf_li_pkt(ctx, u, d->pl_off, UPF_LI_FL_DIR_INGRESS);
 
 	/* encap in gtp-u, make room */
-	adjust_sz = sizeof(*iph) + sizeof(*udph) + GTP_HDR_LEN_SHORT;
+	adjust_sz = sizeof(*iph) + sizeof(*udph) + GTPU_HLEN_SHORT;
 	if (u->flags & UPF_FWD_FL_GTP_EXTHDR)
 		adjust_sz += 8;
 	if (bpf_xdp_adjust_head(ctx, -adjust_sz) < 0)
@@ -119,17 +120,17 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 #if __clang_major__ == 21 && __clang_minor__ == 1
 	/* fix '32-bit pointer arithmetic prohibited'.
 	 * this could be a clang bug and should be removed */
-	pkt_len = data_end - data;
-	barrier_var(pkt_len);
-	pkt_len -= d->pl_off;
+	pl_len = data_end - data;
+	barrier_var(pl_len);
+	pl_len -= d->pl_off;
 #else
-	pkt_len = data_end - data - d->pl_off;
+	pl_len = data_end - data - d->pl_off;
 #endif
 
 	/* then write encap headers */
 	iph = data + d->pl_off;
 	udph = (struct udphdr *)(iph + 1);
-	gtph = (struct gtphdr *)(udph + 1);
+	gtph = (struct gtpuhdr *)(udph + 1);
 	if (d->pl_off > 256 || (void *)(gtph + 1) > data_end)
 		goto drop;
 
@@ -137,7 +138,7 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	iph->ihl = 5;
 	iph->protocol = IPPROTO_UDP;
 	iph->tos = 0;
-	iph->tot_len = bpf_htons(pkt_len);
+	iph->tot_len = bpf_htons(pl_len);
 	iph->id = 0;
 	iph->frag_off = 0;
 	iph->ttl = 64;
@@ -147,20 +148,20 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	csum_ipv4(iph, sizeof(*iph), &csum);
 	iph->check = csum;
 
-	pkt_len -= sizeof(*iph);
+	pl_len -= sizeof(*iph);
 	udph->source = u->gtpu_local_port;
 	udph->dest = u->gtpu_remote_port;
-	udph->len = bpf_htons(pkt_len);
+	udph->len = bpf_htons(pl_len);
 	udph->check = 0;
 
-	pkt_len -= sizeof(*udph) + GTP_HDR_LEN_SHORT;
-	gtph->flags = GTP_FL_V1 | GTP_FL_GTP;
-	gtph->type = GTP_TYPE_TPDU;
-	gtph->length = bpf_htons(pkt_len);
+	pl_len -= sizeof(*udph) + GTPU_HLEN_SHORT;
+	gtph->flags = GTPU_FL_V1 | GTPU_FL_PT;
+	gtph->type = GTPU_TYPE_TPDU;
+	gtph->length = bpf_htons(pl_len);
 	gtph->teid = u->gtpu_remote_teid;
 	if (u->flags & UPF_FWD_FL_GTP_EXTHDR) {
-		pkt_len -= 8;
-		gtph->flags |= GTP_FL_EXTHDR;
+		pl_len -= 8;
+		gtph->flags |= GTPU_FL_E;
 		gtph->seqnum = 0;
 		gtph->npdu_num = 0;
 		gtph->exthdr = 0x85;
@@ -178,16 +179,16 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	/* metrics */
 	if (v6) {
 		++u->fwd_v6_pkt;
-		u->fwd_v6_bytes += pkt_len;
+		u->fwd_v6_bytes += pl_len;
 	} else {
 		++u->fwd_v4_pkt;
-		u->fwd_v4_bytes += pkt_len;
+		u->fwd_v4_bytes += pl_len;
 	}
 	++uu->dl_pkt;
-	uu->dl_bytes += pkt_len;
+	uu->dl_bytes += pl_len;
 
 	UPF_DBG("to_gtpu: encap len:%d teid:0x%08x src:%pI4:%d dst:%pI4:%d",
-		pkt_len, bpf_ntohl(u->gtpu_remote_teid),
+		pl_len, bpf_ntohl(u->gtpu_remote_teid),
 		&iph->saddr, bpf_ntohs(u->gtpu_local_port),
 		&iph->daddr, bpf_ntohs(u->gtpu_remote_port));
 
@@ -274,12 +275,12 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	struct upf_urr *uu;
 	struct iphdr *ip4h_inner = NULL;
 	struct ipv6hdr *ip6h_inner;
-	struct gtphdr *gtph;
+	struct gtpuhdr *gtph;
 	int adjust_sz, pkt_len, i;
 	__u16 gtph_len;
 	__u32 sum;
 
-	gtph = (struct gtphdr *)(udph + 1);
+	gtph = (struct gtpuhdr *)(udph + 1);
 	if (gtph + 1 > data_end)
 		return XDP_DROP;
 
@@ -307,12 +308,12 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	if (uu->flags & UPF_FL_QUOTA_REACHED)
 		goto drop;
 
-	if (gtph->flags & GTP_FL_EXTHDR) {
-		gtph_len = GTP_HDR_LEN_LONG;
+	if (gtph->flags & GTPU_FL_E) {
+		gtph_len = GTPU_HLEN_LONG;
 		__u8 gtph_et = gtph->exthdr;
 		__u8 *gtph_e = (__u8 *)(gtph + 1);
 #pragma unroll
-		for (i = 0; gtph_et && i < GTP_EXTHDR_MAX; i++) {
+		for (i = 0; gtph_et && i < GTPU_EXTHDR_MAX; i++) {
 			if (unlikely(gtph_e + 1 > data_end))
 				return XDP_DROP;
 			__u8 gtph_el = *gtph_e << 2;
@@ -322,15 +323,15 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 			gtph_len += gtph_el;
 		}
 		if (unlikely(gtph_et)) {
-			UPF_DBG("increase GTP_EXTHDR_MAX");
+			UPF_DBG("increase GTPU_EXTHDR_MAX");
 			return XDP_DROP;
 		}
 
-	} else if (gtph->flags & (GTP_FL_SEQ_NUM | GTP_FL_NPDU_NUM)) {
-		gtph_len = GTP_HDR_LEN_LONG;
+	} else if (gtph->flags & (GTPU_FL_S | GTPU_FL_PN)) {
+		gtph_len = GTPU_HLEN_LONG;
 
 	} else {
-		gtph_len = GTP_HDR_LEN_SHORT;
+		gtph_len = GTPU_HLEN_SHORT;
 	}
 
 #if __clang_major__ == 21 && __clang_minor__ == 1

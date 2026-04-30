@@ -667,15 +667,15 @@ gtp_foreach_ie(uint8_t type, uint8_t *buffer, size_t buffer_offset, uint8_t *buf
 ssize_t
 gtpu_get_header_len(struct pkt_buffer *buffer)
 {
-	struct gtp_hdr *gtph = (struct gtp_hdr *) buffer->head;
-	ssize_t len = GTPV1U_HEADER_LEN;
+	struct gtpuhdr *gtph = (struct gtpuhdr *) buffer->head;
+	ssize_t len = GTPU_HLEN_SHORT;
 	uint8_t *ext_h = NULL;
 
 	if (pkt_buffer_len(buffer) < len)
 		return -1;
 
 	if (gtph->flags & GTPU_FL_E) {
-		len += GTPV1U_EXTENSION_HEADER_LEN;
+		len += 4;
 
 		if (pkt_buffer_len(buffer) < len)
 			return -1;
@@ -909,27 +909,27 @@ static const struct gtp_msg_type_map gtpc_msg_type2str[1 << 8] = {
 };
 
 static const struct gtp_msg_type_map gtpu_msg_type2str[1 << 8] = {
-	[GTPU_ECHO_REQ_TYPE] = {
+	[GTPU_TYPE_ECHO_REQ] = {
 		.name = "echo-request",
 		.description = "Used to verify path connectivity in GTP-U (Echo Request)."
 	},
-	[GTPU_ECHO_RSP_TYPE] = {
+	[GTPU_TYPE_ECHO_RSP] = {
 		.name = "echo-response",
 		.description = "Response confirming path connectivity (Echo Response)."
 	},
-	[GTPU_ERR_IND_TYPE] = {
+	[GTPU_TYPE_ERROR_IND] = {
 		.name = "error-indication",
 		.description = "Indicates an error in the user-plane path (e.g., TEID mismatch)."
 	},
-	[GTPU_SUPP_EXTHDR_NOTI_TYPE] = {
+	[GTPU_TYPE_SUPP_EXTHDR] = {
 		.name = "support-extension-headers-notification",
 		.description = "Notification that the GTP-U entity supports extension headers."
 	},
-	[GTPU_END_MARKER_TYPE] = {
+	[GTPU_TYPE_END_MARKER] = {
 		.name = "end-marker",
 		.description = "Marks the end of data forwarding during a handover procedure."
 	},
-	[GTPU_GPDU_TYPE] = {
+	[GTPU_TYPE_TPDU] = {
 		.name = "gtp-u",
 		.description = "The G-PDU (payload) message that carries user data over GTP-U."
 	},

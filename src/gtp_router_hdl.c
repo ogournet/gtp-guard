@@ -1357,7 +1357,7 @@ gtpu_echo_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 	struct gtp1_ie_recovery *rec;
 
 	/* 3GPP.TS.129.060 7.2.2 : IE Recovery is mandatory in response message */
-	h->type = GTPU_ECHO_RSP_TYPE;
+	h->type = GTPU_TYPE_ECHO_RSP;
 	h->length = htons(ntohs(h->length) + sizeof(*rec));
 	pkt_buffer_set_end_pointer(srv->s.pbuff, gtp1_get_header_len(h));
 	pkt_buffer_set_data_pointer(srv->s.pbuff, gtp1_get_header_len(h));
@@ -1385,9 +1385,9 @@ gtpu_end_marker_hdl(struct gtp_server *s, sockaddr_t *addr)
 static const struct {
 	int (*hdl) (struct gtp_server *, sockaddr_t *);
 } gtpu_msg_hdl[0xff + 1] = {
-	[GTPU_ECHO_REQ_TYPE]			= { gtpu_echo_request_hdl },
-	[GTPU_ERR_IND_TYPE]			= { gtpu_error_indication_hdl },
-	[GTPU_END_MARKER_TYPE]			= { gtpu_end_marker_hdl	},
+	[GTPU_TYPE_ECHO_REQ]			= { gtpu_echo_request_hdl },
+	[GTPU_TYPE_ERROR_IND]			= { gtpu_error_indication_hdl },
+	[GTPU_TYPE_END_MARKER]			= { gtpu_end_marker_hdl	},
 };
 
 int

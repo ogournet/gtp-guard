@@ -28,6 +28,7 @@
 #include <linux/udp.h>
 #include <bpf_helpers.h>
 
+#include "gtpu.h"
 #include "gtp_fwd-def.h"
 #include "if_rule.h"
 #include "tools.h"
@@ -119,7 +120,7 @@ gtpu_xlat_iph(struct iphdr *iph, __be32 saddr, __be32 daddr)
 
 static __always_inline void
 gtpu_xlat_header(struct gtp_teid_rule *rule, struct iphdr *iph, struct udphdr *udph,
-		 struct gtphdr *gtph)
+		 struct gtpuhdr *gtph)
 {
 	/* Phase 0 : update udp checksum, if set */
 	if (udph->check) {
@@ -219,7 +220,7 @@ gtp_fwd_handle_ipip(struct xdp_md *ctx, struct if_rule_data *d)
 	struct gtp_teid_rule *rule;
 	struct iphdr *iph;
 	struct udphdr *udph;
-	struct gtphdr *gtph = NULL;
+	struct gtpuhdr *gtph = NULL;
 	int offset = d->pl_off;
 	__u16 frag_off = 0, ipfl = 0;
 
@@ -263,7 +264,7 @@ gtp_fwd_handle_ipip(struct xdp_md *ctx, struct if_rule_data *d)
 		return XDP_DROP;
 
 	/* Punt into netstack GTP-U echo request */
-	if (gtph->type == GTPU_ECHO_REQ_TYPE)
+	if (gtph->type == GTPU_TYPE_ECHO_REQ)
 		return XDP_PASS;
 
 	/* Perform xlat if needed */
@@ -293,7 +294,7 @@ gtp_fwd_handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d)
 	struct gtp_teid_rule *rule = NULL;
 	struct iphdr *iph;
 	struct udphdr *udph;
-	struct gtphdr *gtph = NULL;
+	struct gtpuhdr *gtph = NULL;
 	struct ip4_frag_key frag_key;
 	struct gtp_teid_frag *gtpf = NULL;
 	struct gtp_teid_frag frag;
@@ -361,7 +362,7 @@ gtp_fwd_handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d)
 
 	/* --- gtp layer --- */
 	offset += sizeof(struct udphdr);
-	gtph = (struct gtphdr *)(data + offset);
+	gtph = (struct gtpuhdr *)(data + offset);
 	if (gtph + 1 > data_end)
 		return XDP_DROP;
 

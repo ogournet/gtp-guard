@@ -620,15 +620,15 @@ end:
 int
 gtpu_send_end_marker(struct gtp_server *srv, struct far *f)
 {
-	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
+	struct gtpuhdr *h = (struct gtpuhdr *)srv->s.pbuff->head;
 	sockaddr_t addr_to;
 
-	memset(h, 0, sizeof(*h));
-	h->flags = 0x30; /* GTP-Rel99 + GTPv1 */
-	h->type = GTPU_END_MARKER_TYPE;
-	h->teid_only = f->outer_header_teid;
-	pkt_buffer_set_end_pointer(srv->s.pbuff, gtp1_get_header_len(h));
-	pkt_buffer_set_data_pointer(srv->s.pbuff, gtp1_get_header_len(h));
+	memset(h, 0, sizeof (*h));
+	h->flags = GTPU_FL_V1 | GTPU_FL_PT;
+	h->type = GTPU_TYPE_END_MARKER;
+	h->teid = f->outer_header_teid;
+	pkt_buffer_set_end_pointer(srv->s.pbuff, GTPU_HLEN_SHORT);
+	pkt_buffer_set_data_pointer(srv->s.pbuff, GTPU_HLEN_SHORT);
 
 	sa_from_ip4_port(&addr_to, f->outer_header_ip4.s_addr, GTP_U_PORT);
 
@@ -649,7 +649,7 @@ gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
 	      sockaddr_t *addr_to, const struct in6_addr *dst_addr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
-	struct gtp1_hdr *gtph;
+	struct gtpuhdr *gtph;
 	struct ip6_hdr *ip6h;
 	struct icmp6_hdr *icmp6;
 	struct nd_router_advert *nd_ra;
@@ -661,9 +661,9 @@ gtpu_build_ra(struct gtp_server *srv, struct pfcp_session *s, uint32_t teid,
 
 	pl_len = sizeof (*nd_ra) + sizeof (*nd_pi);
 
-	gtph = (struct gtp1_hdr *)pbuff->head;
-	gtph->flags = GTPU_FL_V | GTPU_FL_PT;
-	gtph->type = GTPU_GPDU_TYPE;
+	gtph = (struct gtpuhdr *)pbuff->head;
+	gtph->flags = GTPU_FL_V1 | GTPU_FL_PT;
+	gtph->type = GTPU_TYPE_TPDU;
 	gtph->length = htons(pl_len + sizeof (*ip6h));
 	gtph->teid = teid;
 
@@ -740,14 +740,15 @@ gtpu_send_router_advert(struct gtp_server *srv, struct pfcp_session *s, struct f
 static int
 gtpu_echo_request_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
-	struct gtp1_hdr *h = (struct gtp1_hdr *) srv->s.pbuff->head;
+	struct pkt_buffer *pbuff = srv->s.pbuff;
+	struct gtpuhdr *h = (struct gtpuhdr *)pbuff->head;
 	struct gtp1_ie_recovery *rec;
 
 	/* 3GPP.TS.129.060 7.2.2 : IE Recovery is mandatory in response message */
-	h->type = GTPU_ECHO_RSP_TYPE;
+	h->type = GTPU_TYPE_ECHO_RSP;
 	h->length = htons(ntohs(h->length) + sizeof(*rec));
-	pkt_buffer_set_end_pointer(srv->s.pbuff, gtp1_get_header_len(h));
-	pkt_buffer_set_data_pointer(srv->s.pbuff, gtp1_get_header_len(h));
+	pkt_buffer_set_end_pointer(srv->s.pbuff, gtpu_get_header_len(pbuff));
+	pkt_buffer_set_data_pointer(srv->s.pbuff, gtpu_get_header_len(pbuff));
 
 	gtp1_ie_add_tail(srv->s.pbuff, sizeof(*rec));
 	rec = (struct gtp1_ie_recovery *) srv->s.pbuff->data;
@@ -774,7 +775,7 @@ static int
 gtpu_data_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
 	struct pkt_buffer *pbuff = srv->s.pbuff;
-	struct gtp1_hdr *gtph;
+	struct gtpuhdr *gtph;
 	struct ip6_hdr *ip6h;
 	struct icmp6_hdr *icmp6;
 	struct pfcp_session *s = NULL;
@@ -783,7 +784,7 @@ gtpu_data_hdl(struct gtp_server *srv, sockaddr_t *addr)
 	uint32_t teid;
 
 	/* check it is a router solicitation */
-	gtph = (struct gtp1_hdr *)pbuff->head;
+	gtph = (struct gtpuhdr *)pbuff->head;
 	ip6h = (void *)gtph + GTPV1C_HEADER_LEN_SHORT;
 	icmp6 = (struct icmp6_hdr *)(ip6h + 1);
 	if ((uint8_t *)icmp6 + 1 > pbuff->tail ||
@@ -831,16 +832,16 @@ gtpu_data_hdl(struct gtp_server *srv, sockaddr_t *addr)
 static const struct {
 	int (*hdl) (struct gtp_server *, sockaddr_t *);
 } gtpu_msg_hdl[1 << 8] = {
-	[GTPU_ECHO_REQ_TYPE]			= { gtpu_echo_request_hdl },
-	[GTPU_ERR_IND_TYPE]			= { gtpu_error_indication_hdl },
-	[GTPU_END_MARKER_TYPE]			= { gtpu_end_marker_hdl	},
-	[GTPU_GPDU_TYPE]			= { gtpu_data_hdl },
+	[GTPU_TYPE_ECHO_REQ]			= { gtpu_echo_request_hdl },
+	[GTPU_TYPE_ERROR_IND]			= { gtpu_error_indication_hdl },
+	[GTPU_TYPE_END_MARKER]			= { gtpu_end_marker_hdl	},
+	[GTPU_TYPE_TPDU]			= { gtpu_data_hdl },
 };
 
 int
 pfcp_gtpu_hdl(struct gtp_server *srv, sockaddr_t *addr)
 {
-	struct gtp_hdr *gtph = (struct gtp_hdr *) srv->s.pbuff->head;
+	struct gtpuhdr *gtph = (struct gtpuhdr *) srv->s.pbuff->head;
 	ssize_t len;
 
 	len = gtpu_get_header_len(srv->s.pbuff);

@@ -73,4 +73,6 @@ uint8_t *gtp_get_ie(uint8_t, struct pkt_buffer *);
 int gtp_foreach_ie(uint8_t, uint8_t *, size_t, uint8_t *,
 		   struct gtp_server *, struct gtp_session *, int, void *,
 		   struct gtp_teid * (*hdl) (struct gtp_server *, struct gtp_session *, int, void *, uint8_t *));
+
+/* GTPv1-U */
 ssize_t gtpu_get_header_len(struct pkt_buffer *);

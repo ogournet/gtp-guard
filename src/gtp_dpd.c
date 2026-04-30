@@ -46,16 +46,16 @@ static int
 gtp_dpd_build_gtpu(struct gtp_iptnl *t, uint8_t *buffer)
 {
 	struct gtp_hdr *gtph = (struct gtp_hdr *) buffer;
-	off_t offset = GTPV1U_HEADER_LEN;
+	off_t offset = GTPU_HLEN_SHORT;
 	struct gtpu_ie *ie;
 	struct gtpu_ie_private *priv;
-	uint8_t *payload = buffer + GTPV1U_HEADER_LEN + sizeof(struct gtpu_ie);
+	uint8_t *payload = buffer + GTPU_HLEN_SHORT + sizeof(struct gtpu_ie);
 
 	gtph->version = 2;
 	gtph->piggybacked = 0;
 	gtph->teid_presence = 0;
 	gtph->spare = 0;
-	gtph->type = GTPU_ECHO_REQ_TYPE;
+	gtph->type = GTPU_TYPE_ECHO_REQ;
 	gtph->length = htons(t->payload_len);
 	gtph->sqn_only = htonl(0x8badf00d);
 
@@ -85,7 +85,7 @@ gtp_dpd_build_udp(struct gtp_iptnl *t, uint8_t *buffer)
 
 	udph->source = htons(GTP_U_PORT);
 	udph->dest = htons(GTP_U_PORT);
-	udph->len = htons(sizeof(struct udphdr) + GTPV1U_HEADER_LEN + t->payload_len);
+	udph->len = htons(sizeof(struct udphdr) + GTPU_HLEN_SHORT + t->payload_len);
 	udph->check = 0;
 
 	return sizeof(struct udphdr);
@@ -100,7 +100,7 @@ gtp_dpd_build_ip(struct gtp_iptnl *t, uint8_t *buffer)
 	iph->version = 4;
 	/* set tos to internet network control */
 	iph->tos = 0xc0;
-	iph->tot_len = (uint16_t)(sizeof(struct iphdr) + sizeof(struct udphdr) + GTPV1U_HEADER_LEN + t->payload_len);
+	iph->tot_len = (uint16_t)(sizeof(struct iphdr) + sizeof(struct udphdr) + GTPU_HLEN_SHORT + t->payload_len);
 	iph->tot_len = htons(iph->tot_len);
 	iph->id = 0;
 	iph->frag_off = 0;
@@ -123,7 +123,7 @@ gtp_dpd_build_ip_encap(struct gtp_iptnl *t, uint8_t *buffer)
 	iph->version = 4;
 	/* set tos to internet network control */
 	iph->tos = 0xc0;
-	iph->tot_len = (uint16_t)(2*sizeof(struct iphdr) + sizeof(struct udphdr) + GTPV1U_HEADER_LEN + t->payload_len);
+	iph->tot_len = (uint16_t)(2*sizeof(struct iphdr) + sizeof(struct udphdr) + GTPU_HLEN_SHORT + t->payload_len);
 	iph->tot_len = htons(iph->tot_len);
 	iph->id = 0;
 	iph->frag_off = 0;
@@ -264,7 +264,7 @@ gtp_dpd_ingress_sanitize(struct gtp_iptnl *t)
 
 	/* GTP-U header sanitize */
 	gtph = (struct gtp_hdr *) (t->recv_buffer + sizeof(struct iphdr) + sizeof(struct udphdr));
-	if (gtph->type != GTPU_ECHO_REQ_TYPE || gtph->sqn_only != htonl(0x8badf00d))
+	if (gtph->type != GTPU_TYPE_ECHO_REQ || gtph->sqn_only != htonl(0x8badf00d))
 		return -1;
 
 	return 0;
