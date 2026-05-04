@@ -125,9 +125,9 @@ sort_node(void)
 	struct cmd_element *cmd_element;
 
 	for (i = 0; i < vector_active(cmdvec); i++) {
-		if ((cnode = vector_slot(cmdvec, i)) != NULL) {	
+		if ((cnode = vector_slot(cmdvec, i)) != NULL) {
 			struct vector *cmd_vector = cnode->cmd_vector;
-			qsort(cmd_vector->slot, vector_active(cmd_vector), 
+			qsort(cmd_vector->slot, vector_active(cmd_vector),
 			      sizeof (void *), cmp_node);
 
 			for (j = 0; j < vector_active(cmd_vector); j++) {
@@ -135,7 +135,7 @@ sort_node(void)
 				    && vector_active(cmd_element->strvec)) {
 					descvec = vector_slot(cmd_element->strvec,
 							      vector_active(cmd_element->strvec) - 1);
-					qsort(descvec->slot, vector_active(descvec), 
+					qsort(descvec->slot, vector_active(descvec),
 					      sizeof (void *), cmp_desc);
 				}
 			}
@@ -155,10 +155,10 @@ cmd_make_strvec(const char *string)
 	char *token;
 	int strlen;
 	struct vector *strvec;
-  
+
 	if (string == NULL)
 		return NULL;
-  
+
 	cp = string;
 
 	/* Skip white spaces. */
@@ -231,7 +231,7 @@ cmd_desc_str(const char **string)
 	const char *cp, *start;
 	char *token;
 	int strlen;
-  
+
 	cp = *string;
 
 	if (cp == NULL)
@@ -262,20 +262,28 @@ cmd_desc_str(const char **string)
 
 /* New string vector. */
 static struct vector *
-cmd_make_descvec(const char *string, const char *descstr)
+cmd_make_descvec(const char *string, const char *descstr,
+		 struct vector **opt_groups_out)
 {
 	int multiple = 0;
+	int in_bracket = 0;
 	const char *sp;
 	char *token;
 	int len;
 	const char *cp;
 	const char *dp;
 	struct vector *allvec;
+	struct vector *target;
 	struct vector *strvec = NULL;
+	struct vector *opt_groups = NULL;
+	struct cmd_opt_group *cur_group = NULL;
 	struct desc *desc;
 
 	cp = string;
 	dp = descstr;
+
+	if (opt_groups_out)
+		*opt_groups_out = NULL;
 
 	if (cp == NULL)
 		return NULL;
@@ -285,6 +293,25 @@ cmd_make_descvec(const char *string, const char *descstr)
 	while (1) {
 		while (isspace ((int) *cp) && *cp != '\0')
 			cp++;
+
+		if (*cp == '[' && isspace(cp[1])) {
+			in_bracket = 1;
+			cur_group = (struct cmd_opt_group *) MALLOC(sizeof(*cur_group));
+			cur_group->strvec = vector_init(VECTOR_DEFAULT_SIZE);
+			cur_group->size = 0;
+			if (!opt_groups)
+				opt_groups = vector_init(VECTOR_DEFAULT_SIZE);
+			cp++;
+			continue;
+		}
+
+		if (*cp == ']' && in_bracket) {
+			vector_set(opt_groups, cur_group);
+			in_bracket = 0;
+			cur_group = NULL;
+			cp++;
+			continue;
+		}
 
 		if (*cp == '(') {
 			multiple = 1;
@@ -303,22 +330,34 @@ cmd_make_descvec(const char *string, const char *descstr)
 			}
 			cp++;
 		}
-      
+
 		while (isspace ((int) *cp) && *cp != '\0')
 			cp++;
+
+		if (*cp == ']' && in_bracket) {
+			vector_set(opt_groups, cur_group);
+			in_bracket = 0;
+			cur_group = NULL;
+			cp++;
+			continue;
+		}
 
 		if (*cp == '(') {
 			multiple = 1;
 			cp++;
 		}
 
-		if (*cp == '\0') 
+		if (*cp == '\0') {
+			if (opt_groups_out)
+				*opt_groups_out = opt_groups;
 			return allvec;
+		}
 
 		sp = cp;
 
 		while (!(isspace ((int) *cp) || *cp == '\r' ||
-		       *cp == '\n' || *cp == ')' || *cp == '|') && *cp != '\0')
+		       *cp == '\n' || *cp == ')' || *cp == '|') &&
+		       *cp != '\0' && !(in_bracket && *cp == ']'))
 			cp++;
 
 		len = cp - sp;
@@ -331,15 +370,21 @@ cmd_make_descvec(const char *string, const char *descstr)
 		desc->cmd = token;
 		desc->str = cmd_desc_str(&dp);
 
+		target = in_bracket ? cur_group->strvec : allvec;
+
 		if (multiple) {
 			if (multiple == 1) {
 				strvec = vector_init(VECTOR_DEFAULT_SIZE);
-				vector_set(allvec, strvec);
+				vector_set(target, strvec);
+				if (in_bracket)
+					cur_group->size++;
 			}
 			multiple++;
 		} else {
 			strvec = vector_init(VECTOR_DEFAULT_SIZE);
-			vector_set(allvec, strvec);
+			vector_set(target, strvec);
+			if (in_bracket)
+				cur_group->size++;
 		}
 		vector_set(strvec, desc);
 	}
@@ -387,11 +432,11 @@ void
 install_element(enum node_type ntype, struct cmd_element *cmd)
 {
 	struct cmd_node *cnode;
-  
+
 	/* cmd_init hasn't been called */
 	if (!cmdvec)
 		return;
-  
+
 	cnode = vector_slot(cmdvec, ntype);
 
 	if (cnode == NULL) {
@@ -402,8 +447,11 @@ install_element(enum node_type ntype, struct cmd_element *cmd)
 
 	vector_set(cnode->cmd_vector, cmd);
 
-	if (cmd->strvec == NULL)
-		cmd->strvec = cmd_make_descvec(cmd->string, cmd->doc);
+	if (cmd->strvec == NULL) {
+		struct vector *opt_groups = NULL;
+		cmd->strvec = cmd_make_descvec(cmd->string, cmd->doc, &opt_groups);
+		cmd->opt_groups = opt_groups;
+	}
 
 	cmd->cmdsize = cmd_cmdsize(cmd->strvec);
 }
@@ -711,7 +759,7 @@ cmd_ipv6_prefix_match(const char *str)
 
 	if (mask < 0 || mask > 128)
 		return no_match;
-  
+
 	return exact_match;
 }
 
@@ -777,7 +825,12 @@ cmd_filter_by_completion(char *command, struct vector *v, unsigned int index)
 	for (i = 0; i < vector_active(v); i++) {
 		if ((cmd_element = vector_slot(v, i)) != NULL) {
 			if (index >= vector_active(cmd_element->strvec)) {
-				vector_slot(v, i) = NULL;
+				if (cmd_element->opt_groups) {
+					if (match_type < extend_match)
+						match_type = extend_match;
+				} else {
+					vector_slot(v, i) = NULL;
+				}
 			} else {
 				unsigned int j;
 				int matched = 0;
@@ -866,7 +919,12 @@ cmd_filter_by_string(char *command, struct vector *v, unsigned int index)
 			/* If given index is bigger than max string vector of command,
 			 * set NULL */
 			if (index >= vector_active(cmd_element->strvec)) {
-				vector_slot(v, i) = NULL;
+				if (cmd_element->opt_groups) {
+					if (match_type < extend_match)
+						match_type = extend_match;
+				} else {
+					vector_slot(v, i) = NULL;
+				}
 			} else {
 				unsigned int j;
 				int matched = 0;
@@ -948,12 +1006,15 @@ is_cmd_ambiguous(char *command, struct vector *v, int index, enum match_type typ
 		if ((cmd_element = vector_slot(v, i)) != NULL) {
 			int match = 0;
 
+			if (index >= vector_active(cmd_element->strvec))
+				continue;
+
 			descvec = vector_slot(cmd_element->strvec, index);
 
 			for (j = 0; j < vector_active (descvec); j++) {
 				if ((desc = vector_slot (descvec, j))) {
 					enum match_type ret;
-	      
+
 					str = desc->cmd;
 
 					switch (type) {
@@ -1141,7 +1202,7 @@ desc_unique_string(struct vector *v, const char *str)
 	return 0;
 }
 
-static int 
+static int
 cmd_try_do_shortcut(enum node_type node, char* first_word)
 {
 	if (first_word != NULL && node != AUTH_NODE &&
@@ -1151,6 +1212,101 @@ cmd_try_do_shortcut(enum node_type node, char* first_word)
 		return 1;
 
 	return 0;
+}
+
+/* Find which opt_group is active at the current position in vline.
+ * Returns the group index and sets *pos_in_group to the position within it.
+ * Returns -1 if we're at a group boundary (not mid-group). */
+static int
+cmd_opt_group_context(struct cmd_element *cmd_element, struct vector *vline,
+		      unsigned int index, unsigned int *pos_in_group)
+{
+	unsigned int mand_end = vector_active(cmd_element->strvec);
+	unsigned int g, num_groups = vector_active(cmd_element->opt_groups);
+	unsigned int pos = mand_end;
+	struct cmd_opt_group *grp;
+
+	while (pos < index) {
+		char *token = vector_slot(vline, pos);
+		int found = -1;
+
+		for (g = 0; g < num_groups; g++) {
+			grp = vector_slot(cmd_element->opt_groups, g);
+			struct vector *descvec0 = vector_slot(grp->strvec, 0);
+			unsigned int d;
+
+			for (d = 0; d < vector_active(descvec0); d++) {
+				struct desc *desc0 = vector_slot(descvec0, d);
+				if (desc0 && strcmp(token, desc0->cmd) == 0) {
+					found = g;
+					break;
+				}
+			}
+			if (found >= 0)
+				break;
+		}
+
+		if (found < 0) {
+			pos++;
+			continue;
+		}
+
+		grp = vector_slot(cmd_element->opt_groups, found);
+		unsigned int remaining = index - pos;
+		if (remaining < grp->size) {
+			*pos_in_group = remaining;
+			return found;
+		}
+		pos += grp->size;
+	}
+
+	return -1;
+}
+
+/* Add opt_group descriptions to matchvec for '?' help */
+static void
+cmd_describe_opt_groups(struct cmd_element *cmd_element, struct vector *vline,
+			unsigned int index, const char *command,
+			struct vector *matchvec)
+{
+	unsigned int g, j;
+	unsigned int pos_in_group = 0;
+	int active_group;
+
+	active_group = cmd_opt_group_context(cmd_element, vline, index, &pos_in_group);
+
+	if (active_group >= 0) {
+		/* Mid-group: show descs for this position within the group */
+		struct cmd_opt_group *grp = vector_slot(cmd_element->opt_groups, active_group);
+		struct vector *descvec = vector_slot(grp->strvec, pos_in_group);
+
+		for (j = 0; j < vector_active(descvec); j++) {
+			struct desc *desc = vector_slot(descvec, j);
+			if (desc) {
+				const char *string = cmd_entry_function_desc(command, desc->cmd);
+				if (string && !desc_unique_string(matchvec, string))
+					vector_set(matchvec, desc);
+			}
+		}
+	} else {
+		/* At group boundary: show first-position desc of each group + <cr> */
+		unsigned int num_groups = vector_active(cmd_element->opt_groups);
+		for (g = 0; g < num_groups; g++) {
+			struct cmd_opt_group *grp = vector_slot(cmd_element->opt_groups, g);
+			struct vector *descvec0 = vector_slot(grp->strvec, 0);
+
+			for (j = 0; j < vector_active(descvec0); j++) {
+				struct desc *desc = vector_slot(descvec0, j);
+				if (desc) {
+					const char *string = cmd_entry_function_desc(command, desc->cmd);
+					if (string && !desc_unique_string(matchvec, string))
+						vector_set(matchvec, desc);
+				}
+			}
+		}
+		if (!desc_unique_string(matchvec, command_cr))
+			vector_set(matchvec, &desc_cr);
+	}
 }
 
 /* '?' describe command support. */
@@ -1172,7 +1328,7 @@ cmd_describe_command_real(struct vector *vline, struct vty *vty, int *status)
 	}
 
 	index = vector_active (vline) - 1;
-  
+
 	/* Make copy vector of current node's command vector. */
 	cmd_vector = vector_copy(cmd_node_vector(cmdvec, vty->node));
 
@@ -1184,7 +1340,7 @@ cmd_describe_command_real(struct vector *vline, struct vty *vty, int *status)
 	for (i = 0; i < index; i++) {
 		if ((command = vector_slot(vline, i))) {
 			match = cmd_filter_by_completion(command, cmd_vector, i);
-	
+
 			if (match == vararg_match) {
 				struct cmd_element *cmd_element;
 				struct vector *descvec;
@@ -1235,29 +1391,32 @@ cmd_describe_command_real(struct vector *vline, struct vty *vty, int *status)
 		if ((cmd_element = vector_slot(cmd_vector, i)) != NULL) {
 			struct vector *strvec = cmd_element->strvec;
 
-			/* if command is NULL, index may be equal to vector_active */
-			if (command && index >= vector_active(strvec)) {
-				vector_slot(cmd_vector, i) = NULL;
-			} else {
-				/* Check if command is completed. */
-				if (command == NULL && index == vector_active(strvec)) {
+			if (index >= vector_active(strvec)) {
+				if (cmd_element->opt_groups) {
+					cmd_describe_opt_groups(cmd_element, vline,
+							       index, command,
+							       matchvec);
+				} else if (command == NULL
+					   && index == vector_active(strvec)) {
 					if (!desc_unique_string(matchvec, command_cr))
 						vector_set(matchvec, &desc_cr);
-				} else {
-					unsigned int j;
-					struct vector *descvec = vector_slot(strvec, index);
-					struct desc *desc;
+				} else if (command) {
+					vector_slot(cmd_vector, i) = NULL;
+				}
+			} else {
+				unsigned int j;
+				struct vector *descvec = vector_slot(strvec, index);
+				struct desc *desc;
 
-					for (j = 0; j < vector_active (descvec); j++) {
-						if ((desc = vector_slot (descvec, j))) {
-							const char *string;
+				for (j = 0; j < vector_active(descvec); j++) {
+					if ((desc = vector_slot(descvec, j))) {
+						const char *string;
 
-							string = cmd_entry_function_desc(command, desc->cmd);
-							if (string) {
-								/* Uniqueness check */
-								if (!desc_unique_string(matchvec, string))
-									vector_set(matchvec, desc);
-							}
+						string = cmd_entry_function_desc(
+								command, desc->cmd);
+						if (string) {
+							if (!desc_unique_string(matchvec, string))
+								vector_set(matchvec, desc);
 						}
 					}
 				}
@@ -1380,7 +1539,7 @@ cmd_complete_command_real(struct vector *vline, struct vty *vty, int *status)
 			}
 		}
 	}
-  
+
 	/* Prepare match vector. */
 	matchvec = vector_init(INIT_MATCHVEC_SIZE);
 
@@ -1392,14 +1551,50 @@ cmd_complete_command_real(struct vector *vline, struct vty *vty, int *status)
 
 			/* Check field length */
 			if (index >= vector_active(strvec)) {
-				vector_slot(cmd_vector, i) = NULL;
+				if (cmd_element->opt_groups) {
+					unsigned int pos_in_group = 0;
+					int ag = cmd_opt_group_context(cmd_element, vline,
+								       index, &pos_in_group);
+					unsigned int g, j;
+
+					if (ag >= 0) {
+						/* Mid-group: offer value completions */
+						struct cmd_opt_group *grp = vector_slot(cmd_element->opt_groups, ag);
+						struct vector *dv = vector_slot(grp->strvec, pos_in_group);
+						for (j = 0; j < vector_active(dv); j++) {
+							if ((desc = vector_slot(dv, j))) {
+								if ((string = cmd_entry_function(
+									vector_slot(vline, index), desc->cmd)))
+									if (cmd_unique_string(matchvec, string))
+										vector_set(matchvec, strdup(string));
+							}
+						}
+					} else {
+						/* At boundary: offer group keywords */
+						unsigned int ng = vector_active(cmd_element->opt_groups);
+						for (g = 0; g < ng; g++) {
+							struct cmd_opt_group *grp = vector_slot(cmd_element->opt_groups, g);
+							struct vector *dv0 = vector_slot(grp->strvec, 0);
+							for (j = 0; j < vector_active(dv0); j++) {
+								if ((desc = vector_slot(dv0, j))) {
+									if ((string = cmd_entry_function(
+										vector_slot(vline, index), desc->cmd)))
+										if (cmd_unique_string(matchvec, string))
+											vector_set(matchvec, strdup(string));
+								}
+							}
+						}
+					}
+				} else {
+					vector_slot(cmd_vector, i) = NULL;
+				}
 			} else {
 				unsigned int j;
 
 				descvec = vector_slot(strvec, index);
 				for (j = 0; j < vector_active(descvec); j++) {
 					if ((desc = vector_slot(descvec, j))) {
-						if ((string = 
+						if ((string =
 							cmd_entry_function(vector_slot(vline, index),
 									   desc->cmd)))
 								if (cmd_unique_string (matchvec, string))
@@ -1540,7 +1735,7 @@ cmd_execute_command_real(struct vector *vline, struct vty *vty, struct cmd_eleme
 
 			if (match == vararg_match)
 				break;
-        
+
 			ret = is_cmd_ambiguous(command, cmd_vector, index, match);
 			if (ret == 1) {
 				vector_free(cmd_vector);
@@ -1585,7 +1780,10 @@ cmd_execute_command_real(struct vector *vline, struct vty *vty, struct cmd_eleme
 	varflag = argc = 0;
 
 	for (i = 0; i < vector_active(vline); i++) {
-		if (varflag) {
+		if (i >= vector_active(matched_element->strvec)) {
+			/* Past mandatory strvec: optional group tokens all go to argv */
+			argv[argc++] = vector_slot(vline, i);
+		} else if (varflag) {
 			argv[argc++] = vector_slot(vline, i);
 		} else {
 			struct vector *descvec = vector_slot(matched_element->strvec, i);
@@ -1693,14 +1891,14 @@ cmd_execute_command_strict(struct vector *vline, struct vty *vty, struct cmd_ele
 	for (index = 0; index < vector_active(vline); index++) {
 		if ((command = vector_slot(vline, index))) {
 			int ret;
-	
+
 			match = cmd_filter_by_string(vector_slot(vline, index),
 						     cmd_vector, index);
 
 			/* If command meets '.VARARG' then finish matching. */
 			if (match == vararg_match)
 				break;
-        
+
 			ret = is_cmd_ambiguous(command, cmd_vector, index, match);
 			if (ret == 1) {
 				vector_free(cmd_vector);
@@ -1746,7 +1944,10 @@ cmd_execute_command_strict(struct vector *vline, struct vty *vty, struct cmd_ele
 	varflag = argc = 0;
 
 	for (i = 0; i < vector_active(vline); i++) {
-		if (varflag) {
+		if (i >= vector_active(matched_element->strvec)) {
+			/* Past mandatory strvec: optional group tokens all go to argv */
+			argv[argc++] = vector_slot(vline, i);
+		} else if (varflag) {
 			argv[argc++] = vector_slot(vline, i);
 		} else {
 			struct vector *descvec = vector_slot(matched_element->strvec, i);
@@ -1830,7 +2031,7 @@ DEFUN(config_terminal,
 }
 
 /* Enable command */
-DEFUN(enable, 
+DEFUN(enable,
       config_enable_cmd,
       "enable",
       "Turn on privileged mode command\n")
@@ -1845,7 +2046,7 @@ DEFUN(enable,
 }
 
 /* Disable command */
-DEFUN(disable, 
+DEFUN(disable,
       config_disable_cmd,
       "disable",
       "Turn off privileged mode command\n")
@@ -1892,7 +2093,7 @@ ALIAS(config_exit,
       config_quit_cmd,
       "quit",
       "Exit current mode and down to previous mode\n")
-       
+
 /* End of configuration. */
 DEFUN(config_end,
       config_end_cmd,
@@ -1972,9 +2173,9 @@ DEFUN(config_list,
 }
 
 /* Write current configuration into file. */
-DEFUN(config_write_file, 
+DEFUN(config_write_file,
       config_write_file_cmd,
-      "write file",  
+      "write file",
       "Write running configuration to memory, network, or terminal\n"
       "Write to configuration file\n")
 {
@@ -1996,7 +2197,7 @@ DEFUN(config_write_file,
 
 	/* Get filename. */
 	config_file = host.config;
-  
+
 	len = strlen(config_file) + strlen(CONF_BACKUP_EXT) + 1;
 	config_file_sav = MALLOC(len);
 	bsd_strlcpy(config_file_sav, config_file, len);
@@ -2004,7 +2205,7 @@ DEFUN(config_write_file,
 
 	config_file_tmp = MALLOC(strlen(config_file) + 8);
 	sprintf(config_file_tmp, "%s.XXXXXX", config_file);
-  
+
 	/* Open file to configuration write. */
 	fd = mkstemp(config_file_tmp);
 	if (fd < 0) {
@@ -2012,9 +2213,9 @@ DEFUN(config_write_file,
 			   , VTY_NEWLINE);
 		goto finished;
 	}
-  
+
 	if (fchmod(fd, 0600) != 0) {
-		vty_out(vty, "Can't chmod temp configuration file %s: %s (%d).%s" 
+		vty_out(vty, "Can't chmod temp configuration file %s: %s (%d).%s"
 			   , config_file_tmp, strerror(errno), errno, VTY_NEWLINE);
 		goto finished;
 	}
@@ -2067,7 +2268,7 @@ DEFUN(config_write_file,
 	}
 
 	sync();
-  
+
 	vty_out(vty, "Configuration saved to %s%s", config_file, VTY_NEWLINE);
 	ret = CMD_SUCCESS;
 
@@ -2078,20 +2279,20 @@ DEFUN(config_write_file,
 	return ret;
 }
 
-ALIAS(config_write_file, 
+ALIAS(config_write_file,
       config_write_cmd,
-      "write",  
+      "write",
       "Write running configuration to memory, network, or terminal\n")
 
-ALIAS(config_write_file, 
+ALIAS(config_write_file,
       config_write_memory_cmd,
-      "write memory",  
+      "write memory",
       "Write running configuration to memory, network, or terminal\n"
       "Write configuration to the file (same as write file)\n")
 
-ALIAS(config_write_file, 
+ALIAS(config_write_file,
       copy_runningconfig_startupconfig_cmd,
-      "copy running-config startup-config",  
+      "copy running-config startup-config",
       "Copy configuration\n"
       "Copy running config to... \n"
       "Copy running config to startup config (same as write file)\n")
@@ -2169,7 +2370,7 @@ DEFUN(show_startup_config,
 }
 
 /* Hostname configuration */
-DEFUN(config_hostname, 
+DEFUN(config_hostname,
       hostname_cmd,
       "hostname WORD",
       "Set system's network name\n"
@@ -2181,12 +2382,12 @@ DEFUN(config_hostname,
 	}
 
 	FREE_PTR(host.name);
-    
+
 	host.name = strdup(argv[0]);
 	return CMD_SUCCESS;
 }
 
-DEFUN (config_no_hostname, 
+DEFUN (config_no_hostname,
        no_hostname_cmd,
        "no hostname [HOSTNAME]",
        NO_STR
@@ -2300,7 +2501,7 @@ DEFUN(no_config_enable_password, no_enable_password_cmd,
 
 	return CMD_SUCCESS;
 }
-	
+
 DEFUN(config_terminal_length, config_terminal_length_cmd,
       "terminal length <0-512>",
       "Set terminal line parameters\n"
@@ -2511,7 +2712,7 @@ cmd_init(void)
 	install_element(ENABLE_NODE, &echo_cmd);
 
 	install_default(CONFIG_NODE);
-  
+
 	install_element(CONFIG_NODE, &hostname_cmd);
 	install_element(CONFIG_NODE, &no_hostname_cmd);
 
@@ -2533,14 +2734,35 @@ cmd_init(void)
 	srand(time(NULL));
 }
 
+static void
+cmd_free_strvec_deep(struct vector *strvec)
+{
+	unsigned int k, l;
+	struct vector *desc_v;
+	struct desc *desc;
+
+	for (k = 0; k < vector_active(strvec); k++) {
+		if ((desc_v = vector_slot(strvec, k)) != NULL) {
+			for (l = 0; l < vector_active(desc_v); l++) {
+				if ((desc = vector_slot(desc_v, l)) != NULL) {
+					FREE_PTR(desc->cmd);
+					FREE_PTR(desc->str);
+					FREE(desc);
+				}
+			}
+			vector_free(desc_v);
+		}
+	}
+	vector_free(strvec);
+}
+
 void
 cmd_terminate(void)
 {
-	unsigned int i, j, k, l;
+	unsigned int i, j;
 	struct cmd_node *cmd_node;
 	struct cmd_element *cmd_element;
-	struct desc *desc;
-	struct vector *cmd_node_v, *cmd_element_v, *desc_v;
+	struct vector *cmd_node_v;
 
 	if (cmdvec) {
 		for (i = 0; i < vector_active(cmdvec); i++) {
@@ -2550,24 +2772,21 @@ cmd_terminate(void)
 				for (j = 0; j < vector_active(cmd_node_v); j++) {
 					if ((cmd_element = vector_slot(cmd_node_v, j)) != NULL &&
 					    cmd_element->strvec != NULL) {
-						cmd_element_v = cmd_element->strvec;
-
-						for (k = 0; k < vector_active(cmd_element_v); k++) {
-							if ((desc_v = vector_slot(cmd_element_v, k)) != NULL) {
-								for (l = 0; l < vector_active(desc_v); l++) {
-									if ((desc = vector_slot(desc_v, l)) != NULL) {
-										FREE_PTR(desc->cmd);
-										FREE_PTR(desc->str);
-										FREE(desc);
-									}
-								}
-
-								vector_free(desc_v);
-							}
-						}
-
+						cmd_free_strvec_deep(cmd_element->strvec);
 						cmd_element->strvec = NULL;
-						vector_free(cmd_element_v);
+
+						if (cmd_element->opt_groups) {
+							unsigned int g;
+							for (g = 0; g < vector_active(cmd_element->opt_groups); g++) {
+								struct cmd_opt_group *grp = vector_slot(cmd_element->opt_groups, g);
+								if (grp) {
+									cmd_free_strvec_deep(grp->strvec);
+									FREE(grp);
+								}
+							}
+							vector_free(cmd_element->opt_groups);
+							cmd_element->opt_groups = NULL;
+						}
 					}
 				}
 

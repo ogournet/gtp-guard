@@ -112,12 +112,19 @@ struct cmd_element {
 	char			*config;		/* Configuration string */
 	struct vector		*subconfig;		/* Sub configuration string */
 	uint8_t			attr;			/* Command attributes */
+	struct vector		*opt_groups;		/* Optional group blocks [ key VAL ] */
 };
 
 /* Command description structure. */
 struct desc {
 	char			*cmd;			/* Command string. */
 	char			*str;			/* Command's description. */
+};
+
+/* Optional group block: [ keyword VALUE (alt1|alt2) ... ] */
+struct cmd_opt_group {
+	struct vector		*strvec;		/* vector of descvec vectors */
+	unsigned int		size;			/* number of positions */
 };
 
 
