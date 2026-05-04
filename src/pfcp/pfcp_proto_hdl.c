@@ -65,8 +65,7 @@ pfcp_heartbeat_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	/* Append mandatory IE */
 	err = pfcp_ie_put_recovery_ts(pbuff, ctx->recovery_ts);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Cant append recovery_ts IE"
-				    , __FUNCTION__);
+		logf_err("Cant append recovery_ts IE");
 		return -1;
 	}
 
@@ -92,8 +91,7 @@ pfcp_pfd_management_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	err = pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
 				      PFCP_CAUSE_REQUEST_ACCEPTED);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
+		logf_err("Error while Appending IEs");
 		return -1;
 	}
 
@@ -140,8 +138,7 @@ pfcp_assoc_setup_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	err = (err) ? : pfcp_ie_put_recovery_ts(pbuff, ctx->recovery_ts);
 	err = (err) ? : pfcp_ie_put_up_function_features(pbuff, ctx->supported_features);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
+		logf_info("Error while Appending IEs");
 		return -1;
 	}
 
@@ -159,10 +156,9 @@ pfcp_assoc_setup_response(struct pfcp_msg *msg, struct pfcp_server *srv,
 	rsp = msg->association_setup_response;
 
 	if (rsp->cause->value != PFCP_CAUSE_REQUEST_ACCEPTED) {
-		log_message(LOG_INFO, "%s(): remote PFCP peer:'%s' rejection (%s)"
-				    , __FUNCTION__
-				    , sa_str_ip(addr)
-				    , pfcp_cause2str(rsp->cause->value));
+		logf_info("remote PFCP peer:'%s' rejection (%s)",
+			  sa_str_ip(addr),
+			  pfcp_cause2str(rsp->cause->value));
 		return -1;
 	}
 
@@ -173,12 +169,15 @@ pfcp_assoc_setup_response(struct pfcp_msg *msg, struct pfcp_server *srv,
 
 	/* Create this brand new one ! */
 	assoc = pfcp_assoc_alloc(rsp->node_id, rsp->recovery_time_stamp);
-	log_message(LOG_INFO, "%s(): %s Creating PFCP association:'%s'"
-			    , __FUNCTION__
-			    , (assoc) ? "Success" : "Error"
-			    , pfcp_assoc_stringify(assoc, assoc_str, GTP_NAME_MAX_LEN));
+	if (assoc == NULL) {
+		logf_err("Error creating PFCP association from peer:%s",
+			 sa_str_ip(addr));
+		return -1;
+	}
 
-	return -1;
+	logf_info("Created PFCP association:'%s'",
+		  pfcp_assoc_stringify(assoc, assoc_str, GTP_NAME_MAX_LEN));
+	return 0;
 }
 
 void
@@ -197,9 +196,8 @@ pfcp_assoc_setup_request_send(struct thread *t)
 
 	p = __pkt_queue_get(&srv->pkt_q);
 	if (!p) {
-		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server %s"
-				    , __FUNCTION__
-				    , sa_str(&srv->s.addr));
+		logf_err("Error getting pkt from queue for server %s",
+			  sa_str(&srv->s.addr));
 		return;
 	}
 
@@ -215,8 +213,7 @@ pfcp_assoc_setup_request_send(struct thread *t)
 	err = (err) ? : pfcp_ie_put_recovery_ts(pbuff, ctx->recovery_ts);
 	err = (err) ? : pfcp_ie_put_up_function_features(pbuff, ctx->supported_features);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
+		logf_err("Error while Appending IEs");
 		goto end;
 	}
 
@@ -242,15 +239,13 @@ pfcp_session_get_apn(struct pfcp_ie_apn_dnn *apn_dnn)
 
 	err = pfcp_ie_decode_apn_dnn_ni(apn_dnn, apn_str, sizeof(apn_str) - 1);
 	if (err) {
-		log_message(LOG_INFO, "%s(): malformed IE APN-DNN... rejecting..."
-				    , __FUNCTION__);
+		logf_info("malformed IE APN-DNN... rejecting...");
 		return NULL;
 	}
 
 	apn = gtp_apn_get(apn_str);
 	if (!apn) {
-		log_message(LOG_INFO, "%s(): Unknown Access-Point-Name:'%s'. rejecting..."
-				    , __FUNCTION__, apn_str);
+		logf_info("Unknown Access-Point-Name:'%s'. rejecting...", apn_str);
 		return NULL;
 	}
 
@@ -293,24 +288,21 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	if (__test_bit(PFCP_ROUTER_FL_STRICT_APN, &ctx->flags))
 		apn = pfcp_session_get_apn(req->apn_dnn);
 	if (!apn) {
-		log_message(LOG_INFO, "%s(): No APN selected... rejecting..."
-				    , __FUNCTION__);
+		logfc_info(s->log, "No APN selected... rejecting...");
 		cause = PFCP_CAUSE_REQUEST_REJECTED;
 		goto err;
 	}
 
 	/* User infos */
 	if (!req->user_id) {
-		log_message(LOG_INFO, "%s(): IE User-ID not present... rejecting..."
-				    , __FUNCTION__);
+		logfc_info(s->log, "IE User-ID not present... rejecting...");
 		cause = PFCP_CAUSE_REQUEST_REJECTED;
 		goto err;
 	}
 
 	ret = pfcp_ie_decode_user_id(req->user_id, &imsi, &imei, &msisdn);
 	if (ret) {
-		log_message(LOG_INFO, "%s(): malformed IE User-ID... rejecting..."
-				    , __FUNCTION__);
+		logfc_info(s->log, "malformed IE User-ID... rejecting...");
 		cause = PFCP_CAUSE_REQUEST_REJECTED;
 		goto err;
 	}
@@ -327,8 +319,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	/* Create new session */
 	s = pfcp_session_alloc(ue, apn, ctx);
 	if (!s) {
-		log_message(LOG_INFO, "%s(): Unable to create new session... rejecting..."
-				    , __FUNCTION__);
+		logfc_warn(s->log, "Unable to create new session... rejecting...");
 		cause = PFCP_CAUSE_REQUEST_REJECTED;
 		goto err;
 	}
@@ -341,8 +332,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 		if (errno == ENOSPC) {
 			cause = PFCP_CAUSE_ALL_DYNAMIC_ADDRESS_ARE_OCCUPIED;
 		} else {
-			log_message(LOG_INFO, "%s(): malformed IE Create-PDR... rejecting..."
-				    , __FUNCTION__);
+			logfc_warn(s->log, " malformed IE Create-PDR... rejecting...");
 			cause = PFCP_CAUSE_REQUEST_REJECTED;
 		}
 		pfcp_session_delete(s);
@@ -368,8 +358,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	ret = (ret) ? : pfcp_session_put_created_pdr(pbuff, s);
 	ret = (ret) ? : pfcp_session_put_created_traffic_endpoint(pbuff, s);
 	if (ret) {
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
+		logfc_err(s->log, "Error while Appending IEs");
 		pfcp_session_delete(s);
 		pfcp_msg_reset_hlen(pbuff);
 		ret = pfcp_ie_put_error_cause(pbuff, ctx->node_id, ctx->node_id_len,
@@ -416,8 +405,8 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	}
 	s = pfcp_session_get(be64toh(pfcph->seid));
 	if (!s) {
-		log_message(LOG_INFO, "%s(): Unknown Session-ID:0x%" PRIx64
-				    , __FUNCTION__, be64toh(pfcph->seid));
+		logfc_info(s->log, "Unknown Session-ID:0x%" PRIx64,
+			   be64toh(pfcph->seid));
 		cause = PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
 		pfcph->seid = 0;
 		goto reply_now;
@@ -431,8 +420,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 		goto reply_now;
 	ret = pfcp_session_modify(s, msg->session_modification_request);
 	if (ret) {
-		log_message(LOG_INFO, "%s(): malformed Modification request...."
-				    , __FUNCTION__);
+		logfc_warn(s->log, "malformed Modification request....");
 		goto reply_now;
 	}
 
@@ -454,8 +442,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	/* Append Cause IE */
 	ret = pfcp_ie_put_cause(pbuff, cause);
 	if (ret)
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
+		logfc_err(s->log, "Error while Appending IEs");
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 				 addr, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
@@ -483,8 +470,8 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	}
 	s = pfcp_session_get(be64toh(pfcph->seid));
 	if (!s) {
-		log_message(LOG_INFO, "%s(): Unknown Session-ID:0x%" PRIx64
-				    , __FUNCTION__, be64toh(pfcph->seid));
+		logfc_info(s->log, "Unknown Session-ID:0x%" PRIx64,
+			   be64toh(pfcph->seid));
 		cause = PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
 		pfcph->seid = 0;
 		goto reply_now;
@@ -516,8 +503,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	/* Append Cause IE */
 	ret = pfcp_ie_put_cause(pbuff, cause);
 	if (ret)
-		log_message(LOG_INFO, "%s(): Error while Appending IEs"
-				    , __FUNCTION__);
+		logfc_err(s->log, " Error while Appending IEs");
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 				 addr, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
@@ -536,10 +522,8 @@ pfcp_session_report_response(struct pfcp_msg *msg, struct pfcp_server *srv,
 	struct pfcp_session *s = NULL;
 
 	if (rsp->cause->value != PFCP_CAUSE_REQUEST_ACCEPTED)
-		log_message(LOG_INFO, "%s(): remote PFCP peer:'%s' rejection (%s)"
-				    , __FUNCTION__
-				    , sa_str_ip(addr)
-				    , pfcp_cause2str(rsp->cause->value));
+		logfc_notice(s->log, "remote PFCP peer:'%s' rejection (%s)",
+			     sa_str_ip(addr), pfcp_cause2str(rsp->cause->value));
 
 	if (pfcph->s)
 		s = pfcp_session_get(be64toh(pfcph->seid));
@@ -587,9 +571,8 @@ pfcp_proto_hdl(struct pfcp_server *srv, sockaddr_t *addr)
 
 	err = pfcp_msg_parse(msg, srv->s.pbuff);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error while parsing [%s] Request"
-				    , __FUNCTION__
-				    , pfcp_msgtype2str(pfcph->type));
+		logf_err("Error while parsing [%s] Request",
+			 pfcp_msgtype2str(pfcph->type));
 		err = -1;
 		goto end;
 	}
@@ -877,10 +860,8 @@ pfcp_gtpu_hdl(struct gtp_server *srv, sockaddr_t *addr)
 	}
 
 	/* Not supported */
-	log_message(LOG_INFO, "%s(): GTP-U/path-mgt msg_type:0x%.2x from %s not supported..."
-			    , __FUNCTION__
-			    , gtph->type
-			    , sa_str(addr));
+	logf_info("GTP-U/path-mgt msg_type:0x%.2x from %s not supported...",
+		  gtph->type , sa_str(addr));
 
 	gtp_metrics_rx_notsup(&srv->msg_metrics, gtph->type);
 	return -1;

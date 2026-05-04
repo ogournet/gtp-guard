@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include "logger.h"
 #include "gtp_apn.h"
 #include "gtp_conn.h"
 #include "pfcp_msg.h"
@@ -43,7 +44,6 @@ enum pfcp_session_flags {
 	PFCP_SESSION_FL_HPLMN,
 	PFCP_SESSION_FL_ROAMING_IN,
 	PFCP_SESSION_FL_ROAMING_OUT,
-	PFCP_SESSION_FL_HASHED,
 };
 
 /* Session Actions */
@@ -241,12 +241,14 @@ struct pfcp_session {
 	struct list_head	next;
 	struct hlist_node	hlist;
 
+	struct log_ctx		log;
 	unsigned long		flags;
 };
 
 /* Prototypes */
 struct gtp_range_partition *gtp_resolve_rp(struct gtp_apn *apn, struct pfcp_router *router, int type);
 struct pfcp_ue *pfcp_ue_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn);
+void pfcp_ue_release_all_sessions(struct pfcp_ue *ue);
 int pfcp_sessions_count_read(void);
 int pfcp_sessions_cpu_count(int cpu);
 sockaddr_t *pfcp_session_get_addr_by_interface(struct pfcp_router *r,
@@ -260,7 +262,6 @@ int pfcp_session_alloc_ue_ip(struct pfcp_session *s, sa_family_t af);
 int pfcp_session_release_ue_ip(struct pfcp_session *s);
 int pfcp_session_release_teid(struct pfcp_session *s);
 void pfcp_session_release(struct pfcp_session *s);
-void pfcp_session_ue_release(struct pfcp_ue *ue);
 int pfcp_sessions_free(struct pfcp_ue *ue);
 int pfcp_sessions_init(void);
 int pfcp_sessions_destroy(void);

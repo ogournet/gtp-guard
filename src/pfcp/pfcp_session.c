@@ -48,77 +48,6 @@ static void pfcp_session_expire(struct thread *t);
 
 
 /*
- *	PFCP Session hash handling
- */
-static struct hlist_head *
-pfcp_session_hashkey(struct hlist_head *h, uint64_t id)
-{
-	return h + (jhash_2words((uint32_t)id, (uint32_t) (id >> 32), 0) & PFCP_SESSION_HASHTAB_MASK);
-}
-
-static struct pfcp_session *
-_pfcp_session_get(struct hlist_head *h, uint64_t id)
-{
-	struct hlist_head *head = pfcp_session_hashkey(h, id);
-	struct pfcp_session *s;
-
-	hlist_for_each_entry(s, head, hlist) {
-		if (s->seid == id)
-			return s;
-	}
-
-	return NULL;
-}
-
-struct pfcp_session *
-pfcp_session_get(uint64_t id)
-{
-	return _pfcp_session_get(pfcp_session_tab, id);
-}
-
-static int
-_pfcp_session_hash(struct hlist_head *h, struct pfcp_session *s)
-{
-	struct hlist_head *head = pfcp_session_hashkey(h, s->seid);
-
-	if (__test_and_set_bit(PFCP_SESSION_FL_HASHED, &s->flags)) {
-		log_message(LOG_INFO, "%s(): pfcp-session:0x%" PRIx64 " already hashed !!!"
-				    , __FUNCTION__, s->seid);
-		return -1;
-	}
-
-	hlist_add_head(&s->hlist, head);
-	return 0;
-}
-
-static int
-_pfcp_session_unhash(struct hlist_head *h, struct pfcp_session *s)
-{
-	if (!s)
-		return -1;
-
-	if (!__test_and_clear_bit(PFCP_SESSION_FL_HASHED, &s->flags)) {
-		log_message(LOG_INFO, "%s(): pfcp-session:0x%" PRIx64 " already unhashed !!!"
-				    , __FUNCTION__, s->seid);
-		return -1;
-	}
-	hlist_del_init(&s->hlist);
-	return 0;
-}
-
-int
-pfcp_session_unhash(struct pfcp_session *s)
-{
-	return _pfcp_session_unhash(pfcp_session_tab, s);
-}
-
-int
-pfcp_session_hash(struct pfcp_session *s)
-{
-	return _pfcp_session_hash(pfcp_session_tab, s);
-}
-
-/*
  *	PFCP UE handling
  */
 struct pfcp_ue *
@@ -134,36 +63,45 @@ pfcp_ue_alloc(uint64_t imsi, uint64_t imei, uint64_t msisdn)
 	return ue;
 }
 
+void
+pfcp_ue_release_all_sessions(struct pfcp_ue *ue)
+{
+	struct pfcp_session *s, *_s;
+
+	list_for_each_entry_safe(s, _s, &ue->pfcp_sessions, next)
+		pfcp_session_release(s);
+}
+
 
 /*
  *	PFCP Sessions handling
  */
+
+static struct hlist_head *
+pfcp_session_hashkey(struct hlist_head *h, uint64_t id)
+{
+	return h + (jhash_2words((uint32_t)id, (uint32_t)(id >> 32), 0) &
+		    PFCP_SESSION_HASHTAB_MASK);
+}
+
+struct pfcp_session *
+pfcp_session_get(uint64_t id)
+{
+	struct hlist_head *head = pfcp_session_hashkey(pfcp_session_tab, id);
+	struct pfcp_session *s;
+
+	hlist_for_each_entry(s, head, hlist) {
+		if (s->seid == id)
+			return s;
+	}
+
+	return NULL;
+}
+
 int
 pfcp_sessions_count_read(void)
 {
 	return pfcp_sessions_count;
-}
-
-void
-pfcp_session_mod_timer(struct pfcp_session *s, int timeout)
-{
-	if (!s->timer)
-		s->timer = thread_add_timer(master, pfcp_session_expire, s,
-					    (uint64_t) timeout * TIMER_HZ);
-	else
-		thread_mod_timer(s->timer, (uint64_t) timeout * TIMER_HZ);
-}
-
-static void
-pfcp_session_add_timer(struct pfcp_session *s)
-{
-	struct gtp_apn *apn = s->apn;
-
-	if (!apn->session_lifetime)
-		return;
-
-	/* Sort it by timeval */
-	pfcp_session_mod_timer(s, apn->session_lifetime);
 }
 
 static uint64_t
@@ -197,10 +135,8 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 	uint64_t seid;
 
 	s = calloc(1, sizeof (*s));
-	if (!s) {
-		errno = ENOMEM;
+	if (!s)
 		return NULL;
-	}
 	INIT_LIST_HEAD(&s->next);
 	INIT_LIST_HEAD(&s->pdr_list);
 	INIT_LIST_HEAD(&s->far_list);
@@ -209,35 +145,42 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 	INIT_LIST_HEAD(&s->te_list);
 	INIT_LIST_HEAD(&s->urr_cmd_pending_list);
 	s->apn = apn;
-	s->ue = ue;
 	s->router = r;
 	time_now_to_calendar(&s->creation_time);
 	seid = pfcp_session_seid_alloc(r);
 	if (!seid) {
-		log_message(LOG_INFO, "%s(): Something weird while allocating seid !!!"
-				    , __FUNCTION__);
+		logf_warn("Something weird while allocating seid !!!");
 		free(s);
 		return NULL;
 	}
 	s->seid = seid;
 
+	/* Link to UE, if present */
+	if (ue != NULL) {
+		s->ue = ue;
+		snprintf(s->log.prefix, sizeof (s->log.prefix), "%ld/%.8s",
+			 ue->c.imsi, apn->name);
+		list_add_tail(&s->next, &ue->pfcp_sessions);
+		gtp_conn_refinc(&ue->c);
+	} else {
+		snprintf(s->log.prefix, sizeof (s->log.prefix), "%ldd", seid);
+	}
+
+	logc_debug(s->log, "starting session");
+
+	/* Index by seid */
+	hlist_add_head(&s->hlist, pfcp_session_hashkey(pfcp_session_tab, s->seid));
+
 	/* APN override router sched if configured */
 	grp = apn->cpu_sched ? : r->cpu_sched;
 	s->cpu = gtp_cpu_sched_elect(grp);
+	__sync_add_and_fetch(&apn->session_count, 1);
+	s->timer = thread_add_timer(master, pfcp_session_expire, s,
+				    (uint64_t)apn->session_lifetime * TIMER_HZ);
 
 	/* CDR context */
 	if (apn->cdr_spool)
 		s->cdr = gtp_cdr_alloc();
-
-	list_add_tail(&s->next, &ue->pfcp_sessions);
-	gtp_conn_refinc(&ue->c);
-	__sync_add_and_fetch(&pfcp_sessions_count, 1);
-	if (pfcp_sessions_per_cpu && s->cpu < pfcp_sessions_nr_cpus)
-		__sync_add_and_fetch(&pfcp_sessions_per_cpu[s->cpu], 1);
-
-	pfcp_session_hash(s);
-	pfcp_session_add_timer(s);
-	__sync_add_and_fetch(&apn->session_count, 1);
 
 	/* Automatically start capture */
 	if (ue->capture.flags) {
@@ -252,6 +195,11 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 		s->sig_cap.cap_len = ~0;
 		gtp_capture_start(&s->sig_cap, s->router->bpf_prog, capname);
 	}
+
+	/* Global stats */
+	__sync_add_and_fetch(&pfcp_sessions_count, 1);
+	if (pfcp_sessions_per_cpu && s->cpu < pfcp_sessions_nr_cpus)
+		__sync_add_and_fetch(&pfcp_sessions_per_cpu[s->cpu], 1);
 
 	return s;
 }
@@ -335,38 +283,25 @@ pfcp_session_release(struct pfcp_session *s)
 	__sync_sub_and_fetch(&s->apn->session_count, 1);
 	gtp_apn_cdr_commit(s->apn, s->cdr);
 	pfcp_session_delete(s);
-	pfcp_session_unhash(s);
 	pfcp_session_release_ue_ip(s);
 	pfcp_session_release_teid(s);
+	hlist_del(&s->hlist);
 
 	list_del(&s->next);
-	gtp_conn_refdec(&s->ue->c);
+	if (s->ue != NULL)
+		gtp_conn_refdec(&s->ue->c);
 	__sync_sub_and_fetch(&pfcp_sessions_count, 1);
 
 	free(s);
 }
 
-
-/*
- *	Session expiration handling
- */
 static void
 pfcp_session_expire(struct thread *t)
 {
 	struct pfcp_session *s = THREAD_ARG(t);
 
-	log_message(LOG_INFO, "IMSI:%ld - Expiring pfcp-session-id:0x%" PRIx64 ""
-			    , s->ue->c.imsi, s->seid);
+	logc_notice(s->log, "Expiring pfcp-session-id:0x%" PRIx64, s->seid);
 	pfcp_session_release(s);
-}
-
-void
-pfcp_session_ue_release(struct pfcp_ue *ue)
-{
-	struct pfcp_session *s, *_s;
-
-	list_for_each_entry_safe(s, _s, &ue->pfcp_sessions, next)
-		pfcp_session_release(s);
 }
 
 

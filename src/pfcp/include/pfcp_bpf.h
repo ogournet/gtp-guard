@@ -59,7 +59,7 @@ struct upf_urr_cmd_req *pfcp_bpf_urr_alloc_cmd(struct pfcp_session *s);
 int pfcp_bpf_urr_ctl(struct pfcp_session *s, struct upf_urr_cmd_req *uc);
 int pfcp_bpf_teid_action(struct pfcp_router *r, int action, struct pfcp_teid *t,
 			 struct ue_ip_address *ue);
-int pfcp_bpf_action(struct pfcp_router *rtr, struct pfcp_fwd_rule *r,
+int pfcp_bpf_action(struct pfcp_session *s, struct pfcp_fwd_rule *r,
 		    struct pfcp_teid *t, struct ue_ip_address *ue);
 int pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 		      struct ue_ip_address *ue, struct pfcp_teid *t);

@@ -74,9 +74,7 @@ pfcp_server_init(struct pfcp_server *s, void *ctx,
 	s->ctx = ctx;
 	s->msg = pfcp_msg_alloc(PFCP_MSG_MEM_ZEROCOPY);
 	if (!s->msg) {
-		log_message(LOG_INFO, "%s(): Error allocating PFCP msg for %s"
-				    , __FUNCTION__
-				    , sa_str(addr));
+		logf_err("Error allocating PFCP msg for %s", sa_str(addr));
 		return -1;
 	}
 
@@ -90,9 +88,7 @@ pfcp_server_init(struct pfcp_server *s, void *ctx,
 	/* Create UDP Listener */
 	err = inet_server_init(srv, SOCK_DGRAM);
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error creating PFCP listener on %s"
-				    , __FUNCTION__
-				    , sa_str(addr));
+		logf_err("Error creating PFCP listener on %s", sa_str(addr));
 		pfcp_msg_free(s->msg);
 		s->msg = NULL;
 		return -1;

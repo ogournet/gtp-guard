@@ -221,8 +221,7 @@ DEFUN(pfcp_listen,
 		return CMD_WARNING;
 	}
 
-	log_message(LOG_INFO, "PFCP start listening on %s"
-			    , sa_str(addr));
+	log_info("PFCP start listening on %s" , sa_str(addr));
 	__set_bit(PFCP_ROUTER_FL_LISTEN, &c->flags);
 	return CMD_SUCCESS;
 }
@@ -570,7 +569,10 @@ pfcp_debug_teid_apply(struct vty *vty, struct pfcp_router *c,
 					     (rteid_count > 1 ? (uint32_t)i : 0));
 	}
 
-	r = pfcp_bpf_action(c, rule, &t, &ue);
+	struct pfcp_session s = {
+		.router = c,
+	};
+	r = pfcp_bpf_action(&s, rule, &t, &ue);
 	free(rule);
 	if (r) {
 		vty_out(vty, "%% cannot %s teid 0x%08x\n", ctx->action, teid);

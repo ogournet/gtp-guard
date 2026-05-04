@@ -133,8 +133,8 @@ pfcp_session_get_addr_by_interface(struct pfcp_router *r, uint8_t interface)
 
 	srv = pfcp_session_get_gtp_server_by_interface(r, interface);
 	if (!srv) {
-		log_message(LOG_INFO, "%s(): pfcp-router:'%s' No GTP-U interface configured !!!"
-				    , __FUNCTION__, r->name);
+		logf_notice("pfcp-router:'%s' No GTP-U interface configured !!!",
+			    r->name);
 		return NULL;
 	}
 
@@ -961,11 +961,11 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 	/* Set data-path */
 	if (u->flags & UPF_FWD_FL_EGRESS) {
 		if (p->teid)
-			pfcp_bpf_action(s->router, r, p->teid, NULL);
+			pfcp_bpf_action(s, r, p->teid, NULL);
 		else if (p->te && p->te->teid)
-			pfcp_bpf_action(s->router, r, p->te->teid, NULL);
+			pfcp_bpf_action(s, r, p->te->teid, NULL);
 	} else {
-		pfcp_bpf_action(s->router, r, NULL, &s->ue_ip);
+		pfcp_bpf_action(s, r, NULL, &s->ue_ip);
 	}
 
 	/* Reset context actions for next round */
@@ -1147,11 +1147,11 @@ pfcp_session_delete_fwd_rules(struct pfcp_session *s, struct pdr *p)
 	r->action = PFCP_ACT_DELETE;
 	if (r->rule.flags & UPF_FWD_FL_EGRESS) {
 		if (p->teid)
-			pfcp_bpf_action(s->router, r, p->teid, NULL);
+			pfcp_bpf_action(s, r, p->teid, NULL);
 		else if (p->te && p->te->teid)
-			pfcp_bpf_action(s->router, r, p->te->teid, NULL);
+			pfcp_bpf_action(s, r, p->te->teid, NULL);
 	} else {
-		pfcp_bpf_action(s->router, r, NULL, &s->ue_ip);
+		pfcp_bpf_action(s, r, NULL, &s->ue_ip);
 	}
 
 	free(r);

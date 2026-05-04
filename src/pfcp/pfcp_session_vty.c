@@ -282,7 +282,7 @@ DEFUN(clear_pfcp_session,
 		return CMD_WARNING;
 	}
 
-	pfcp_session_ue_release((struct pfcp_ue *)c);
+	pfcp_ue_release_all_sessions((struct pfcp_ue *)c);
 	return CMD_SUCCESS;
 }
 

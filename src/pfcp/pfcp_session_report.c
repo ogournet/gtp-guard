@@ -82,9 +82,8 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 
 	p = __pkt_queue_get(&srv->pkt_q);
 	if (!p) {
-		log_message(LOG_INFO, "%s(): Error getting pkt from queue for server %s"
-				    , __FUNCTION__
-				    , sa_str(&srv->s.addr));
+		logfc_err(s->log, "Error getting pkt from queue for server %s",
+			  sa_str(&srv->s.addr));
 		return;
 	}
 
@@ -102,9 +101,8 @@ pfcp_session_report_build_and_send(struct pfcp_report *r)
 	}
 
 	if (err) {
-		log_message(LOG_INFO, "%s(): Error building report pkt for server %s"
-				    , __FUNCTION__
-				    , sa_str(&srv->s.addr));
+		logfc_err(s->log, "Error building report pkt for server %s",
+			  sa_str(&srv->s.addr));
 		goto end;
 	}
 
