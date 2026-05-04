@@ -265,7 +265,7 @@ DEFUN(pfcp_urr_static_link,
 
 DEFUN(pfcp_capture,
       pfcp_capture_cmd,
-      "capture CAPENTRY [ (pfcp|gtpu|all) ]",
+      "capture name CAPENTRY [ (pfcp|gtpu|all) ]",
       "Activate PFCP / GTP-U (non data) capture\n"
       "Capture entry name\n"
       "All PFCP packets\n"
@@ -370,17 +370,67 @@ DEFUN(pfcp_no_capture,
 
 DEFUN(pfcp_capture_imsi,
       pfcp_capture_imsi_cmd,
-      "capture imsi IMSI [name CAPENTRY side (input|output|access|core|all)]",
-      "Capture module\n"
-      "Capture entry name\n"
-      "Permanent capture on IMSI\n"
-      "Imsi\n")
+      "capture imsi IMSI "
+      "[ name CAPENTRY ] "
+      "[ side (input|output|access|core|all) ] "
+      "[ caplen <32-10000> ] "
+      "[ sigonly ] "
+      "[ dataonly ] ",
+      "Capture menu\n"
+      "Permanent capture by IMSI\n"
+      "Capture this user\n"
+      "Capture file entry name\n"
+      "File entry name\n"
+      "Capture side (default: input)\n"
+      "Capture on input (xdp rx)\n"
+      "Capture on output (xdp tx/pass/redirect)\n"
+      "Capture on acces side (encap in gtp-u)\n"
+      "Capture on core side (plain l3)\n"
+      "Capture on both input and output\n"
+      "Capture packet max length\n"
+      "Value\n"
+      "Capture pfcp signalisation only\n"
+      "Capture userplan data only\n")
 {
-	struct gtp_capture_entry cap = {};
+	struct pfcp_session *s;
 	struct pfcp_ue *ue;
 	uint64_t v = atoll(argv[0]);
 	char capname[64];
+	uint16_t cap_fl, traf_fl;
+	int cap_len = 0;
 	int i;
+
+	snprintf(capname, sizeof (capname), "%ld", v);
+	cap_fl = GTP_CAPTURE_FL_INPUT;
+	traf_fl = PFCP_SESSION_CAPTURE_FL_PFCP | PFCP_SESSION_CAPTURE_FL_DATA;
+
+	/* parse optional parameters */
+	for (i = 1; i < argc; i += 2) {
+		if (!strcmp(argv[i], "name") && i + 1 < argc) {
+			snprintf(capname, sizeof (capname), "%s", argv[i + 1]);
+		} else if (!strcmp(argv[i], "side") && i + 1 < argc) {
+			if (!strcmp(argv[i + 1], "input"))
+				cap_fl = GTP_CAPTURE_FL_INPUT;
+			else if (!strcmp(argv[i + 1], "output"))
+				cap_fl = GTP_CAPTURE_FL_OUTPUT;
+			else if (!strcmp(argv[i + 1], "core"))
+				cap_fl = GTP_CAPTURE_FL_CORE;
+			else if (!strcmp(argv[i + 1], "access"))
+				cap_fl = GTP_CAPTURE_FL_ACCESS;
+			else if (!strcmp(argv[i + 1], "all"))
+				cap_fl = GTP_CAPTURE_FL_DIRECTION_MASK;
+		} else if (!strcmp(argv[i], "caplen") && i + 1 < argc)
+			VTY_GET_INTEGER_RANGE("caplen", cap_len, argv[i + 1],
+					      32, 10000);
+		else if (!strcmp(argv[i], "dataonly"))
+			traf_fl = PFCP_SESSION_CAPTURE_FL_DATA;
+		else if (!strcmp(argv[i], "sigonly"))
+			traf_fl = PFCP_SESSION_CAPTURE_FL_PFCP;
+		else {
+			vty_out(vty, "%% Incomplete command\n");
+			return CMD_WARNING;
+		}
+	}
 
 	ue = (struct pfcp_ue *)gtp_conn_get_by_imsi(v);
 	if (ue != NULL) {
@@ -398,27 +448,29 @@ DEFUN(pfcp_capture_imsi,
 		gtp_conn_refinc(&ue->c);
 	}
 
-	snprintf(capname, sizeof (capname), "%ld", v);
-	cap.flags = GTP_CAPTURE_FL_INPUT;
-	for (i = 1; i < argc; i += 2) {
-		if (!strcmp(argv[i], "name")) {
-			snprintf(capname, sizeof (capname), "%s", argv[i + 1]);
-		} else if (!strcmp(argv[i], "side")) {
-			if (!strcmp(argv[i + 1], "input"))
-				cap.flags = GTP_CAPTURE_FL_INPUT;
-			else if (!strcmp(argv[i + 1], "output"))
-				cap.flags = GTP_CAPTURE_FL_OUTPUT;
-			else if (!strcmp(argv[i + 1], "core"))
-				cap.flags = GTP_CAPTURE_FL_CORE;
-			else if (!strcmp(argv[i + 1], "access"))
-				cap.flags = GTP_CAPTURE_FL_ACCESS;
-			else if (!strcmp(argv[i + 1], "all"))
-				cap.flags = GTP_CAPTURE_FL_DIRECTION_MASK;
+	ue->capture.flags = cap_fl | traf_fl;
+	ue->capture.cap_len = cap_len;
+	list_for_each_entry(s, &ue->pfcp_sessions, next) {
+		if (traf_fl & PFCP_SESSION_CAPTURE_FL_DATA) {
+			s->data_cap.flags = cap_fl | traf_fl;
+			s->data_cap.cap_len = cap_len;
+			gtp_capture_start(&s->data_cap, s->router->bpf_prog, capname);
+			pfcp_session_update_fwd_rules(s);
+		} else {
+			gtp_capture_stop(&s->data_cap);
+			pfcp_session_update_fwd_rules(s);
+		}
+
+		if (traf_fl & PFCP_SESSION_CAPTURE_FL_PFCP) {
+			/* on signaling path, we always want full packets and both path */
+			s->sig_cap.flags = GTP_CAPTURE_FL_INPUT |
+				GTP_CAPTURE_FL_OUTPUT | traf_fl;
+			s->sig_cap.cap_len = ~0;
+			gtp_capture_start(&s->sig_cap, s->router->bpf_prog, capname);
+		} else {
+			gtp_capture_stop(&s->sig_cap);
 		}
 	}
-
-	ue->capture = cap;
-	/* XXX: may start if pfcp session is existing */
 
 	return CMD_SUCCESS;
 }

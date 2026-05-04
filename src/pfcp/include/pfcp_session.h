@@ -46,6 +46,10 @@ enum pfcp_session_flags {
 	PFCP_SESSION_FL_ROAMING_OUT,
 };
 
+/* Capture flags */
+#define PFCP_SESSION_CAPTURE_FL_DATA	0x0100
+#define PFCP_SESSION_CAPTURE_FL_PFCP	0x0200
+
 /* Session Actions */
 enum {
 	PFCP_ACTION_DELETE_SESSION = 1,

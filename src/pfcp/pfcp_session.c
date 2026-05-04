@@ -132,6 +132,7 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 {
 	struct gtp_cpu_sched_group *grp;
 	struct pfcp_session *s;
+	char capname[60];
 	uint64_t seid;
 
 	s = calloc(1, sizeof (*s));
@@ -183,16 +184,16 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 		s->cdr = gtp_cdr_alloc();
 
 	/* Automatically start capture */
-	if (ue->capture.flags) {
-		char capname[200];
-		s->data_cap = ue->capture;
+	if (ue->capture.flags & PFCP_SESSION_CAPTURE_FL_DATA) {
+		s->data_cap.flags = ue->capture.flags;
+		s->data_cap.cap_len = ue->capture.cap_len;
 		snprintf(capname, sizeof (capname), "%ld", ue->c.imsi);
 		gtp_capture_start(&s->data_cap, r->bpf_prog, capname);
-
-		/* on signaling path, we always want full packets and both path */
-		memset(&s->sig_cap, 0x00, sizeof (s->sig_cap));
+	}
+	if (ue->capture.flags & PFCP_SESSION_CAPTURE_FL_PFCP) {
 		s->sig_cap.flags = GTP_CAPTURE_FL_INPUT | GTP_CAPTURE_FL_OUTPUT;
 		s->sig_cap.cap_len = ~0;
+		snprintf(capname, sizeof (capname), "%ld", ue->c.imsi);
 		gtp_capture_start(&s->sig_cap, s->router->bpf_prog, capname);
 	}
 
