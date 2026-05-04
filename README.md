@@ -44,7 +44,7 @@ line vty
 !
 EOFCONF
 
-$ sudo bin/gtp-guard --dont-fork --log-console --log-detail -f /tmp/gtp-guard.conf
+$ sudo bin/gtp-guard -f /tmp/gtp-guard.conf
 ```
 
 then from another console, you can `telnet 127.0.0.1 8888` in order to get the CLI:
