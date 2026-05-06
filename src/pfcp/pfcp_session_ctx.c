@@ -75,19 +75,6 @@ pfcp_session_get_qer_by_id(struct pfcp_session *s, uint32_t id)
 	return NULL;
 }
 
-static struct urr *
-pfcp_session_get_urr_by_id(struct pfcp_session *s, uint32_t id)
-{
-	struct urr *u;
-
-	list_for_each_entry(u, &s->urr_list, next) {
-		if (u->id == id)
-			return u;
-	}
-
-	return NULL;
-}
-
 static struct gtp_server *
 pfcp_session_get_gtp_server_by_interface(struct pfcp_router *r, uint8_t interface)
 {
@@ -498,280 +485,6 @@ pfcp_session_create_qer(struct pfcp_session *s, struct qer *qer,
 }
 
 static int
-pfcp_session_create_urr(struct pfcp_session *s, struct urr *urr,
-			struct pfcp_ie_create_urr *ie)
-{
-	int i;
-
-	urr->action = PFCP_ACT_CREATE;
-
-	urr->id = ntohl(ie->urr_id->value);
-
-	urr->start_time = time_now_to_ntp();
-	urr->end_time = urr->start_time;
-
-	urr->measurement_method = ie->measurement_method->v;
-	if (!urr->measurement_method.durat)
-		urr->duration = -1;
-
-	urr->triggers = ie->reporting_triggers->v;
-
-	if (ie->measurement_information)
-		urr->measurement_info = ie->measurement_information->v;
-
-	if (ie->inactivity_detection_time)
-		urr->inactivity_detection_time = ntohl(ie->inactivity_detection_time->value);
-
-	if (ie->quota_holding_time)
-		urr->quota_holdtime = ntohl(ie->quota_holding_time->value);
-
-	if (ie->volume_threshold) {
-		const struct pfcp_ie_volume_threshold *vth = ie->volume_threshold;
-
-		if (vth->tovol)
-			urr->volume_threshold_to = be64toh(vth->total_volume);
-		if (vth->ulvol) {
-			if (vth->tovol)
-				urr->volume_threshold_ul = be64toh(vth->uplink_volume);
-			else
-				urr->volume_threshold_ul = be64toh(vth->total_volume);
-		}
-		if (vth->dlvol) {
-			if (vth->tovol && vth->ulvol)
-				urr->volume_threshold_dl = be64toh(vth->downlink_volume);
-			else if (vth->tovol ^ vth->ulvol)
-				urr->volume_threshold_dl = be64toh(vth->uplink_volume);
-			else
-				urr->volume_threshold_dl = be64toh(vth->total_volume);
-		}
-	}
-
-	if (ie->volume_quota) {
-		const struct pfcp_ie_volume_quota *vqu = ie->volume_quota;
-
-		if (vqu->tovol)
-			urr->volume_quota_to = be64toh(vqu->total_volume);
-		if (vqu->ulvol) {
-			if (vqu->tovol)
-				urr->volume_quota_ul = be64toh(vqu->uplink_volume);
-			else
-				urr->volume_quota_ul = be64toh(vqu->total_volume);
-		}
-		if (vqu->dlvol) {
-			if (vqu->tovol && vqu->ulvol)
-				urr->volume_quota_dl = be64toh(vqu->downlink_volume);
-			else if (vqu->tovol ^ vqu->ulvol)
-				urr->volume_quota_dl = be64toh(vqu->uplink_volume);
-			else
-				urr->volume_quota_dl = be64toh(vqu->total_volume);
-		}
-	}
-
-	if (ie->time_threshold)
-		urr->time_threshold = ntohl(ie->time_threshold->time_threshold);
-
-	if (ie->time_quota)
-		urr->time_quota = ntohl(ie->time_quota->value);
-
-	if (ie->measurement_period)
-		urr->time_periodic = ntohl(ie->measurement_period->measurement_period);
-
-	for (i = 0; i < PFCP_MAX_NR_ELEM && i < ie->nr_linked_urr_id; i++)
-		urr->linked_urr_id[i] = ntohl(ie->linked_urr_id[i]->value);
-
-	for (i = 0; i < ARRAY_SIZE(s->router->urr_static_pdr_link); i++)
-		if (s->router->urr_static_pdr_link[i] == urr->id)
-			urr->auto_attach = true;
-
-	return 0;
-}
-
-
-/*
- * take the FAST PATH
- *
- * if, for a create session, we have:
- *  URR[1]: volth, vol measurement
- *  URR[2]: quhti, vol measurement
- *  URR[3]: something else
- * and:
- *  PDR[1]: UL, references urr[1] and urr[2]
- *  PDR[2]: DL, references urr[1] and urr[2]
- * then
- *  merge URR[1] and URR[2] into one and unique URR, put it on bpf map,
- *  and PDR[1] and PDR[2] will reference it
- *
- * for all other cases it won't probably work as expected
- */
-static int
-pfcp_session_merge_urr(struct pfcp_session *s, struct upf_urr_cmd_req *uc)
-{
-	union pfcp_measurement_method mm;
-	struct urr *urr;
-	struct pdr *p;
-	int pdr_cnt, pdr_urr_cnt;
-	int i;
-
-	list_for_each_entry(urr, &s->urr_list, next) {
-		/* is this urr is used in any/all pdrs ? */
-		pdr_cnt = 0;
-		pdr_urr_cnt = 0;
-		list_for_each_entry(p, &s->pdr_list, next) {
-			pdr_cnt++;
-			for (i = 0; i < PFCP_MAX_NR_ELEM && p->urr[i]; i++)
-				if (p->urr[i] == urr) {
-					pdr_urr_cnt++;
-					break;
-				}
-		}
-		/* not used, skip it */
-		if (!urr->auto_attach && !pdr_urr_cnt)
-			continue;
-		/* not used in all pdr, problems ahead */
-		if (!urr->auto_attach && pdr_urr_cnt != pdr_cnt)
-			log_debug("urr[%d]: included in %d/%d pdr",
-				  urr->id, pdr_urr_cnt, pdr_cnt);
-
-		urr->urr_idx = uc->urr_idx;
-
-		mm = urr->measurement_method;
-		uc->flags |= (mm.volum ? UPF_FL_MEAS_VOL : 0) |
-			(mm.durat ? UPF_FL_MEAS_TIME : 0);
-
-		/* take the first triggering values of all urrs */
-		if (mm.volum && urr->triggers.volth) {
-			uc->total_th =
-				!uc->total_th ? urr->volume_threshold_to :
-				min(uc->total_th, urr->volume_threshold_to);
-			uc->ul_th =
-				!uc->ul_th ? urr->volume_threshold_ul :
-				min(uc->ul_th, urr->volume_threshold_ul);
-			uc->dl_th =
-				!uc->dl_th ? urr->volume_threshold_dl :
-				min(uc->dl_th, urr->volume_threshold_dl);
-		}
-		if (mm.volum && urr->triggers.volqu) {
-			uc->total_qu =
-				!uc->total_qu ? urr->volume_quota_to :
-				min(uc->total_qu, urr->volume_quota_to);
-			uc->ul_qu =
-				!uc->ul_qu ? urr->volume_quota_ul :
-				min(uc->ul_qu, urr->volume_quota_ul);
-			uc->dl_qu =
-				!uc->dl_qu ? urr->volume_quota_dl :
-				min(uc->dl_qu, urr->volume_quota_dl);
-		}
-		if (mm.durat && urr->triggers.timth)
-			uc->time_th = min(uc->time_th ?: ~0, urr->time_threshold);
-		if (mm.durat && urr->triggers.timqu)
-			uc->time_qu = min(uc->time_qu ?: ~0, urr->time_quota);
-		if (mm.durat)
-			uc->inactivity_det_time =
-				min(uc->inactivity_det_time ?: ~0,
-				    urr->inactivity_detection_time);
-
-		if (urr->triggers.perio)
-			uc->time_periodic = min(uc->time_periodic ?: ~0,
-					     urr->time_periodic);
-		if (urr->triggers.quhti)
-			uc->time_inactivity =
-				min(uc->time_inactivity ?: ~0,
-				    urr->quota_holdtime);
-	}
-
-	return 0;
-}
-
-static int
-pfcp_session_urr_on_modify(struct pfcp_session *s,
-			   struct pfcp_session_modification_request *req)
-{
-	struct pfcp_ie_query_urr_reference *ie_urr_ref = req->query_urr_reference;
-	struct upf_urr_cmd_req *uc;
-	struct urr *u;
-	bool query_all;
-	int bpf_action = 0;
-	int i, nrq;
-
-	/* Mark all existing urr for which a report is needed */
-	query_all = req->pfcpsmreq_flags && req->pfcpsmreq_flags->qaurr;
-	nrq = min(req->nr_query_urr, PFCP_MAX_NR_ELEM);
-	list_for_each_entry(u, &s->urr_list, next) {
-		if (u->queried)
-			printf("%s: WARN: urr.queried still true\n", __func__);
-		u->queried = query_all;
-		for (i = 0; !u->queried && i < nrq && req->query_urr[i]; i++)
-			if (u->id == req->query_urr[i]->urr_id->value)
-				u->queried = true;
-		bpf_action |= UPF_FL_CTL_REPORT;
-	}
-	s->urr_query_ref = ie_urr_ref ? ie_urr_ref->value : 0;
-
-
-	/* Create URR */
-	for (i = 0; i < req->nr_create_urr; i++) {
-		/* XXX */
-	}
-
-	/* Update URR */
-	for (i = 0; i < req->nr_update_urr; i++) {
-		/* XXX */
-	}
-
-	/* Delete URR */
-	for (i = 0; i < req->nr_remove_urr; i++) {
-		/* XXX */
-	}
-
-	/* XXX: upgrade bpf_action to UPF_FL_CTL_UPDATE if there is
-	 * any modification to be done.
-	 * XXX add a flag for each field that needs a modification */
-
-	if (bpf_action) {
-		uc = pfcp_bpf_urr_alloc_cmd(s);
-		uc->urr_idx = s->bpf_urr_idx;
-		uc->ctl_fl = bpf_action;
-		if (bpf_action == UPF_FL_CTL_UPDATE)
-			pfcp_session_merge_urr(s, uc);
-		pfcp_bpf_urr_ctl(s, uc);
-	}
-
-	return 0;
-}
-
-
-
-/* got new metrics from bpf. save them */
-int
-pfcp_session_urr_report(struct pfcp_session *s, struct upf_urr_report_data *rd)
-{
-	struct urr *u;
-
-	list_for_each_entry(u, &s->urr_list, next) {
-		if (u->urr_idx != rd->r.urr_idx)
-			continue;
-
-		u->pkt_first_time = rd->report_first_pkt ?
-			rd->report_first_pkt + s->router->mono2ntptime_off : 0;
-		u->pkt_last_time = rd->report_last_pkt ?
-			rd->report_last_pkt + s->router->mono2ntptime_off : 0;
-
-		if (u->measurement_method.volum) {
-			u->ul.bytes = rd->ul_bytes;
-			u->ul.count = rd->ul_pkt;
-			u->dl.bytes = rd->dl_bytes;
-			u->dl.count = rd->dl_pkt;
-		}
-
-		if (u->measurement_method.durat)
-			u->duration = rd->duration;
-	}
-
-	return 0;
-}
-
-
-static int
 pfcp_session_pdi(struct pfcp_session *s, struct pdr *pdr, struct pfcp_ie_pdi *pdi,
 		 uint32_t *id)
 {
@@ -880,11 +593,19 @@ pfcp_session_create_pdr(struct pfcp_session *s, struct pdr *pdr,
 	if (ie->outer_header_removal)
 		pdr->flags |= UPF_FWD_FL_ACT_REMOVE_OUTER_HEADER;
 
-	if (ie->urr_id) {
-		for (i = 0; i < ie->nr_urr_id && i < PFCP_MAX_NR_ELEM; i++) {
-			pdr->urr[i] = pfcp_session_get_urr_by_id(s, ntohl(ie->urr_id[i]->value));
-			if (!pdr->urr[i])
-				return -1;
+	if (ie->urr_id && ie->nr_urr_id) {
+		struct urrs *us = &s->urrs;
+
+		pdr->urr_msize = ie->nr_urr_id;
+		pdr->urr_idx = calloc(pdr->urr_msize, sizeof(int));
+		if (pdr->urr_idx == NULL)
+			return -1;
+		for (i = 0; i < ie->nr_urr_id; i++) {
+			int idx = urrs_find_by_urr_id(us,
+					ntohl(ie->urr_id[i]->value));
+			if (idx < 0)
+				continue;
+			pdr->urr_idx[pdr->urr_n++] = idx;
 		}
 	}
 
@@ -897,7 +618,7 @@ pfcp_session_create_pdr(struct pfcp_session *s, struct pdr *pdr,
 	if (ie->activate_predefined_rules) {
 		size_t len = ntohs(ie->activate_predefined_rules->h.length);
 		if (len > 0 && len < PFCP_STR_MAX_LEN)
-			memcpy(pdr->predifined_rule,
+			memcpy(pdr->predefined_rule,
 			       ie->activate_predefined_rules->predefined_rules_name, len);
 	}
 
@@ -947,8 +668,9 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 	u->tos_tclass = f->tos_tclass ? : 0;
 	u->tos_mask = f->tos_mask ? : 0;
 
-	/* URR map index */
-	u->urr_idx = s->bpf_urr_idx;
+	/* TTC map index */
+	if (s->urrs.ttc_n > 0)
+		u->ttc_idx = s->urrs.ttc[0].ttc_idx;
 
 	/* Packet capture */
 	u->capture.flags = s->data_cap.flags &
@@ -977,17 +699,7 @@ static int
 pfcp_session_create_fwd_rules(struct pfcp_session *s)
 {
 	struct pfcp_fwd_rule *new;
-	struct upf_urr_cmd_req *uc;
 	struct pdr *p;
-
-	if (!s->bpf_urr_idx)
-		s->bpf_urr_idx = pfcp_bpf_alloc_urr_idx(s);
-
-	uc = pfcp_bpf_urr_alloc_cmd(s);
-	uc->urr_idx = s->bpf_urr_idx;
-	uc->ctl_fl = UPF_FL_CTL_INIT;
-	pfcp_session_merge_urr(s, uc);
-	pfcp_bpf_urr_ctl(s, uc);
 
 	list_for_each_entry(p, &s->pdr_list, next) {
 		if (!p->action || !p->far)
@@ -1050,13 +762,7 @@ pfcp_session_create(struct pfcp_session *s, struct pfcp_session_establishment_re
 	}
 
 	/* URR */
-	for (i = 0; i < req->nr_create_urr; i++) {
-		struct urr *urr = calloc(1, sizeof(*urr));
-		if (!urr)
-			return -1;
-		pfcp_session_create_urr(s, urr, req->create_urr[i]);
-		list_add_tail(&urr->next, &s->urr_list);
-	}
+	urrs_on_create(s, req);
 
 	/* PDR will reference parsed elem */
 	for (i = 0; i < req->nr_create_pdr; i++) {
@@ -1128,7 +834,7 @@ pfcp_session_modify(struct pfcp_session *s, struct pfcp_session_modification_req
 	}
 
 	/* Handle URR */
-	pfcp_session_urr_on_modify(s, req);
+	urrs_on_modify(s, req);
 
 	/* Update data-path forwarding rules */
 	pfcp_session_update_fwd_rules(s);
@@ -1164,13 +870,14 @@ pfcp_session_delete(struct pfcp_session *s)
 	struct pdr *p, *_p;
 	struct far *f, *_f;
 	struct qer *q, *_q;
-	struct urr *u, *_u;
 	struct traffic_endpoint *te, *_te;
+	int i;
 
 	/* Free PDR list */
 	list_for_each_entry_safe(p, _p, &s->pdr_list, next) {
 		list_head_del(&p->next);
 		pfcp_session_delete_fwd_rules(s, p);
+		free(p->urr_idx);
 		free(p);
 	}
 
@@ -1186,22 +893,21 @@ pfcp_session_delete(struct pfcp_session *s)
 		free(q);
 	}
 
-	/* Free URR list */
-	list_for_each_entry_safe(u, _u, &s->urr_list, next) {
-		list_head_del(&u->next);
-		free(u);
-	}
-
 	/* Free Traffic Endpoint list */
 	list_for_each_entry_safe(te, _te, &s->te_list, next) {
 		list_head_del(&te->next);
 		free(te);
 	}
 
-	/* Free URR data */
-	pfcp_bpf_release_urr_idx(s, s->bpf_urr_idx);
+	/* Free BPF TTC indices */
+	for (i = 0; i < s->urrs.ttc_n; i++)
+		pfcp_bpf_release_ttc_idx(s, s->urrs.ttc[i].ttc_idx);
 	if (!list_empty(&s->urr_cmd_pending_list))
 		printf("%s: entries remain in urr_cmd_pending_list\n", __func__);
+
+	/* Free URR data */
+	if (s->urrs.msize)
+		mpool_release(&s->urrs.mp);
 
 	return 0;
 }

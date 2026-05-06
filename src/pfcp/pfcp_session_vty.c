@@ -20,8 +20,8 @@
  */
 
 #include <inttypes.h>
-#include <arpa/inet.h>
 #include "utils.h"
+#include "addr.h"
 #include "command.h"
 #include "table.h"
 #include "pfcp_router.h"
@@ -35,80 +35,152 @@
  *	VTY Command
  */
 static void
-_pfcp_session_urr_vty(struct vty *vty, struct urr *urr)
+_pfcp_session_urr_vty(struct vty *vty, struct urrs *us, int i)
 {
-	const union pfcp_reporting_triggers *tr = &urr->triggers;
+	const struct urr *u = &us->u[i];
+	const union pfcp_measurement_method *mm = &u->measurement_method;
+	const union pfcp_reporting_triggers *tr = &u->triggers;
 	char mmb[64];
 	int k = 0;
 
-	if (urr->measurement_method.durat)
-		k += scnprintf(mmb + k, sizeof (mmb) - k, "%s,", "duration");
-	if (urr->measurement_method.volum)
-		k += scnprintf(mmb + k, sizeof (mmb) - k, "%s,", "volume");
-	if (urr->measurement_method.event)
-		k += scnprintf(mmb + k, sizeof (mmb) - k, "%s,", "event");
-	mmb[k ? k - 1 : 0] = 0;
+	vty_out(vty, " . URR[%d] urr_id:%d seqn:%d\n",
+		u->id, u->urr_id, u->seqn);
 
-	vty_out(vty, " . URR[%d] measure: %s",
-		ntohl(urr->id), mmb);
+	if (mm->durat)
+		k += scnprintf(mmb + k, sizeof(mmb) - k, "duration,");
+	if (mm->volum)
+		k += scnprintf(mmb + k, sizeof(mmb) - k, "volume,");
+	if (mm->event)
+		k += scnprintf(mmb + k, sizeof(mmb) - k, "event,");
+	mmb[k ? k - 1 : 0] = 0;
+	if (mm->measurement_method)
+		vty_out(vty, "     measure : %s\n", mmb);
+
 	if (tr->triggers)
-		vty_out(vty, ", triggers:\n");
-	else
-		vty_out(vty, "%s", VTY_NEWLINE);
+		vty_out(vty, "     triggers:");
+	vty_out(vty, "%s", VTY_NEWLINE);
 
 	if (tr->perio)
-		vty_out(vty, "     PERIO (Periodic Reporting)\n");
+		vty_out(vty, "      - PERIO period:%ds\n",
+			us->time[i].periodic);
 	if (tr->volth) {
-		vty_out(vty, "     VOLTH ");
-		if (urr->volume_threshold_to)
-			vty_out(vty, " Total:%ld", urr->volume_threshold_to);
-		if (urr->volume_threshold_ul)
-			vty_out(vty, " Uplink:%ld", urr->volume_threshold_ul);
-		if (urr->volume_threshold_dl)
-			vty_out(vty, " Downlink:%ld", urr->volume_threshold_dl);
+		vty_out(vty, "      - VOLTH");
+		if (us->vol_threshold[i].to)
+			vty_out(vty, " total:%ld",
+				us->vol_threshold[i].to);
+		if (us->vol_threshold[i].ul)
+			vty_out(vty, " ul:%ld",
+				us->vol_threshold[i].ul);
+		if (us->vol_threshold[i].dl)
+			vty_out(vty, " dl:%ld",
+				us->vol_threshold[i].dl);
+		vty_out(vty, "%s", VTY_NEWLINE);
+	}
+	if (tr->volqu) {
+		vty_out(vty, "      - VOLQU");
+		if (us->vol_quota[i].to)
+			vty_out(vty, " total:%ld",
+				us->vol_quota[i].to);
+		if (us->vol_quota[i].ul)
+			vty_out(vty, " ul:%ld",
+				us->vol_quota[i].ul);
+		if (us->vol_quota[i].dl)
+			vty_out(vty, " dl:%ld",
+				us->vol_quota[i].dl);
 		vty_out(vty, "%s", VTY_NEWLINE);
 	}
 	if (tr->timth)
-		vty_out(vty, "     TIMTH (Time Threshold)\n");
-	if (tr->quhti)
-		vty_out(vty, "     QUHTI (Quota Holding Time)\n");
-	if (tr->start)
-		vty_out(vty, "     START (Start of Traffic)\n");
-	if (tr->stopt)
-		vty_out(vty, "     STOPT (Stop of Traffic)\n");
-	if (tr->droth)
-		vty_out(vty, "     DROTH (Dropped DL Traffic Threshold)\n");
-	if (tr->liusa)
-		vty_out(vty, "     LIUSA (Linked Usage Reporting)\n");
-	if (tr->volqu)
-		vty_out(vty, "     VOLQU (Volume Quota)\n");
+		vty_out(vty, "      - TIMTH threshold:%ds\n",
+			us->time[i].threshold);
 	if (tr->timqu)
-		vty_out(vty, "     TIMQU (Time Quota)\n");
+		vty_out(vty, "      - TIMQU quota:%ds\n",
+			us->time[i].quota);
+	if (tr->quhti)
+		vty_out(vty, "      - QUHTI holdtime:%ds\n",
+			us->time[i].quota_holdtime);
+	if (tr->start)
+		vty_out(vty, "      - START\n");
+	if (tr->stopt)
+		vty_out(vty, "      - STOPT\n");
+	if (tr->droth)
+		vty_out(vty, "      - DROTH\n");
+	if (tr->liusa)
+		vty_out(vty, "      - LIUSA\n");
 	if (tr->envcl)
-		vty_out(vty, "     ENVCL (Envelope Closure)\n");
+		vty_out(vty, "      - ENVCL\n");
 	if (tr->macar)
-		vty_out(vty, "     MACAR (MAC Addresses Reporting)\n");
+		vty_out(vty, "      - MACAR\n");
 	if (tr->eveth)
-		vty_out(vty, "     EVETH (Event Threshold)\n");
+		vty_out(vty, "      - EVETH\n");
 	if (tr->evequ)
-		vty_out(vty, "     EVEQU (Event Quota)\n");
+		vty_out(vty, "      - EVEQU\n");
 	if (tr->ipmjl)
-		vty_out(vty, "     IPMJL (IP Multicast Join/Leave)\n");
+		vty_out(vty, "      - IPMJL\n");
 	if (tr->quvti)
-		vty_out(vty, "     QUVTI (Quota Validity Time)\n");
+		vty_out(vty, "      - QUVTI\n");
 
-
+	/* metrics */
+	if (mm->volum)
+		vty_out(vty, "     volume  :\n"
+			"       ul: packets:%ld bytes:%ld\n"
+			"       dl: packets:%ld bytes:%ld\n",
+			u->ul.count, u->ul.bytes,
+			u->dl.count, u->dl.bytes);
+	if (mm->durat && u->duration >= 0)
+		vty_out(vty, "     duration:%ds\n",
+			u->duration);
 }
 
 static void
-_pfcp_session_pdr_vty(struct vty *vty, struct pfcp_session *s, bool details)
+_pfcp_session_ttc_vty(struct vty *vty, const struct upf_ttc_cmd *c,
+		      int idx)
+{
+	vty_out(vty, " . TTC[%d] bpf_idx:%d flags:0x%02x\n",
+		idx, c->ttc_idx, c->flags);
+
+	if (c->total_th || c->ul_th || c->dl_th) {
+		vty_out(vty, "     vol-threshold");
+		if (c->total_th)
+			vty_out(vty, " total:%lld", c->total_th);
+		if (c->ul_th)
+			vty_out(vty, " ul:%lld", c->ul_th);
+		if (c->dl_th)
+			vty_out(vty, " dl:%lld", c->dl_th);
+		vty_out(vty, "%s", VTY_NEWLINE);
+	}
+	if (c->total_qu || c->ul_qu || c->dl_qu) {
+		vty_out(vty, "     vol-quota");
+		if (c->total_qu)
+			vty_out(vty, " total:%lld", c->total_qu);
+		if (c->ul_qu)
+			vty_out(vty, " ul:%lld", c->ul_qu);
+		if (c->dl_qu)
+			vty_out(vty, " dl:%lld", c->dl_qu);
+		vty_out(vty, "%s", VTY_NEWLINE);
+	}
+	if (c->time_th)
+		vty_out(vty, "     time-threshold:%ds\n", c->time_th);
+	if (c->time_qu)
+		vty_out(vty, "     time-quota:%ds\n", c->time_qu);
+	if (c->time_periodic)
+		vty_out(vty, "     periodic:%ds\n", c->time_periodic);
+	if (c->time_inactivity)
+		vty_out(vty, "     quota-holdtime:%ds\n",
+			c->time_inactivity);
+	if (c->inactivity_det_time)
+		vty_out(vty, "     inactivity-det:%ds\n",
+			c->inactivity_det_time);
+}
+
+static void
+_pfcp_session_pdr_vty(struct vty *vty, struct pfcp_session *s,
+		      bool details)
 {
 	struct gtp_bpf_prog *prg = s->router->bpf_prog;
 	struct upf_fwd_rule *u;
 	struct pdr *p;
 	struct pfcp_teid *t;
-	char addr_str[INET6_ADDRSTRLEN];
-	int i;
+	int j;
 
 	list_for_each_entry(p, &s->pdr_list, next) {
 		if (p->te)
@@ -122,26 +194,28 @@ _pfcp_session_pdr_vty(struct vty *vty, struct pfcp_session *s, bool details)
 		t = p->teid ?: (p->te ? p->te->teid : NULL);
 
 		if (u->flags & UPF_FWD_FL_EGRESS && t) {
-			vty_out(vty, "   [uplink] local-teid:0x%.8x local-gtpu:'%s'%s"
+			vty_out(vty, "   [uplink] local-teid:0x%.8x"
+				     " local-gtpu:'%s'\n"
 				   , t->id
-				   , inet_ntop(AF_INET, &t->ipv4, addr_str, INET6_ADDRSTRLEN)
-				   , VTY_NEWLINE);
+				   , ip4_str(t->ipv4.s_addr));
 			pfcp_bpf_teid_vty(vty, prg, UPF_FWD_FL_EGRESS, &s->ue_ip, t);
 		}
 
 		if (u->flags & UPF_FWD_FL_INGRESS) {
-			vty_out(vty, "   [downlink] remote-teid:0x%.8x remote-gtpu:'%s'%s"
+			vty_out(vty, "   [downlink] remote-teid:0x%.8x"
+				     " remote-gtpu:'%s'\n"
 				   , u->gtpu_remote_teid
-				   , inet_ntop(AF_INET, &u->gtpu_remote_addr, addr_str,
-					       INET6_ADDRSTRLEN)
-				   , VTY_NEWLINE);
+				   , ip4_str(u->gtpu_remote_addr));
 			pfcp_bpf_teid_vty(vty, prg, UPF_FWD_FL_INGRESS, &s->ue_ip, t);
 		}
 
-		if (details) {
+		if (details && p->urr_n) {
+			struct urrs *us = &s->urrs;
+
 			vty_out(vty, "            ref-urr:");
-			for (i = 0; i < PFCP_MAX_NR_ELEM && p->urr[i]; i++)
-				vty_out(vty, " %d", p->urr[i]->id);
+			for (j = 0; j < p->urr_n; j++)
+				vty_out(vty, " %d",
+					us->u[p->urr_idx[j]].urr_id);
 			vty_out(vty, "%s", VTY_NEWLINE);
 		}
 	}
@@ -153,11 +227,10 @@ pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 	struct pfcp_ue *pue = (struct pfcp_ue *)c;
 	struct pfcp_session *s;
 	struct ue_ip_address *ue;
-	struct urr *u;
 	time_t timeout = 0;
-	char addr_str[INET6_ADDRSTRLEN];
 	struct tm *t;
 	bool details = arg != NULL;
+	int i;
 
 	/* Walk the line */
 	list_for_each_entry(s, &pue->pfcp_sessions, next) {
@@ -169,29 +242,29 @@ pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 
 		t = &s->creation_time;
 		vty_out(vty, " imsi:%ld seid:0x%lx remote-seid:0x%lx apn:%s"
-			     " creation:%.2d/%.2d/%.2d-%.2d:%.2d:%.2d expire:%s%s"
+			     " creation:%.2d/%.2d/%.2d-%.2d:%.2d:%.2d expire:%s\n"
 			   , c->imsi, s->seid, be64toh(s->remote_seid.id), s->apn->name
 			   , t->tm_mday, t->tm_mon+1, t->tm_year+1900
 			   , t->tm_hour, t->tm_min, t->tm_sec
-			   , s->timer ? s->tmp_str : "never"
-			   , VTY_NEWLINE);
-
-		if (details) {
-			list_for_each_entry(u, &s->urr_list, next)
-				_pfcp_session_urr_vty(vty, u);
-		}
+			   , s->timer ? s->tmp_str : "never");
 
 		ue = &s->ue_ip;
 		if (ue->flags & UE_IPV4)
-			vty_out(vty, " . UE IPv4: %s%s"
-				   , inet_ntop(AF_INET, &ue->v4, addr_str, INET6_ADDRSTRLEN)
-				   , VTY_NEWLINE);
+			vty_out(vty, " . UE IPv4: %s\n",
+				ip4_str(ue->v4.s_addr));
 		if (ue->flags & UE_IPV6)
-			vty_out(vty, " . UE IPv6: %s%s"
-				   , inet_ntop(AF_INET6, &ue->v6, addr_str, INET6_ADDRSTRLEN)
-				   , VTY_NEWLINE);
+			vty_out(vty, " . UE IPv6: %s\n",
+				ip6_str(&ue->v6));
 
 		_pfcp_session_pdr_vty(vty, s, details);
+
+		if (details) {
+			struct urrs *us = &s->urrs;
+			for (i = 0; i < us->n; i++)
+				_pfcp_session_urr_vty(vty, us, i);
+			for (i = 0; i < us->ttc_n; i++)
+				_pfcp_session_ttc_vty(vty, &us->ttc[i], i);
+		}
 	}
 	return 0;
 }
@@ -278,7 +351,7 @@ DEFUN(clear_pfcp_session,
 	imsi = strtoull(argv[0], NULL, 10);
 	c = gtp_conn_get_by_imsi(imsi);
 	if (!c) {
-		vty_out(vty, "%% unknown imsi:%ld%s", imsi, VTY_NEWLINE);
+		vty_out(vty, "%% unknown imsi:%ld\n", imsi);
 		return CMD_WARNING;
 	}
 

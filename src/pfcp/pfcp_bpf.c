@@ -27,7 +27,6 @@
 
 #include "pfcp_bpf.h"
 #include "pfcp_router.h"
-#include "pfcp_session_report.h"
 #include "pfcp_teid.h"
 #include "pfcp_utils.h"
 #include "gtp_bpf_capture.h"
@@ -349,7 +348,7 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 	struct upf_egress_key ek = {};
 	struct upf_ingress_key ik = {};
 	struct upf_fwd_rule rule;
-	struct upf_urr c = {};
+	struct upf_ttc c = {};
 	sockaddr_t addr, laddr, addr_ue;
 	char buf1[26], buf2[40], buf3[26], action_str[40];
 	uint32_t key = 0;
@@ -373,8 +372,8 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 				"teid_key:0x%.8x (%m)\n", key);
 			break;
 		}
-		bpf_map__lookup_elem(bd->upf_urr,
-				     &rule.urr_idx, sizeof(rule.urr_idx),
+		bpf_map__lookup_elem(bd->upf_ttc,
+				     &rule.ttc_idx, sizeof(rule.ttc_idx),
 				     &c, sizeof(c), 0);
 
 		if (ik.flags & UE_IPV4)
@@ -411,8 +410,8 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 				"teid_key:0x%.8x (%m)\n", key);
 			break;
 		}
-		bpf_map__lookup_elem(bd->upf_urr,
-				     &rule.urr_idx, sizeof(rule.urr_idx),
+		bpf_map__lookup_elem(bd->upf_ttc,
+				     &rule.ttc_idx, sizeof(rule.ttc_idx),
 				     &c, sizeof(c), 0);
 
 		if ((rule.flags & UPF_FWD_FL_ACT_KEEP_OUTER_HEADER) ==
@@ -436,7 +435,7 @@ pfcp_bpf_vty(struct gtp_bpf_prog *p, void *ud, struct vty *vty,
 
 
 /*************************************************************************/
-/* urr_ctl syscall */
+/* ttc_ctl syscall */
 
 struct pfcp_bpf_data_thread
 {
@@ -449,7 +448,7 @@ struct pfcp_bpf_data_thread
 };
 
 static int
-_thread_urr_ctl(struct pfcp_bpf_data *bd, struct upf_urr_cmd_req *uc)
+_thread_ttc_ctl(struct pfcp_bpf_data *bd, struct upf_ttc_cmd *uc)
 {
 	int ret;
 
@@ -457,7 +456,7 @@ _thread_urr_ctl(struct pfcp_bpf_data *bd, struct upf_urr_cmd_req *uc)
 		    .ctx_in = uc,
 		    .ctx_size_in = sizeof (*uc));
 
-	ret = bpf_prog_test_run_opts(bd->urr_ctl_prog_fd, &rcfg);
+	ret = bpf_prog_test_run_opts(bd->ttc_ctl_prog_fd, &rcfg);
 	if (ret) {
 		logf_warn("run bpf failed (%m)");
 		return -1;
@@ -471,7 +470,7 @@ _thread_main_loop(void *arg)
 {
 	struct pfcp_bpf_data_thread *th = arg;
 	struct list_head tmp_list = LIST_HEAD_INIT(tmp_list);
-	struct pfcp_urr_cmd *puc;
+	struct pfcp_ttc_cmd *puc;
 
 	pthread_mutex_lock(&th->lock);
 	while (th->run) {
@@ -481,7 +480,7 @@ _thread_main_loop(void *arg)
 
 		pthread_mutex_unlock(&th->lock);
 		list_for_each_entry(puc, &tmp_list, clist) {
-			_thread_urr_ctl(th->bd, &puc->uc);
+			_thread_ttc_ctl(th->bd, &puc->uc);
 		}
 		INIT_LIST_HEAD(&tmp_list);
 		pthread_mutex_lock(&th->lock);
@@ -520,44 +519,27 @@ _thread_start(struct pfcp_bpf_data *bd, int cpu)
 	return th;
 }
 
-struct upf_urr_cmd_req *
-pfcp_bpf_urr_alloc_cmd(struct pfcp_session *s)
-{
-	struct pfcp_urr_cmd *puc;
-
-	if (!++s->urr_cmd_cur_id)
-		s->urr_cmd_cur_id = 1;
-
-	puc = calloc(1, sizeof (*puc));
-	if (puc == NULL)
-		return NULL;
-	puc->uc.seid = s->seid;
-	puc->uc.request_id = s->urr_cmd_cur_id;
-
-	return &puc->uc;
-}
-
 int
-pfcp_bpf_urr_ctl(struct pfcp_session *s, struct upf_urr_cmd_req *uc)
+pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct upf_ttc_cmd *uc)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
 	struct pfcp_bpf_data_thread *th;
-	struct pfcp_urr_cmd *puc = (struct pfcp_urr_cmd *)uc;
+	struct pfcp_ttc_cmd *puc = (struct pfcp_ttc_cmd *)uc;
 
-	if (bd == NULL) {
-		free(uc);
+	if (bd == NULL)
 		return -1;
-	}
 
 	th = bd->ctl_task[s->cpu];
 	if (th == NULL) {
 		th = _thread_start(bd, s->cpu);
-		if (th == NULL) {
-			free(uc);
+		if (th == NULL)
 			return -1;
-		}
 		bd->ctl_task[s->cpu] = th;
 	}
+
+	if (!++s->urrs.cmd_cur_id)
+		s->urrs.cmd_cur_id = 1;
+	uc->request_id = s->urrs.cmd_cur_id;
 
 	pthread_mutex_lock(&th->lock);
 	if (list_empty(&th->cmd_list))
@@ -570,30 +552,32 @@ pfcp_bpf_urr_ctl(struct pfcp_session *s, struct upf_urr_cmd_req *uc)
 	return 0;
 }
 
+/* alloc and returns index in [1, BPF_UPF_USER_COUNTER_MAP_SIZE-1].
+ * keep 0 for unused value */
 uint32_t
-pfcp_bpf_alloc_urr_idx(struct pfcp_session *s)
+pfcp_bpf_alloc_ttc_idx(struct pfcp_session *s)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
 	int i;
 
 	for (i = 0; i < BPF_UPF_USER_COUNTER_MAP_SIZE; i++) {
-		if (++bd->urr_alloc_cur == BPF_UPF_USER_COUNTER_MAP_SIZE)
-			bd->urr_alloc_cur = 1;
-		if (!bd->urr_alloc[bd->urr_alloc_cur]) {
-			bd->urr_alloc[bd->urr_alloc_cur] = 1;
-			return bd->urr_alloc_cur;
+		if (++bd->ttc_alloc_cur == BPF_UPF_USER_COUNTER_MAP_SIZE)
+			bd->ttc_alloc_cur = 1;
+		if (!bd->ttc_alloc[bd->ttc_alloc_cur]) {
+			bd->ttc_alloc[bd->ttc_alloc_cur] = 1;
+			return bd->ttc_alloc_cur;
 		}
 	}
 	return 0;
 }
 
 void
-pfcp_bpf_release_urr_idx(struct pfcp_session *s, uint32_t urr_idx)
+pfcp_bpf_release_ttc_idx(struct pfcp_session *s, uint32_t urr_idx)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
 
 	if (bd != NULL)
-		bd->urr_alloc[urr_idx] = 0;
+		bd->ttc_alloc[urr_idx] = 0;
 }
 
 
@@ -604,9 +588,9 @@ pfcp_bpf_release_urr_idx(struct pfcp_session *s, uint32_t urr_idx)
 static int
 pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 {
-	struct upf_urr_report *ur;
-	struct upf_urr_report_data *urd;
-	struct pfcp_urr_cmd *puc;
+	struct upf_ttc_report *ur;
+	struct upf_ttc_report_data *urd;
+	struct pfcp_ttc_cmd *puc;
 	struct pfcp_session *s;
 
 	if (size == sizeof (*urd)) {
@@ -628,21 +612,22 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 	}
 
 	/* save metrics, if set */
-	if (urd != NULL)
-		pfcp_session_urr_report(s, urd);
+	if (urd != NULL) {
+		urrs_report_ingest(&s->urrs, urd,
+				   s->router->mono2ntptime_off);
 
-	/* it's a trigger */
-	if (!ur->request_id) {
-		if (urd != NULL)
-			pfcp_session_report_triggered(s, urd);
-		return 0;
+		/* trigger included */
+		if (urd->r.report_flags)
+			urrs_report_triggered(s, urd);
 	}
+
+	if (!ur->request_id)
+		return 0;
 
 	/* it's a ack for a previous command */
 	list_for_each_entry(puc, &s->urr_cmd_pending_list, plist) {
 		if (puc->uc.request_id == ur->request_id) {
 			list_del(&puc->plist);
-			free(puc);
 			goto next;
 		}
 	}
@@ -661,14 +646,14 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 			pfcph->type = PFCP_SESSION_MODIFICATION_RESPONSE;
 			pfcph->seid = s->remote_seid.id;
 			pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_ACCEPTED);
-			pfcp_session_report_put_modification(pbuff, s);
+			urrs_put_modification_reports(&s->urrs, pbuff);
 			break;
 		case PFCP_SESSION_DELETION_REQUEST:
 			pfcp_msg_reset_hlen(pbuff);
 			pfcph->type = PFCP_SESSION_DELETION_RESPONSE;
 			pfcph->seid = s->remote_seid.id;
 			pfcp_ie_put_cause(pbuff, PFCP_CAUSE_REQUEST_ACCEPTED);
-			pfcp_session_report_put_deletion(pbuff, s);
+			urrs_put_deletion_reports(&s->urrs, pbuff);
 			delete = true;
 			break;
 		}
@@ -718,10 +703,10 @@ pfcp_bpf_alloc(struct gtp_bpf_prog *p)
 	if (bd == NULL)
 		return NULL;
 
-	bd->urr_alloc = calloc(BPF_UPF_USER_COUNTER_MAP_SIZE, 1);
+	bd->ttc_alloc = calloc(BPF_UPF_USER_COUNTER_MAP_SIZE, 1);
 	bd->ctl_task = calloc(libbpf_num_possible_cpus(),
 			      sizeof (*bd->ctl_task));
-	if (bd->urr_alloc == NULL || bd->ctl_task == NULL) {
+	if (bd->ttc_alloc == NULL || bd->ctl_task == NULL) {
 		free(bd);
 		return NULL;
 	}
@@ -752,7 +737,7 @@ pfcp_bpf_release(struct gtp_bpf_prog *p, void *udata)
 		}
 	}
 	free(bd->ctl_task);
-	free(bd->urr_alloc);
+	free(bd->ttc_alloc);
 	free(bd);
 }
 
@@ -768,17 +753,17 @@ pfcp_bpf_loaded(struct gtp_bpf_prog *p, void *udata, bool reload)
 	bd->user_egress = gtp_bpf_prog_load_map(p->obj_load, "user_egress");
 	bd->user_ingress = gtp_bpf_prog_load_map(p->obj_load, "user_ingress");
 	bd->upf_li_perf = gtp_bpf_prog_load_map(p->obj_load, "upf_li_perf");
-	bd->upf_urr = gtp_bpf_prog_load_map(p->obj_load, "upf_urr");
+	bd->upf_ttc = gtp_bpf_prog_load_map(p->obj_load, "upf_ttc");
 	if (bd->user_egress == NULL || bd->user_ingress == NULL ||
-	    bd->upf_li_perf == NULL || bd->upf_urr == NULL)
+	    bd->upf_li_perf == NULL || bd->upf_ttc == NULL)
 		return -1;
 
-	prg = bpf_object__find_program_by_name(p->obj_load, "urr_ctl");
+	prg = bpf_object__find_program_by_name(p->obj_load, "ttc_ctl");
 	if (prg == NULL) {
-		logf_err("cannot find urr_ctl in ebpf prog");
+		logf_err("cannot find ttc_ctl in ebpf prog");
 		return -1;
 	}
-	bd->urr_ctl_prog_fd = bpf_program__fd(prg);
+	bd->ttc_ctl_prog_fd = bpf_program__fd(prg);
 
 	map = gtp_bpf_prog_load_map(p->obj_load, "upf_events");
 	if (map == NULL)

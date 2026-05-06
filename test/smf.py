@@ -20,7 +20,7 @@ Commands (stdin):
   session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
                            [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
   session delete <cp_seid>
-  session ping   <cp_seid> [<dst_ip>] [count <n>] [v6]
+  session ping   <cp_seid> [<dst_ip>] [count <n>] [size <bytes>] [v6]
   session rs     <cp_seid>       — send ND Router Solicitation, print RA prefix
   sessions
 
@@ -313,6 +313,7 @@ class URRConfig:
     inactivity_detection:    int | None = None
     measurement_period:      int | None = None
     linked_urr_ids:          list[int]  = field(default_factory=list)
+    _dirty:                  set[str]   = field(default_factory=set, repr=False)
 
     def summary(self) -> str:
         trig = ",".join(n for f, n in REPORTING_TRIGGER_NAMES_INV.items() if self.triggers & f) or "none"
@@ -658,9 +659,11 @@ class GTPUProtocol(asyncio.DatagramProtocol):
     def send_ping(self, teid: int, upf_addr: tuple,
                   icmp_id: int, seq: int,
                   ue_ip: str, dst_ip: str,
-                  sa5g: bool = False) -> asyncio.Future:
+                  sa5g: bool = False,
+                  payload_size: int = 0) -> asyncio.Future:
+        payload = (b'\x00' * payload_size) if payload_size else b"pfcp-smf-ping\x00\x00\x00"
         pkt = build_gtpu(teid, build_ipv4(ue_ip, dst_ip, IP_PROTO_ICMP,
-                                          build_icmp_echo_request(icmp_id, seq)),
+                                          build_icmp_echo_request(icmp_id, seq, payload)),
                          sa5g=sa5g)
         fut = asyncio.get_event_loop().create_future()
         self._pending[icmp_id] = (fut, time.monotonic())
@@ -670,9 +673,11 @@ class GTPUProtocol(asyncio.DatagramProtocol):
     def send_ping6(self, teid: int, upf_addr: tuple,
                    icmp_id: int, seq: int,
                    ue_ipv6: str, dst_ip: str,
-                   sa5g: bool = False) -> asyncio.Future:
+                   sa5g: bool = False,
+                   payload_size: int = 0) -> asyncio.Future:
+        payload = (b'\x00' * payload_size) if payload_size else b"pfcp-smf-ping6\x00\x00"
         pkt = build_gtpu(teid,
-                         build_icmpv6_echo_request(ue_ipv6, dst_ip, icmp_id, seq),
+                         build_icmpv6_echo_request(ue_ipv6, dst_ip, icmp_id, seq, payload),
                          sa5g=sa5g)
         fut = asyncio.get_event_loop().create_future()
         self._pending[icmp_id] = (fut, time.monotonic())
@@ -701,7 +706,8 @@ class GTPUSender:
             self._proto.transport.close()
 
     async def ping(self, sess: Session, dst_ip: str = "8.8.8.8",
-                   count: int = 1, v6: bool = False) -> int:
+                   count: int = 1, v6: bool = False,
+                   payload_size: int = 0) -> int:
         if v6:
             if not sess.ue_ipv6 or not sess.upf_gtpu_ip or not sess.upf_teid:
                 log.error("Session missing UE IPv6 or UPF GTP-U endpoint")
@@ -723,11 +729,13 @@ class GTPUSender:
             if v6:
                 fut = self._proto.send_ping6(sess.upf_teid, upf_addr,
                                              icmp_id, seq, ue_src, dst_ip,
-                                             sa5g=self.sa5g)
+                                             sa5g=self.sa5g,
+                                             payload_size=payload_size)
             else:
                 fut = self._proto.send_ping(sess.upf_teid, upf_addr,
                                             icmp_id, seq, ue_src, dst_ip,
-                                            sa5g=self.sa5g)
+                                            sa5g=self.sa5g,
+                                            payload_size=payload_size)
             try:
                 r = await asyncio.wait_for(fut, timeout=self.TIMEOUT)
                 log.info(f"GTP-U ← reply from {r['src_ip']}  "
@@ -967,7 +975,23 @@ def ie_create_urr_from_config(urr: URRConfig) -> bytes:
     return _build_urr_ie(IET.CREATE_URR, urr)
 
 def ie_update_urr_from_config(urr: URRConfig) -> bytes:
-    return _build_urr_ie(IET.UPDATE_URR, urr)
+    d = urr._dirty
+    body = ie_urr_id(urr.urr_id)
+    if "measure"  in d: body += ie_measurement_method(urr.measure)
+    if "triggers" in d: body += ie_reporting_triggers(urr.triggers)
+    if d & {"volth_total", "volth_ul", "volth_dl"}:
+        vt = ie_volume_threshold(urr.volth_total, urr.volth_ul, urr.volth_dl)
+        if vt:                               body += vt
+    if "timth"                in d and urr.timth                is not None: body += ie_time_threshold(urr.timth)
+    if d & {"vol_quota_total", "vol_quota_ul", "vol_quota_dl"}:
+        vq = ie_volume_quota(urr.vol_quota_total, urr.vol_quota_ul, urr.vol_quota_dl)
+        if vq:                               body += vq
+    if "time_quota"           in d and urr.time_quota           is not None: body += ie_time_quota(urr.time_quota)
+    if "quota_holding_time"   in d and urr.quota_holding_time   is not None: body += ie_quota_holding_time(urr.quota_holding_time)
+    if "inactivity_detection" in d and urr.inactivity_detection is not None: body += ie_inactivity_detection_time(urr.inactivity_detection)
+    if "measurement_period"   in d and urr.measurement_period   is not None: body += ie_measurement_period(urr.measurement_period)
+    if "linked_urr_ids"       in d: body += b"".join(ie_linked_urr_id(uid) for uid in urr.linked_urr_ids)
+    return _ie(IET.UPDATE_URR, body)
 
 def ie_remove_urr(urr_id: int) -> bytes:
     return _ie(IET.REMOVE_URR, ie_urr_id(urr_id))
@@ -1433,18 +1457,20 @@ def validate_report(report: SessionReport,
         return [f"no usage report with urr_id={urr_id} in session report"]
     ur = candidates[0]
 
+    tag = f"urr_id={ur.urr_id}"
+
     if trigger is not None and not (ur.trigger & trigger):
         names = ",".join(n for f, n in USAGE_REPORT_TRIGGER_NAMES_INV.items() if trigger & f)
         got   = ",".join(n for f, n in USAGE_REPORT_TRIGGER_NAMES_INV.items() if ur.trigger & f)
-        failures.append(f"trigger: got={got or '0x0'} missing expected={names}")
+        failures.append(f"{tag} trigger: got={got or '0x0'} missing expected={names}")
 
     def check_vol(val, exact, vmin, vmax, label):
         if exact is not None and val != exact:
-            failures.append(f"{label}: got={val} expected={exact}")
+            failures.append(f"{tag} {label}: got={val} expected={exact}")
         if vmin is not None and (val is None or val < vmin):
-            failures.append(f"{label}: got={val} < min={vmin}")
+            failures.append(f"{tag} {label}: got={val} < min={vmin}")
         if vmax is not None and (val is None or val > vmax):
-            failures.append(f"{label}: got={val} > max={vmax}")
+            failures.append(f"{tag} {label}: got={val} > max={vmax}")
 
     check_vol(ur.total, total, total_min, total_max, "total")
     check_vol(ur.ul,    ul,    ul_min,    ul_max,    "ul")
@@ -1453,7 +1479,7 @@ def validate_report(report: SessionReport,
     # Duration checks — inactivity_detection_time loosens duration_min
     if duration_min is not None or duration_max is not None:
         if ur.duration is None:
-            failures.append("duration: not present in report")
+            failures.append(f"{tag} duration: not present in report")
         else:
             effective_min = duration_min
             if duration_min is not None and inactivity_detection_time is not None:
@@ -1462,21 +1488,21 @@ def validate_report(report: SessionReport,
                           f"(idt={inactivity_detection_time}s)")
             if effective_min is not None and ur.duration < effective_min:
                 failures.append(
-                    f"duration: got={ur.duration}s < min={effective_min}s" +
+                    f"{tag} duration: got={ur.duration}s < min={effective_min}s" +
                     (f" (adjusted from {duration_min}s by idt={inactivity_detection_time}s)"
                      if inactivity_detection_time else ""))
             if duration_max is not None and ur.duration > duration_max:
-                failures.append(f"duration: got={ur.duration}s > max={duration_max}s")
+                failures.append(f"{tag} duration: got={ur.duration}s > max={duration_max}s")
 
     # Time-window continuity: start of this report must be >= end of last report
     key      = (report.cp_seid, ur.urr_id)
     prev_end = last_report_end.get(key)
     if prev_end and ur.start and ur.start < prev_end:
-        failures.append(f"start_time={ur.start} is before previous "
+        failures.append(f"{tag} start_time={ur.start} is before previous "
                         f"report end_time={prev_end} (non-contiguous window)")
 
     if ur.start and ur.end and ur.end < ur.start:
-        failures.append(f"end_time={ur.end} is before start_time={ur.start}")
+        failures.append(f"{tag} end_time={ur.end} is before start_time={ur.start}")
 
     return failures
 
@@ -1515,7 +1541,7 @@ HELP_TEXT = """\
       qaurr: set PFCPSMREQ-Flags QAURR bit (query all URRs).
 
   session delete <cp_seid>
-  session ping   <cp_seid> [<dst_ip>] [count <n>] [v6]
+  session ping   <cp_seid> [<dst_ip>] [count <n>] [size <bytes>] [v6]
       v6: send ICMPv6 Echo Request using the session's UE IPv6 address.
   session rs     <cp_seid>
       Send ND Router Solicitation via GTP-U and print the RA prefix(es).
@@ -1558,30 +1584,47 @@ def parse_urr_set(tokens: list[str]) -> URRConfig:
     inactivity_detection = None
     measurement_period   = None
     linked_urr_ids: list[int] = []
+    dirty: set[str] = set()
 
     it = iter(tokens)
     for key in it:
         match key:
             case "id":         urr_id               = int(next(it))
-            case "triggers":   triggers             = parse_flags(next(it), REPORTING_TRIGGER_NAMES)
-            case "measure":    measure              = parse_flags(next(it), MEASURE_NAMES)
-            case "timth":      timth                = int(next(it))
-            case "timquota":   time_quota           = int(next(it))
-            case "qht":        quota_holding_time   = int(next(it))
-            case "inactivity": inactivity_detection = int(next(it))
-            case "period":     measurement_period   = int(next(it))
-            case "linked":     linked_urr_ids       = [int(x) for x in next(it).split(",")]
+            case "triggers":
+                triggers = parse_flags(next(it), REPORTING_TRIGGER_NAMES)
+                dirty.add("triggers")
+            case "measure":
+                measure = parse_flags(next(it), MEASURE_NAMES)
+                dirty.add("measure")
+            case "timth":
+                timth = int(next(it))
+                dirty.add("timth")
+            case "timquota":
+                time_quota = int(next(it))
+                dirty.add("time_quota")
+            case "qht":
+                quota_holding_time = int(next(it))
+                dirty.add("quota_holding_time")
+            case "inactivity":
+                inactivity_detection = int(next(it))
+                dirty.add("inactivity_detection")
+            case "period":
+                measurement_period = int(next(it))
+                dirty.add("measurement_period")
+            case "linked":
+                linked_urr_ids = [int(x) for x in next(it).split(",")]
+                dirty.add("linked_urr_ids")
             case "volth":
                 match next(it):
-                    case "total": volth_total = parse_bytes(next(it))
-                    case "ul":    volth_ul    = parse_bytes(next(it))
-                    case "dl":    volth_dl    = parse_bytes(next(it))
+                    case "total": volth_total = parse_bytes(next(it)); dirty.add("volth_total")
+                    case "ul":    volth_ul    = parse_bytes(next(it)); dirty.add("volth_ul")
+                    case "dl":    volth_dl    = parse_bytes(next(it)); dirty.add("volth_dl")
                     case sub:     raise ValueError(f"Unknown volth sub-option: {sub!r}")
             case "volquota":
                 match next(it):
-                    case "total": vol_quota_total = parse_bytes(next(it))
-                    case "ul":    vol_quota_ul    = parse_bytes(next(it))
-                    case "dl":    vol_quota_dl    = parse_bytes(next(it))
+                    case "total": vol_quota_total = parse_bytes(next(it)); dirty.add("vol_quota_total")
+                    case "ul":    vol_quota_ul    = parse_bytes(next(it)); dirty.add("vol_quota_ul")
+                    case "dl":    vol_quota_dl    = parse_bytes(next(it)); dirty.add("vol_quota_dl")
                     case sub:     raise ValueError(f"Unknown volquota sub-option: {sub!r}")
             case _:
                 raise ValueError(f"Unknown urr option: {key!r}")
@@ -1598,6 +1641,7 @@ def parse_urr_set(tokens: list[str]) -> URRConfig:
         inactivity_detection=inactivity_detection,
         measurement_period=measurement_period,
         linked_urr_ids=linked_urr_ids,
+        _dirty=dirty,
     )
 
 
@@ -1650,26 +1694,27 @@ def parse_session_modify(tokens: list[str]) -> dict:
     return params
 
 
-def parse_session_ping(tokens: list[str]) -> tuple[str, int, bool]:
-    dst_ip, count, v6 = None, 1, False
+def parse_session_ping(tokens: list[str]) -> tuple[str, int, bool, int]:
+    dst_ip, count, v6, size = None, 1, False, 0
     it = iter(tokens)
     for tok in it:
         if   tok == "count": count = int(next(it))
+        elif tok == "size":  size = int(next(it))
         elif tok == "v6":    v6 = True
         else:                dst_ip = tok
     if dst_ip is None:
         dst_ip = "2001:4860:4860::8888" if v6 else "8.8.8.8"
-    return dst_ip, count, v6
+    return dst_ip, count, v6, size
 
 
-def parse_expect_report(tokens: list[str]) -> dict:
+def _parse_one_urr_expect(it) -> dict:
+    """Parse per-URR check fields until next urr_id or end."""
     p: dict = {}
-    it = iter(tokens)
     for key in it:
         match key:
-            case "timeout":    p["timeout"]                   = float(next(it))
-            case "cp_seid":    p["cp_seid"]                   = int(next(it), 0)
-            case "urr_id":     p["urr_id"]                    = int(next(it))
+            case "urr_id":
+                # push back: caller will handle it
+                return p, int(next(it))
             case "trigger":    p["trigger"]                   = parse_flags(next(it), USAGE_REPORT_TRIGGER_NAMES)
             case "total":      p["total"]                     = parse_bytes(next(it))
             case "total_min":  p["total_min"]                 = parse_bytes(next(it))
@@ -1684,7 +1729,38 @@ def parse_expect_report(tokens: list[str]) -> dict:
             case "duration_max": p["duration_max"]            = int(next(it))
             case "idt":          p["inactivity_detection_time"] = int(next(it))
             case _:            raise ValueError(f"Unknown expect option: {key!r}")
-    return p
+    return p, None
+
+
+def parse_expect_report(tokens: list[str]) -> tuple[dict, list[dict]]:
+    """Parse expect report line. Returns (header, urr_checks) where
+    header has timeout/cp_seid and urr_checks is a list of per-URR
+    dicts each containing urr_id + check fields."""
+    header: dict = {}
+    urr_checks: list[dict] = []
+    it = iter(tokens)
+
+    # parse header fields (timeout, cp_seid) before first urr_id
+    for key in it:
+        match key:
+            case "timeout":  header["timeout"] = float(next(it))
+            case "cp_seid":  header["cp_seid"] = int(next(it), 0)
+            case "urr_id":
+                cur_id = int(next(it))
+                break
+            case _:
+                raise ValueError(f"Unknown expect option: {key!r}")
+    else:
+        return header, urr_checks
+
+    # parse per-URR sections
+    while cur_id is not None:
+        p, next_id = _parse_one_urr_expect(it)
+        p["urr_id"] = cur_id
+        urr_checks.append(p)
+        cur_id = next_id
+
+    return header, urr_checks
 
 
 async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
@@ -1778,8 +1854,9 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                     if sess is None:
                         print(f"error: unknown cp_seid {seid_str}", flush=True)
                     else:
-                        dst_ip, count, v6 = parse_session_ping(rest)
-                        ok = await gtpu.ping(sess, dst_ip=dst_ip, count=count, v6=v6)
+                        dst_ip, count, v6, size = parse_session_ping(rest)
+                        ok = await gtpu.ping(sess, dst_ip=dst_ip, count=count,
+                                             v6=v6, payload_size=size)
                         print(f"ping{'6' if v6 else ''} {ok}/{count} replies from {dst_ip}",
                               flush=True)
 
@@ -1813,9 +1890,9 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                         print(f"PASS: no report received within {timeout}s", flush=True)
 
                 case ["expect", "report", *rest]:
-                    p       = parse_expect_report(rest)
-                    timeout = p.pop("timeout", 10.0)
-                    cp_seid = p.pop("cp_seid", None)
+                    header, urr_checks = parse_expect_report(rest)
+                    timeout = header.get("timeout", 10.0)
+                    cp_seid = header.get("cp_seid", None)
                     try:
                         report = await wait_for_report(
                             smf.report_queue, cp_seid, timeout)
@@ -1823,9 +1900,11 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                         print(f"FAIL: timeout after {timeout}s "
                               f"waiting for session report", flush=True)
                     else:
-                        failures = validate_report(report, smf._last_report_end, **p)
-                        # Update _last_report_end after validation so it sees
-                        # the previous report's end time, not the current one.
+                        failures = []
+                        for p in (urr_checks or [{}]):
+                            failures += validate_report(
+                                report, smf._last_report_end, **p)
+                        # Update _last_report_end after validation
                         for ur in report.usage_reports:
                             if ur.end:
                                 smf._last_report_end[(report.cp_seid, ur.urr_id)] = ur.end
@@ -1833,9 +1912,11 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                             for f in failures:
                                 print(f"FAIL: {f}", flush=True)
                         else:
-                            urs     = report.usage_reports
-                            summary = urs[0].summary() if urs else "no usage reports"
-                            print(f"PASS: {summary}", flush=True)
+                            urs = report.usage_reports
+                            summaries = " | ".join(
+                                ur.summary() for ur in urs)
+                            print(f"PASS: {summaries or 'no usage reports'}",
+                                  flush=True)
 
                 # ── Misc ───────────────────────────────────────────────
                 case ["pause", secs_str]:

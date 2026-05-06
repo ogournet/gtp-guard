@@ -340,6 +340,7 @@ smf_more_adv_urr() {
     urr_expect+="expect no report timeout 4"
 
     ping_count=3
+    ping_size=16
     for pair in $params; do
 	k=${pair%%=*}
 	v=${pair#*=}
@@ -349,7 +350,7 @@ smf_more_adv_urr() {
     _hash_set $arr $key <<EOF
 $urr_def
 session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr $urr_ids
-session ping 1 8.8.8.8 count $ping_count
+session ping 1 8.8.8.8 count $ping_count size $ping_size
 $urr_expect
 session delete 1
 EOF
@@ -362,6 +363,11 @@ run_with_smf() {
 
     declare -A testset
 
+    # no measure, do not expect report
+    smf_basic_urr testset nomeasure			\
+    "triggers volth volth ul 160 volth dl 120"		\
+    ""
+
     # volume measurement
     smf_basic_urr testset volth1			\
     "triggers volth measure volume volth total 240"	\
@@ -372,22 +378,21 @@ run_with_smf() {
     smf_basic_urr testset volth3			\
     "triggers volth measure volume volth total 176"	\
     "trigger volth total_min 176"
-
-    # don't work well, trigger 2 will also report 3 (trig volth)
     smf_more_adv_urr testset volth4 ''			\
     "urr set id 2 triggers volth measure volume volth total 176"	\
     "urr set id 3 triggers volth measure volume volth total 240"	\
-    "expect report timeout 10 cp_seid 1 urr_id 2 trigger volth total_min 176 urr_id 3 trigger volth total_min 176"
+    "urr set id 6 triggers volth measure volume volth total 600"	\
+    "expect report timeout 4 cp_seid 1 urr_id 2 trigger volth total_min 176" \
+    "expect report timeout 3 cp_seid 1 urr_id 3 trigger volth total_min 240"
 
     # linked urr
-    smf_more_adv_urr testset volth5 ''			\
+    smf_more_adv_urr testset link1 ''			\
     "urr set id 2 triggers volth measure volume volth total 176"	\
     "urr set id 3 linked 2"	\
     "urr set id 4 measure volume linked 2,3"	\
-    "expect report timeout 10 cp_seid 1 urr_id 2 trigger volth total_min 176 urr_id 4 trigger liusa total_min 176 urr_id 3 trigger liusa"
+    "expect report timeout 6 cp_seid 1 urr_id 2 trigger volth total_min 176 urr_id 4 trigger liusa total_min 176 urr_id 3 trigger liusa"
 
-    # statically linked urr
-    _hash_set testset volth6 <<EOF
+    _hash_set testset link2 <<EOF
 urr set id 2 triggers volth measure volume volth total 200
 urr set id 10 triggers volth,liusa measure volume,duration volth total 176 linked 2
 session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 2,10:nolink
@@ -396,16 +401,36 @@ expect report timeout 10 cp_seid 1 urr_id 10 trigger volth total_min 176
 session delete 1
 EOF
 
-    smf_more_adv_urr testset volth5 ''			\
-    "urr set id 2 triggers volth measure volume volth total 200"	\
-    "urr set id 10 triggers volth measure volume,duration volth total 176 linked 2"	\
-    "expect report timeout 10 cp_seid 1 urr_id 2 trigger volth total_min 176 urr_id 10 trigger liusa total_min 176 urr_id 3 trigger liusa"
+    # linked URR with no measurement: should not appear in report
+    _hash_set testset link3 <<EOF
+urr set id 1 triggers volth measure volume volth total 176
+urr set id 2 linked 1
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1,2
+session ping 1 8.8.8.8 count 3
+expect report timeout 10 cp_seid 1 urr_id 1 trigger volth total_min 176
+session modify 1 query-urr 1
+pause 1
+expect no report
+session delete 1
+EOF
 
-    # no measure vol, do not expect report
-    smf_basic_urr testset volth10			\
-    "triggers volth volth ul 160 volth dl 120"		\
-    ""
+    
+    # test session modify
+    _hash_set testset modify1 <<EOF
+urr set id 66 triggers volth measure volume volth total 500
+urr set id 8 triggers quhti measure volume qht 5
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 8,66
+session rs 1
+pause 1
+urr set id 66 triggers volth measure volume volth total 250
+session modify 1 query-urr 1 update-urr 66
+pause 1
+session modify 1 qaurr
+pause 1
+session delete 1
+EOF
 
+    # test everything at once
     smf_more_adv_urr testset all1 "ping_count=10"			\
     "urr set id 1 measure volume,duration inactivity 5 linked 19"	\
     "urr set id 2 measure volume,duration inactivity 5 linked 19"	\
@@ -417,19 +442,7 @@ EOF
     "expect report timeout 8 cp_seid 1 urr_id 15 trigger quhti total_min 880 urr_id 19 trigger liusa total_min 44"	\
     "expect no report timeout 2"
 
-    # test session modify
-    _hash_set testset modify1 <<EOF
-urr set id 8 triggers quhti measure volume qht 5
-session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 8
-session rs 1
-pause 1
-session modify 1 query-urr 1
-pause 1
-session modify 1 qaurr
-pause 1
-session delete 1
-EOF
-
+    # v6only pdn
     _hash_set testset v6only <<EOF
 urr set id 66 measure volume,duration inactivity 5
 urr set id 55 triggers quhti measure volume qht 5
@@ -439,10 +452,90 @@ session ping 1 8::8 count 3 v6
 session delete 1
 EOF
 
-    # volume quota
+    # change threshold in-fly
+    smf_more_adv_urr testset recalc1 "ping_count=8 ping_size=980"	\
+    "urr set id 1 triggers volth measure volume volth total 4000"	\
+    "urr set id 2 triggers volth measure volume volth total 6000"	\
+    "expect report timeout 3 cp_seid 1 urr_id 1 trigger volth total_min 4000"	\
+    "expect report timeout 3 cp_seid 1 urr_id 2 trigger volth total_min 6000"	\
+    "expect report timeout 3 cp_seid 1 urr_id 1 trigger volth total_min 4000"	\
+    "expect report timeout 3 cp_seid 1 urr_id 2 trigger volth total_min 6000 urr_id 1 trigger volth total_min 4000" \
+    "expect report timeout 3 cp_seid 1 urr_id 1 trigger volth total_min 4000"
+
+    # threshold-merge feature (enable it to 5% at least)
+    smf_more_adv_urr testset merge6pct ''				\
+    "urr set id 1 triggers volth measure volume volth total 173"	\
+    "urr set id 2 triggers volth measure volume volth total 180"	\
+    "expect report timeout 4 cp_seid 1 urr_id 1 trigger volth total 220 urr_id 2 trigger volth total 220"
+
+    # volume quota basic test
     smf_basic_urr testset volqu1			\
     "triggers volqu measure volume volquota total 120"	\
     "trigger volqu total_min 120"
+
+    # volume quota without trigger: VOLQU should be auto-enabled
+    smf_basic_urr testset volqu2			\
+    "measure volume volquota total 120"			\
+    "trigger volqu total_min 120"
+
+    # volume quota + volume threshold
+    smf_more_adv_urr testset volquth "ping_count=5"	\
+    "urr set id 1 triggers volth,volqu measure volume volth total 180 volquota total 270" \
+    "expect report timeout 4 cp_seid 1 urr_id 1 trigger volth total_min 180"	\
+    "expect report timeout 4 cp_seid 1 urr_id 1 trigger volqu total_min 80"
+
+    # zero quota on create
+    _hash_set testset volqu3 <<EOF
+urr set id 1 measure volume volquota total 0
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1
+session ping 1 8.8.8.8 count 2
+expect no report timeout 3
+session delete 1
+EOF
+
+    # zero quota on modify (should report)
+    _hash_set testset volqu4 <<EOF
+urr set id 1 triggers volth measure volume volth total 500
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1
+session ping 1 8.8.8.8 count 1
+urr set id 1 triggers volqu volquota total 0
+session modify 1 update-urr 1
+expect report timeout 4 cp_seid 1 urr_id 1 trigger volqu total 88
+session ping 1 8.8.8.8 count 1
+expect no report
+session delete 1
+EOF
+
+    # quota resumption: zero quota blocks, then new quota resumes
+    _hash_set testset volqu5 <<EOF
+urr set id 1 measure volume volquota total 0
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1
+session ping 1 8.8.8.8 count 2
+expect no report timeout 2
+urr set id 1 triggers volqu measure volume volquota total 200
+session modify 1 update-urr 1
+session ping 1 8.8.8.8 count 3
+expect report timeout 4 cp_seid 1 urr_id 1 trigger volqu total_min 200
+session delete 1
+EOF
+
+    # QUHTI discards remaining quota (§5.2.2.2.1 note 9):
+    # quota is provisioned, QUHTI fires on inactivity, traffic
+    # should be blocked after that
+    _hash_set testset quht6 <<EOF
+urr set id 1 triggers quhti,volqu measure volume volquota total 5000 qht 3
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1
+session ping 1 8.8.8.8 count 2
+expect report timeout 6 cp_seid 1 urr_id 1 trigger quhti
+session ping 1 8.8.8.8 count 2
+expect no report timeout 3
+session delete 1
+EOF
+
+    # time quota without TIMQU/TIMTH: TIMQU auto-enabled
+    smf_basic_urr testset timqu_auto			\
+    "measure duration timquota 2"			\
+    "trigger timqu"
 
     # duration
     smf_basic_urr testset timth1			\
@@ -463,6 +556,69 @@ EOF
     "expect report timeout 10 cp_seid 1 urr_id 1 trigger perio"		\
     "expect report timeout 10 cp_seid 1 urr_id 1 trigger perio"
 
+
+    # remove URR in session modify: create 3 URRs, remove the
+    # middle one (exercises swap-with-last), verify remaining
+    # URR still triggers correctly.
+    _hash_set testset modify_remove <<EOF
+urr set id 10 triggers volth measure volume volth total 500
+urr set id 20 triggers volth measure volume volth total 300
+urr set id 30 triggers volth measure volume volth total 176
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 10,20,30
+pause 0.5
+session modify 1 remove-urr 20
+session ping 1 8.8.8.8 count 3
+expect report timeout 4 cp_seid 1 urr_id 30 trigger volth total_min 176
+session delete 1
+EOF
+
+    # create URR in session modify: start with one URR, add a
+    # second with lower threshold via modify (exercises mpool
+    # grow). new URR should trigger.
+    _hash_set testset modify_create <<EOF
+urr set id 10 triggers volth measure volume volth total 500
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 10
+pause 0.5
+urr set id 20 triggers volth measure volume volth total 176
+session modify 1 create-urr 20
+session ping 1 8.8.8.8 count 3
+expect report timeout 4 cp_seid 1 urr_id 20 trigger volth total_min 176
+session delete 1
+EOF
+
+    # combined volth + timth: both triggers fire, report should
+    # contain both flags on the same URR.
+    _hash_set testset dual_trigger <<EOF
+urr set id 1 triggers volth,timth measure volume,duration volth total 176 timth 2
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1
+session ping 1 8.8.8.8 count 5
+expect report timeout 4 cp_seid 1 urr_id 1 trigger volth total_min 176
+expect report timeout 4 cp_seid 1 urr_id 1 trigger timth
+session delete 1
+EOF
+
+    # QAURR with linked URR: query all, where a linked URR is
+    # also explicitly queried. triggers should be OR'd
+    # (immer | liusa on the same URR in the report).
+    _hash_set testset qaurr_linked <<EOF
+urr set id 1 triggers volth measure volume volth total 176
+urr set id 2 measure volume linked 1
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1,2
+session ping 1 8.8.8.8 count 3
+expect report timeout 4 cp_seid 1 urr_id 1 trigger volth total_min 176 urr_id 2 trigger liusa
+session modify 1 qaurr
+pause 1
+session delete 1
+EOF
+
+    # deletion report: verify session delete carries final
+    # volume counters (TERMR trigger).
+    _hash_set testset delete_report <<EOF
+urr set id 1 triggers volth measure volume volth total 500
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 urr 1
+session ping 1 8.8.8.8 count 3
+session delete 1
+EOF
 
     if [ "$test_id" ]; then
 	if [ "${testset[$test_id]}" ]; then

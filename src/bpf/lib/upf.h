@@ -37,8 +37,8 @@ struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, BPF_UPF_USER_COUNTER_MAP_SIZE);
 	__type(key, __u32);
-	__type(value, struct upf_urr);
-} upf_urr SEC(".maps");
+	__type(value, struct upf_ttc);
+} upf_ttc SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -49,7 +49,7 @@ struct {
 } upf_li_perf SEC(".maps");
 
 
-#include "upf_urr.h"
+#include "upf_ttc.h"
 
 
 
@@ -84,7 +84,7 @@ upf_li_pkt(struct xdp_md *ctx, struct upf_fwd_rule *u, __u16 offset, __u16 dir_f
 static __always_inline int
 _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, int v6)
 {
-	struct upf_urr *uu;
+	struct upf_ttc *tc = NULL;
 	struct iphdr *iph;
 	struct udphdr *udph;
 	struct gtpuhdr *gtph;
@@ -95,12 +95,13 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	capture_xdp_to_userspc_in(ctx, &u->capture, BPF_CAPTURE_EFL_INPUT |
 				  BPF_CAPTURE_EFL_CORE);
 
-	uu = bpf_map_lookup_elem(&upf_urr, &u->urr_idx);
-	if (uu == NULL)
-		return XDP_DROP;
-
-	if (uu->flags & UPF_FL_QUOTA_REACHED)
-		goto drop;
+	if (u->ttc_idx) {
+		tc = bpf_map_lookup_elem(&upf_ttc, &u->ttc_idx);
+		if (tc == NULL)
+			return XDP_DROP;
+		if (tc->flags & UPF_FL_QUOTA_REACHED)
+			goto drop;
+	}
 
 	if (u->li_id)
 		upf_li_pkt(ctx, u, d->pl_off, UPF_LI_FL_DIR_INGRESS);
@@ -183,9 +184,6 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 		++u->fwd_v4_pkt;
 		u->fwd_v4_bytes += pl_len;
 	}
-	++uu->dl_pkt;
-	uu->dl_bytes += pl_len;
-
 	UPF_DBG("to_gtpu: encap len:%d teid:0x%08x src:%pI4:%d dst:%pI4:%d",
 		pl_len, bpf_ntohl(u->gtpu_remote_teid),
 		&iph->saddr, bpf_ntohs(u->gtpu_local_port),
@@ -194,7 +192,11 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	capture_xdp_to_userspc_out(d, &u->capture, BPF_CAPTURE_EFL_OUTPUT |
 				   BPF_CAPTURE_EFL_ACCESS);
 
-	upf_urr_check_dl(uu);
+	if (tc) {
+		++tc->dl_pkt;
+		tc->dl_bytes += pl_len;
+		upf_ttc_check_dl(tc);
+	}
 
 	return XDP_IFR_FORWARD;
 
@@ -278,7 +280,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	void *data_end = (void *)(long)ctx->data_end;
 	struct upf_egress_key k;
 	struct upf_fwd_rule *u;
-	struct upf_urr *uu;
+	struct upf_ttc *tc = NULL;
 	struct iphdr *ip4h_inner = NULL;
 	struct ipv6hdr *ip6h_inner;
 	struct gtpuhdr *gtph;
@@ -307,12 +309,13 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	capture_xdp_to_userspc_in(ctx, &u->capture, BPF_CAPTURE_EFL_INPUT |
 				  BPF_CAPTURE_EFL_ACCESS);
 
-	uu = bpf_map_lookup_elem(&upf_urr, &u->urr_idx);
-	if (uu == NULL)
-		return XDP_DROP;
-
-	if (uu->flags & UPF_FL_QUOTA_REACHED)
-		goto drop;
+	if (u->ttc_idx) {
+		tc = bpf_map_lookup_elem(&upf_ttc, &u->ttc_idx);
+		if (tc == NULL)
+			return XDP_DROP;
+		if (tc->flags & UPF_FL_QUOTA_REACHED)
+			goto drop;
+	}
 
 	if (gtph->flags & GTPU_FL_E) {
 		gtph_len = GTPU_HLEN_LONG;
@@ -376,8 +379,10 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		/* metrics (pkt_len includes gtpu) */
 		++u->fwd_v4_pkt;
 		u->fwd_v4_bytes += pkt_len;
-		++uu->ul_pkt;
-		uu->ul_bytes += pkt_len;
+		if (tc) {
+			++tc->ul_pkt;
+			tc->ul_bytes += pkt_len;
+		}
 
 		d->dst_addr.ip4 = iph->daddr;
 		return XDP_IFR_FORWARD;
@@ -425,10 +430,11 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	capture_xdp_to_userspc_out(d, &u->capture, BPF_CAPTURE_EFL_OUTPUT |
 				   BPF_CAPTURE_EFL_CORE);
 
-	++uu->ul_pkt;
-	uu->ul_bytes += pkt_len;
-
-	upf_urr_check_ul(uu);
+	if (tc) {
+		++tc->ul_pkt;
+		tc->ul_bytes += pkt_len;
+		upf_ttc_check_ul(tc);
+	}
 
 	if (u->li_id)
 		upf_li_pkt(ctx, u, d->pl_off, UPF_LI_FL_DIR_EGRESS);

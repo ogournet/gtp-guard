@@ -263,6 +263,18 @@ DEFUN(pfcp_urr_static_link,
 }
 
 
+DEFUN(pfcp_urr_merge_threshold,
+      pfcp_urr_merge_threshold_cmd,
+      "urr-merge-threshold-percent <0-50>",
+      "Volume threshold merge proximity percent\n"
+      "Percent (0 = disabled, default 6)\n")
+{
+	struct pfcp_router *c = vty->index;
+
+	c->urr_merge_threshold_pct = atoi(argv[0]);
+	return CMD_SUCCESS;
+}
+
 DEFUN(pfcp_capture,
       pfcp_capture_cmd,
       "capture name CAPENTRY [ (pfcp|gtpu|all) ]",
@@ -1224,6 +1236,9 @@ config_pfcp_router_write(struct vty *vty)
 			     c->urr_static_pdr_link[i]; i++)
 			vty_out(vty, " urr-static-link %d\n",
 				c->urr_static_pdr_link[i]);
+		if (c->urr_merge_threshold_pct)
+			vty_out(vty, " urr-merge-threshold-percent %d\n",
+				c->urr_merge_threshold_pct);
 
 		vty_out(vty, "!\n");
 	}
@@ -1275,6 +1290,7 @@ cmd_ext_pfcp_router_install(void)
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_listen_bind_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_urr_static_link_cmd);
+	install_element(PFCP_ROUTER_NODE, &pfcp_urr_merge_threshold_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_capture_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_capture_imsi_cmd);
 	install_element(PFCP_ROUTER_NODE, &pfcp_no_capture_cmd);

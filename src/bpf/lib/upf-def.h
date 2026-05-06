@@ -13,9 +13,15 @@
 # define UPF_DBG(...)
 #endif
 
+/********************************************************************/
+/* UPF Constants */
+
 #define BPF_UPF_USER_MAP_SIZE		1000000
 #define BPF_UPF_USER_COUNTER_MAP_SIZE	1200000
 
+
+/********************************************************************/
+/* UPF Forward Rules (map PDR, FAR, QES) */
 
 #define UE_IPV4		(1 << 0)
 #define UE_IPV6		(1 << 1)
@@ -65,7 +71,8 @@ struct upf_fwd_rule {
 	__u8		tos_mask;
 	__u16		flags;
 
-	__u32		urr_idx;	/* index to upf_urr{,_data} */
+	__u32		ttc_idx;	/* index to upf_ttc. 0: unused */
+
 	__u32		li_id;		/* 0: disabled */
 	__u64		seid;
 
@@ -81,10 +88,15 @@ struct upf_fwd_rule {
 }  __attribute__((packed));
 
 
+
+/********************************************************************/
+/* UPF Triggers, Timers and Counters (map URR) */
+
 #define UPF_FL_MEAS_VOL				0x01
 #define UPF_FL_MEAS_TIME			0x02
 #define UPF_FL_QUOTA_REACHED			0x04
-#define UPF_FL_TIME_IMMEDIATE_METER		0x08
+#define UPF_FL_QUOTA_EXPLICIT_BLOCK		0x08
+#define UPF_FL_TIME_IMMEDIATE_METER		0x10
 
 #define UPF_TRIG_FL_VOLTH			0x0001
 #define UPF_TRIG_FL_TIMTH			0x0002
@@ -96,8 +108,6 @@ struct upf_fwd_rule {
 #define UPF_TRIG_FL_STOPT			0x0080
 
 /*
- * URR config and counters.
- *
  * owned by bpf, never written from userspace: modified through sysctl urr_ctl,
  * reports sent through ring_buffer.
  *
@@ -106,7 +116,7 @@ struct upf_fwd_rule {
  *
  * keep it 64B pagecache aligned, with accessed fields on hot datapath together
  */
-struct upf_urr {
+struct upf_ttc {
 	/* cache line 1 (datapath, hot) 64B */
 	__u16		flags;			/* UPF_FL_* */
 	__u16		_pad1;
@@ -140,7 +150,7 @@ struct upf_urr {
 	__u64		dl_th;
 	__u64		dl_qu;
 	__u64		seid;
-	__u32		urr_idx;
+	__u32		ttc_idx;
 	__u32		_pad2;
 
 	/* cache line 4 (mostly timer, cold) 52B */
@@ -158,19 +168,19 @@ struct upf_urr {
 	__u8		_pad[12];
 };
 
+enum {
+	UPF_TTC_CMD_INIT,
+	UPF_TTC_CMD_UPDATE,
+	UPF_TTC_CMD_DELETE,
+	UPF_TTC_CMD_REPORT,
+};
 
-#define UPF_FL_CTL_INIT				0x01
-#define UPF_FL_CTL_UPDATE			0x02
-#define UPF_FL_CTL_DELETE			0x04
-#define UPF_FL_CTL_REPORT			0x08
-#define UPF_FL_CTL_MORE_CMD			0x10
 
-
-struct upf_urr_cmd_req {
+struct upf_ttc_cmd {
 	__u64		seid;
-	__u32		urr_idx;		/* idx in bpf map array */
+	__u32		ttc_idx;		/* idx in bpf map array */
 	__u16		flags;			/* UPF_FL_* */
-	__u8		ctl_fl;			/* UPF_FL_CTL_* */
+	__u8		cmd;			/* UPF_TTC_CMD_* */
 	__u8		request_id;		/* trigger by syscall */
 
 	__u32		time_th;
@@ -187,16 +197,16 @@ struct upf_urr_cmd_req {
 	__u64		ul_qu;
 };
 
-struct upf_urr_report {
+struct upf_ttc_report {
 	__u64		seid;
-	__u32		urr_idx;
+	__u32		ttc_idx;
 	__u16		report_flags;		/* UPF_TRIG_FL_* */
 	__u8		request_id;		/* if trigged by syscall */
 	__u8		_pad;
 };
 
-struct upf_urr_report_data {
-	struct upf_urr_report r;
+struct upf_ttc_report_data {
+	struct upf_ttc_report r;
 
 	__u64		dl_bytes;
 	__u64		dl_pkt;
@@ -208,9 +218,9 @@ struct upf_urr_report_data {
 };
 
 
-/*
- * upf li
- */
+
+/********************************************************************/
+/* UPF LI */
 
 #define UPF_LI_FL_DIR_MASK     0x0003
 #define UPF_LI_FL_DIR_INGRESS  0x0001
