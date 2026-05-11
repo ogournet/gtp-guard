@@ -44,7 +44,7 @@ _pfcp_session_urr_vty(struct vty *vty, struct urrs *us, int i)
 	int k = 0;
 
 	vty_out(vty, " . URR[%d] urr_id:%d seqn:%d\n",
-		u->id, u->urr_id, u->seqn);
+		u->idx, ntohl(u->urr_id), u->seqn);
 
 	if (mm->durat)
 		k += scnprintf(mmb + k, sizeof(mmb) - k, "duration,");
@@ -215,7 +215,7 @@ _pfcp_session_pdr_vty(struct vty *vty, struct pfcp_session *s,
 			vty_out(vty, "            ref-urr:");
 			for (j = 0; j < p->urr_n; j++)
 				vty_out(vty, " %d",
-					us->u[p->urr_idx[j]].urr_id);
+					us->u[p->urr[j]].urr_id);
 			vty_out(vty, "%s", VTY_NEWLINE);
 		}
 	}
@@ -263,7 +263,7 @@ pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 			for (i = 0; i < us->n; i++)
 				_pfcp_session_urr_vty(vty, us, i);
 			for (i = 0; i < us->ttc_n; i++)
-				_pfcp_session_ttc_vty(vty, &us->ttc[i], i);
+				_pfcp_session_ttc_vty(vty, &us->ttc[i].tc, i);
 		}
 	}
 	return 0;

@@ -448,13 +448,13 @@ struct pfcp_bpf_data_thread
 };
 
 static int
-_thread_ttc_ctl(struct pfcp_bpf_data *bd, struct upf_ttc_cmd *uc)
+_thread_ttc_ctl(struct pfcp_bpf_data *bd, struct upf_ttc_cmd *tc)
 {
 	int ret;
 
 	LIBBPF_OPTS(bpf_test_run_opts, rcfg,
-		    .ctx_in = uc,
-		    .ctx_size_in = sizeof (*uc));
+		    .ctx_in = tc,
+		    .ctx_size_in = sizeof (*tc));
 
 	ret = bpf_prog_test_run_opts(bd->ttc_ctl_prog_fd, &rcfg);
 	if (ret) {
@@ -470,7 +470,7 @@ _thread_main_loop(void *arg)
 {
 	struct pfcp_bpf_data_thread *th = arg;
 	struct list_head tmp_list = LIST_HEAD_INIT(tmp_list);
-	struct pfcp_ttc_cmd *puc;
+	struct pfcp_ttc_cmd *ptc;
 
 	pthread_mutex_lock(&th->lock);
 	while (th->run) {
@@ -479,8 +479,8 @@ _thread_main_loop(void *arg)
 		list_splice_init(&th->cmd_list, &tmp_list);
 
 		pthread_mutex_unlock(&th->lock);
-		list_for_each_entry(puc, &tmp_list, clist) {
-			_thread_ttc_ctl(th->bd, &puc->uc);
+		list_for_each_entry(ptc, &tmp_list, clist) {
+			_thread_ttc_ctl(th->bd, &ptc->tc);
 		}
 		INIT_LIST_HEAD(&tmp_list);
 		pthread_mutex_lock(&th->lock);
@@ -520,11 +520,10 @@ _thread_start(struct pfcp_bpf_data *bd, int cpu)
 }
 
 int
-pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct upf_ttc_cmd *uc)
+pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct pfcp_ttc_cmd *ptc)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
 	struct pfcp_bpf_data_thread *th;
-	struct pfcp_ttc_cmd *puc = (struct pfcp_ttc_cmd *)uc;
 
 	if (bd == NULL)
 		return -1;
@@ -539,15 +538,15 @@ pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct upf_ttc_cmd *uc)
 
 	if (!++s->urrs.cmd_cur_id)
 		s->urrs.cmd_cur_id = 1;
-	uc->request_id = s->urrs.cmd_cur_id;
+	ptc->tc.request_id = s->urrs.cmd_cur_id;
 
 	pthread_mutex_lock(&th->lock);
 	if (list_empty(&th->cmd_list))
 		pthread_cond_signal(&th->cond);
-	list_add_tail(&puc->clist, &th->cmd_list);
+	list_add_tail(&ptc->clist, &th->cmd_list);
 	pthread_mutex_unlock(&th->lock);
 
-	list_add_tail(&puc->plist, &s->urr_cmd_pending_list);
+	list_add_tail(&ptc->plist, &s->urr_cmd_pending_list);
 
 	return 0;
 }
@@ -590,7 +589,7 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 {
 	struct upf_ttc_report *ur;
 	struct upf_ttc_report_data *urd;
-	struct pfcp_ttc_cmd *puc;
+	struct pfcp_ttc_cmd *ptc;
 	struct pfcp_session *s;
 
 	if (size == sizeof (*urd)) {
@@ -611,10 +610,9 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 		return 0;
 	}
 
-	/* save metrics, if set */
+	/* report data included */
 	if (urd != NULL) {
-		urrs_report_ingest(&s->urrs, urd,
-				   s->router->mono2ntptime_off);
+		urrs_save_metrics(&s->urrs, urd, s->router->mono2ntptime_off);
 
 		/* trigger included */
 		if (urd->r.report_flags)
@@ -624,10 +622,12 @@ pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 	if (!ur->request_id)
 		return 0;
 
+
 	/* it's a ack for a previous command */
-	list_for_each_entry(puc, &s->urr_cmd_pending_list, plist) {
-		if (puc->uc.request_id == ur->request_id) {
-			list_del(&puc->plist);
+	list_for_each_entry(ptc, &s->urr_cmd_pending_list, plist) {
+		if (ptc->tc.request_id == ur->request_id) {
+			list_del(&ptc->plist);
+			ptc->tc.request_id = 0;
 			goto next;
 		}
 	}

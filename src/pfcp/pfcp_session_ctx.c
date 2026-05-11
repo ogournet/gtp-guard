@@ -572,53 +572,52 @@ set_type:
 }
 
 static int
-pfcp_session_create_pdr(struct pfcp_session *s, struct pdr *pdr,
-			struct pfcp_ie_create_pdr *ie, uint32_t *id)
+pfcp_session_create_pdr(struct pfcp_session *s, struct pdr *p,
+			struct pfcp_ie_create_pdr *ie, uint32_t *out_teid)
 {
-	int i, err;
+	struct urrs *us;
+	int i, idx, err;
 
-	pdr->action = PFCP_ACT_CREATE;
+	p->action = PFCP_ACT_CREATE;
 
-	pdr->id = ie->pdr_id->rule_id;
+	p->id = ie->pdr_id->rule_id;
 
-	pdr->precedence = be32toh(ie->precedence->value);
+	p->precedence = be32toh(ie->precedence->value);
 
-	err = pfcp_session_pdi(s, pdr, ie->pdi, id);
+	err = pfcp_session_pdi(s, p, ie->pdi, out_teid);
 	if (err)
 		return -1;
 
 	if (ie->far_id)
-		pdr->far = pfcp_session_get_far_by_id(s, ie->far_id->value);
+		p->far = pfcp_session_get_far_by_id(s, ie->far_id->value);
 
 	if (ie->outer_header_removal)
-		pdr->flags |= UPF_FWD_FL_ACT_REMOVE_OUTER_HEADER;
+		p->flags |= UPF_FWD_FL_ACT_REMOVE_OUTER_HEADER;
 
 	if (ie->urr_id && ie->nr_urr_id) {
-		struct urrs *us = &s->urrs;
-
-		pdr->urr_msize = ie->nr_urr_id;
-		pdr->urr_idx = calloc(pdr->urr_msize, sizeof(int));
-		if (pdr->urr_idx == NULL)
+		us = &s->urrs;
+		p->urr_msize = ie->nr_urr_id;
+		p->urr = mpool_zalloc(&s->mp, p->urr_msize * sizeof(int));
+		if (p->urr == NULL)
 			return -1;
 		for (i = 0; i < ie->nr_urr_id; i++) {
-			int idx = urrs_find_by_urr_id(us,
-					ntohl(ie->urr_id[i]->value));
+			idx = urrs_find_by_urr_id(us, ie->urr_id[i]->value);
 			if (idx < 0)
 				continue;
-			pdr->urr_idx[pdr->urr_n++] = idx;
+			p->urr[p->urr_n++] = idx;
 		}
 	}
 
 	if (ie->qer_id && ie->nr_qer_id) {
-		pdr->qer = pfcp_session_get_qer_by_id(s, ie->qer_id[0]->value);
-		if (!pdr->qer)
+		p->qer = pfcp_session_get_qer_by_id(s, ie->qer_id[0]->value);
+		if (!p->qer)
 			return -1;
 	}
 
 	if (ie->activate_predefined_rules) {
 		size_t len = ntohs(ie->activate_predefined_rules->h.length);
 		if (len > 0 && len < PFCP_STR_MAX_LEN)
-			memcpy(pdr->predefined_rule,
+			memcpy(p->predefined_rule,
 			       ie->activate_predefined_rules->predefined_rules_name, len);
 	}
 
@@ -670,7 +669,7 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 
 	/* TTC map index */
 	if (s->urrs.ttc_n > 0)
-		u->ttc_idx = s->urrs.ttc[0].ttc_idx;
+		u->ttc_idx = s->urrs.ttc[0].tc.ttc_idx;
 
 	/* Packet capture */
 	u->capture.flags = s->data_cap.flags &
@@ -877,7 +876,6 @@ pfcp_session_delete(struct pfcp_session *s)
 	list_for_each_entry_safe(p, _p, &s->pdr_list, next) {
 		list_head_del(&p->next);
 		pfcp_session_delete_fwd_rules(s, p);
-		free(p->urr_idx);
 		free(p);
 	}
 
@@ -901,13 +899,9 @@ pfcp_session_delete(struct pfcp_session *s)
 
 	/* Free BPF TTC indices */
 	for (i = 0; i < s->urrs.ttc_n; i++)
-		pfcp_bpf_release_ttc_idx(s, s->urrs.ttc[i].ttc_idx);
+		pfcp_bpf_release_ttc_idx(s, s->urrs.ttc[i].tc.ttc_idx);
 	if (!list_empty(&s->urr_cmd_pending_list))
-		printf("%s: entries remain in urr_cmd_pending_list\n", __func__);
-
-	/* Free URR data */
-	if (s->urrs.msize)
-		mpool_release(&s->urrs.mp);
+		logfc_debug(s->log, "entries remain in urr_cmd_pending_list");
 
 	return 0;
 }

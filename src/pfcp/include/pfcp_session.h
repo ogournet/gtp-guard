@@ -128,11 +128,10 @@ struct urr_time {
 };
 
 struct urr {
-	uint32_t			id;		/* index in urrs arrays */
+	uint32_t			idx;		/* index in urrs arrays */
 	uint32_t			urr_id;		/* ie.urr_id */
 	uint32_t			ttc_idx;	/* index in bpf map */
 	uint32_t			seqn;
-	uint8_t				action;
 	bool				queried;
 	bool				reported;
 	bool				auto_attach;
@@ -157,10 +156,7 @@ struct urr {
 	struct pfcp_metrics_pkt		last_report_dl;
 };
 
-/* pfcp_session's urr data */
 struct urrs {
-	struct mpool			mp;
-
 	int				n;	/* number of active URRs */
 	int				msize;	/* allocated capacity */
 	struct urr			*u;
@@ -172,7 +168,7 @@ struct urrs {
 	/* bpf's ttc mapping */
 	int				ttc_n;
 	int				ttc_msize;
-	struct upf_ttc_cmd		*ttc;
+	struct pfcp_ttc_cmd		*ttc;
 
 	/* misc. */
 	uint8_t				cmd_cur_id;
@@ -181,7 +177,7 @@ struct urrs {
 
 struct pdr {
 	uint8_t			action;
-	uint16_t		id;
+	uint16_t		id;		/* network order */
 	uint32_t		precedence;
 
 	/* F-TEID in PDI */
@@ -199,7 +195,7 @@ struct pdr {
 	struct pfcp_fwd_rule	*fwd_rule;
 	char			predefined_rule[PFCP_STR_MAX_LEN];
 
-	int			*urr_idx;	/* indices into urrs.u[] */
+	int			*urr;	/* indices into urrs.u[] */
 	int			urr_n;
 	int			urr_msize;
 
@@ -312,8 +308,8 @@ int pfcp_session_put_created_traffic_endpoint(struct pkt_buffer *pbuff,
 
 /* pfcp_session_urr.c */
 int urrs_find_by_urr_id(const struct urrs *us, uint32_t urr_id);
-int urrs_grow(struct urrs *us, int new_msize);
-int urrs_report_ingest(struct urrs *us, const struct upf_ttc_report_data *rd,
+int urrs_grow(struct pfcp_session *s, int new_msize);
+int urrs_save_metrics(struct urrs *us, const struct upf_ttc_report_data *rd,
 		       uint32_t mono2ntptime_off);
 void urrs_report_triggered(struct pfcp_session *s,
 			   const struct upf_ttc_report_data *urd);

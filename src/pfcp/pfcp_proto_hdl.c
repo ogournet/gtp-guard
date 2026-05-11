@@ -481,9 +481,9 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 
 	/* Delete URRs, and generate the last report */
 	if (s->urrs.ttc_n) {
-		struct upf_ttc_cmd *uc = &s->urrs.ttc[0];
-		uc->cmd = UPF_TTC_CMD_DELETE;
-		pfcp_bpf_ttc_ctl(s, uc);
+		struct pfcp_ttc_cmd *ptc = &s->urrs.ttc[0];
+		ptc->tc.cmd = UPF_TTC_CMD_DELETE;
+		pfcp_bpf_ttc_ctl(s, ptc);
 
 		s->pending_addr = *addr;
 		s->pending_pbuff = srv->s.pbuff;

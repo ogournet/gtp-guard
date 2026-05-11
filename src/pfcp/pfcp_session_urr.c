@@ -45,34 +45,29 @@ urrs_find_by_urr_id(const struct urrs *us, uint32_t urr_id)
 }
 
 int
-urrs_grow(struct urrs *us, int new_msize)
+urrs_grow(struct pfcp_session *s, int n)
 {
-	if (!us->msize) {
-		mpool_init(&us->mp);
-		if (new_msize < 30)
-			new_msize = next_power_of_2(new_msize + 1);
-	}
-	if (new_msize <= us->msize)
+	struct urrs *us = &s->urrs;
+
+	if (!us->msize && n < 40)
+		n = next_power_of_2(n + 1);
+	if (n <= us->msize)
 		return 0;
 
-	if (mpool_prealloc(&us->mp, new_msize *
-			   (sizeof(struct urr) +
-			    sizeof(struct urr_volume) * 3 +
-			    sizeof(struct urr_time))) < 0)
-		return -1;
+	us->msize = n;
+	us->u = mpool_realloc(&s->mp, us->u, n * sizeof(struct urr));
+	us->vol_threshold = mpool_zrealloc(&s->mp, us->vol_threshold,
+					   n * sizeof(struct urr_volume));
+	us->vol_next = mpool_zrealloc(&s->mp, us->vol_next,
+				      n * sizeof(struct urr_volume));
+	us->vol_quota = mpool_zrealloc(&s->mp, us->vol_quota,
+				       n * sizeof(struct urr_volume));
+	us->time = mpool_zrealloc(&s->mp, us->time,
+				  n * sizeof(struct urr_time));
 
-	/* zrealloc doesn't need to be checked, memory is pre-allocated */
-	us->u = mpool_realloc(&us->mp, us->u,
-			      new_msize * sizeof(struct urr));
-	us->vol_threshold = mpool_zrealloc(&us->mp, us->vol_threshold,
-					   new_msize * sizeof(struct urr_volume));
-	us->vol_next = mpool_zrealloc(&us->mp, us->vol_next,
-				      new_msize * sizeof(struct urr_volume));
-	us->vol_quota = mpool_zrealloc(&us->mp, us->vol_quota,
-				       new_msize * sizeof(struct urr_volume));
-	us->time = mpool_zrealloc(&us->mp, us->time,
-				  new_msize * sizeof(struct urr_time));
-	us->msize = new_msize;
+	if (us->u == NULL || us->vol_threshold == NULL || us->vol_next == NULL ||
+	    us->vol_quota == NULL || us->time == NULL)
+		return -1;
 
 	return 0;
 }
@@ -274,7 +269,7 @@ _report_build_ies(struct urrs *us, int idx, struct pkt_buffer *pbuff,
 		u->last_report_duration = u->duration;
 	}
 
-	return pfcp_ie_put_usage_report(pbuff, type, u->urr_id, u->seqn++,
+	return pfcp_ie_put_usage_report(pbuff, type, ntohl(u->urr_id), u->seqn++,
 					rtrig, qurr_ref,
 					u->pkt_first_time, u->pkt_last_time,
 					u->start_time, u->end_time, duration,
@@ -354,7 +349,7 @@ urrs_put_modification_reports(struct urrs *us, struct pkt_buffer *pbuff)
 			    lu->duration <= 0)
 				continue;
 
-			n += _report_add(r, n, lu->id, liusa);
+			n += _report_add(r, n, lu->idx, liusa);
 		}
 	}
 
@@ -396,7 +391,7 @@ urrs_put_deletion_reports(struct urrs *us, struct pkt_buffer *pbuff)
 
 /* update counters from BPF */
 int
-urrs_report_ingest(struct urrs *us, const struct upf_ttc_report_data *rd,
+urrs_save_metrics(struct urrs *us, const struct upf_ttc_report_data *rd,
 		   uint32_t mono2ntptime_off)
 {
 	int i;
@@ -475,7 +470,7 @@ _recalc_thresholds(struct pfcp_session *s,
 		   const struct upf_ttc_report_data *urd)
 {
 	struct urrs *us = &s->urrs;
-	struct upf_ttc_cmd *tc = &us->ttc[0];
+	struct upf_ttc_cmd *tc = &us->ttc[0].tc;
 	uint64_t total, delta;
 	uint64_t prev_to = tc->total_th;
 	uint64_t prev_ul = tc->ul_th;
@@ -519,7 +514,7 @@ _recalc_thresholds(struct pfcp_session *s,
 	      prev_ul - tc->ul_th <= 1500 &&
 	      prev_dl - tc->dl_th <= 1500)) {
 		tc->cmd = UPF_TTC_CMD_UPDATE;
-		pfcp_bpf_ttc_ctl(s, tc);
+		pfcp_bpf_ttc_ctl(s, &us->ttc[0]);
 	}
 }
 
@@ -631,17 +626,17 @@ _parse_volume_quota(const struct pfcp_ie_volume_quota *vqu,
 }
 
 static int
-urrs_create(struct urrs *us, struct pfcp_ie_create_urr *ie,
+urrs_create(struct pfcp_session *s, struct pfcp_ie_create_urr *ie,
 	    const int *static_pdr_link, int nr_static_pdr_link)
 {
+	struct urrs *us = &s->urrs;
 	int idx = us->n;
 	struct urr *u = &us->u[idx];
 	int i;
 
 	memset(u, 0, sizeof(*u));
-	u->id = idx;
-	u->urr_id = ntohl(ie->urr_id->value);
-	u->action = PFCP_ACT_CREATE;
+	u->idx = idx;
+	u->urr_id = ie->urr_id->value;
 	u->start_time = time_now_to_ntp();
 	u->end_time = u->start_time;
 
@@ -699,15 +694,15 @@ urrs_create(struct urrs *us, struct pfcp_ie_create_urr *ie,
 
 	if (ie->nr_linked_urr_id) {
 		u->linked_urr_n = ie->nr_linked_urr_id;
-		u->linked_urr_id = mpool_zalloc(&us->mp,
+		u->linked_urr_id = mpool_zalloc(&s->mp,
 				u->linked_urr_n * sizeof(uint32_t));
 		for (i = 0; i < u->linked_urr_n; i++)
 			u->linked_urr_id[i] =
-				ntohl(ie->linked_urr_id[i]->value);
+				ie->linked_urr_id[i]->value;
 	}
 
 	for (i = 0; i < nr_static_pdr_link; i++)
-		if (static_pdr_link[i] == (int) u->urr_id)
+		if (static_pdr_link[i] == (int) ntohl(u->urr_id))
 			u->auto_attach = true;
 
 	++us->n;
@@ -716,14 +711,15 @@ urrs_create(struct urrs *us, struct pfcp_ie_create_urr *ie,
 }
 
 static int
-urrs_update(struct urrs *us, struct pfcp_ie_update_urr *ie)
+urrs_update(struct pfcp_session *s, struct pfcp_ie_update_urr *ie)
 {
+	struct urrs *us = &s->urrs;
 	uint64_t v, to, ul, dl;
 	uint32_t changed = URR_CHG_NONE;
 	struct urr *u;
 	int idx, i;
 
-	idx = urrs_find_by_urr_id(us, ntohl(ie->urr_id->value));
+	idx = urrs_find_by_urr_id(us, ie->urr_id->value);
 	if (idx < 0)
 		return -1;
 
@@ -813,13 +809,11 @@ urrs_update(struct urrs *us, struct pfcp_ie_update_urr *ie)
 		u = &us->u[idx];
 		u->linked_urr_n = ie->nr_linked_urr_id;
 		u->linked_urr_id =
-			mpool_zalloc(&us->mp, u->linked_urr_n * sizeof(uint32_t));
+			mpool_zalloc(&s->mp, u->linked_urr_n * sizeof(uint32_t));
 		for (i = 0; i < u->linked_urr_n; i++)
-			u->linked_urr_id[i] = ntohl(ie->linked_urr_id[i]->value);
+			u->linked_urr_id[i] = ie->linked_urr_id[i]->value;
 	}
 
-	if (changed)
-		us->u[idx].action = PFCP_ACT_UPDATE;
 	return changed;
 }
 
@@ -838,7 +832,7 @@ urrs_remove(struct urrs *us, uint32_t urr_id)
 		return;
 
 	us->u[idx] = us->u[us->n];
-	us->u[idx].id = idx;
+	us->u[idx].idx = idx;
 	us->time[idx].inactivity_detection = us->time[us->n].inactivity_detection;
 	us->time[idx].quota_holdtime = us->time[us->n].quota_holdtime;
 	us->vol_threshold[idx] = us->vol_threshold[us->n];
@@ -862,11 +856,11 @@ urrs_on_create(struct pfcp_session *s,
 	uint32_t idx;
 	int i;
 
-	if (urrs_grow(us, req->nr_create_urr))
+	if (urrs_grow(s, req->nr_create_urr))
 		return -1;
 
 	for (i = 0; i < req->nr_create_urr; i++)
-		urrs_create(us, req->create_urr[i],
+		urrs_create(s, req->create_urr[i],
 			    router->urr_static_pdr_link,
 			    ARRAY_SIZE(router->urr_static_pdr_link));
 
@@ -881,20 +875,22 @@ urrs_on_create(struct pfcp_session *s,
 		idx = pfcp_bpf_alloc_ttc_idx(s);
 		if (!idx)
 			return -1;
-		us->ttc = mpool_zalloc(&us->mp,	sizeof(struct upf_ttc_cmd));
-		us->ttc[0].seid = s->seid;
-		us->ttc[0].ttc_idx = idx;
+		us->ttc = mpool_zalloc(&s->mp, sizeof(struct pfcp_ttc_cmd));
+		if (us->ttc == NULL)
+			return -1;
+		us->ttc[0].tc.seid = s->seid;
+		us->ttc[0].tc.ttc_idx = idx;
 		us->ttc_n = 1;
 		us->ttc_msize = 1;
 	}
 
-	tc = &us->ttc[0];
+	tc = &us->ttc[0].tc;
 	tc->cmd = UPF_TTC_CMD_INIT;
 	urrs_merge_flags(us, tc);
 	urrs_merge_volume_threshold(us, tc, router->urr_merge_threshold_pct);
 	urrs_merge_volume_quota(us, tc);
 	urrs_merge_time(us, tc);
-	pfcp_bpf_ttc_ctl(s, tc);
+	pfcp_bpf_ttc_ctl(s, &us->ttc[0]);
 
 	return 0;
 }
@@ -906,7 +902,7 @@ urrs_on_modify(struct pfcp_session *s,
 	struct pfcp_router *router = s->router;
 	struct pfcp_ie_query_urr_reference *ie_urr_ref = req->query_urr_reference;
 	struct urrs *us = &s->urrs;
-	struct upf_ttc_cmd *tc;
+	struct pfcp_ttc_cmd *ptc;
 	uint32_t changed = URR_CHG_NONE;
 	int bpf_action = 0;
 	bool query_all;
@@ -919,7 +915,7 @@ urrs_on_modify(struct pfcp_session *s,
 		if (!us->u[i].queried) {
 			int q;
 			for (q = 0; q < req->nr_query_urr; q++)
-				if (us->u[i].urr_id == ntohl(req->query_urr[q]->urr_id->value))
+				if (us->u[i].urr_id == req->query_urr[q]->urr_id->value)
 					us->u[i].queried = true;
 		}
 		if (us->u[i].queried)
@@ -931,21 +927,21 @@ urrs_on_modify(struct pfcp_session *s,
 	/* remove */
 	for (i = 0; i < req->nr_remove_urr; i++)
 		urrs_remove(us,
-			    ntohl(req->remove_urr[i]->urr_id->value));
+			    req->remove_urr[i]->urr_id->value);
 
 	/* create */
 	if (req->nr_create_urr) {
-		if (urrs_grow(us, us->n + req->nr_create_urr))
+		if (urrs_grow(s, us->n + req->nr_create_urr))
 			return -1;
 		for (i = 0; i < req->nr_create_urr; i++)
-			urrs_create(us, req->create_urr[i],
+			urrs_create(s, req->create_urr[i],
 				    router->urr_static_pdr_link,
 				    ARRAY_SIZE(router->urr_static_pdr_link));
 	}
 
 	/* update */
 	for (i = 0; i < req->nr_update_urr; i++) {
-		int ret = urrs_update(us, req->update_urr[i]);
+		int ret = urrs_update(s, req->update_urr[i]);
 		if (ret > 0) {
 			changed |= ret;
 			bpf_action = UPF_TTC_CMD_UPDATE;
@@ -960,22 +956,22 @@ urrs_on_modify(struct pfcp_session *s,
 		return 0;
 
 	/* update cached TTC command, only re-merge changed fields */
-	tc = &us->ttc[0];
-	tc->cmd = bpf_action;
+	ptc = &us->ttc[0];
+	ptc->tc.cmd = bpf_action;
 	if (bpf_action == UPF_TTC_CMD_UPDATE) {
-		urrs_merge_flags(us, tc);
+		urrs_merge_flags(us, &ptc->tc);
 		if (changed & URR_CHG_VOLUME_THRESHOLD) {
-			urrs_merge_volume_threshold(us, tc,
+			urrs_merge_volume_threshold(us, &ptc->tc,
 						    router->urr_merge_threshold_pct);
 		}
 		if (changed & URR_CHG_VOLUME_QUOTA)
-			urrs_merge_volume_quota(us, tc);
+			urrs_merge_volume_quota(us, &ptc->tc);
 		if (changed & (URR_CHG_TIME_THRESHOLD | URR_CHG_TIME_QUOTA |
 			       URR_CHG_TIME_PERIODIC | URR_CHG_INACTIVITY |
 			       URR_CHG_QUOTA_HOLDTIME))
-			urrs_merge_time(us, tc);
+			urrs_merge_time(us, &ptc->tc);
 	}
-	pfcp_bpf_ttc_ctl(s, tc);
+	pfcp_bpf_ttc_ctl(s, ptc);
 
 	return 0;
 }
