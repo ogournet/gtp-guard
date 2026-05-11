@@ -260,7 +260,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	struct pfcp_hdr *pfcph = (struct pfcp_hdr *)rcv_pbuff->head;
 	struct pfcp_router *ctx = srv->ctx;
 	struct pfcp_assoc *assoc;
-	struct pfcp_session *s;
+	struct pfcp_session *s = NULL;
 	struct pfcp_ue *ue;
 	struct gtp_apn *apn = NULL;
 	struct pfcp_session_establishment_request *req;
@@ -287,21 +287,21 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	if (__test_bit(PFCP_ROUTER_FL_STRICT_APN, &ctx->flags))
 		apn = pfcp_session_get_apn(req->apn_dnn);
 	if (!apn) {
-		logfc_info(s->log, "No APN selected... rejecting...");
+		logf_info("No APN selected... rejecting...");
 		cause = PFCP_CAUSE_REQUEST_REJECTED;
 		goto err;
 	}
 
-	/* User infos */
+	/* User infos. Make it mandatory */
 	if (!req->user_id) {
-		logfc_info(s->log, "IE User-ID not present... rejecting...");
+		logf_info("IE User-ID not present... rejecting...");
 		cause = PFCP_CAUSE_REQUEST_REJECTED;
 		goto err;
 	}
 
 	ret = pfcp_ie_decode_user_id(req->user_id, &imsi, &imei, &msisdn);
 	if (ret) {
-		logfc_info(s->log, "malformed IE User-ID... rejecting...");
+		logf_info("malformed IE User-ID... rejecting...");
 		cause = PFCP_CAUSE_REQUEST_REJECTED;
 		goto err;
 	}
@@ -404,7 +404,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	}
 	s = pfcp_session_get(be64toh(pfcph->seid));
 	if (!s) {
-		logfc_info(s->log, "Unknown Session-ID:0x%" PRIx64,
+		logf_info("Unknown Session-ID:0x%" PRIx64,
 			   be64toh(pfcph->seid));
 		cause = PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
 		pfcph->seid = 0;
@@ -441,7 +441,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	/* Append Cause IE */
 	ret = pfcp_ie_put_cause(pbuff, cause);
 	if (ret)
-		logfc_err(s->log, "Error while Appending IEs");
+		logf_err("Error while Appending IEs");
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 				 addr, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
@@ -469,8 +469,8 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	}
 	s = pfcp_session_get(be64toh(pfcph->seid));
 	if (!s) {
-		logfc_info(s->log, "Unknown Session-ID:0x%" PRIx64,
-			   be64toh(pfcph->seid));
+		logf_info("Unknown Session-ID:0x%" PRIx64,
+			  be64toh(pfcph->seid));
 		cause = PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
 		pfcph->seid = 0;
 		goto reply_now;
@@ -501,7 +501,7 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	/* Append Cause IE */
 	ret = pfcp_ie_put_cause(pbuff, cause);
 	if (ret)
-		logfc_err(s->log, " Error while Appending IEs");
+		logf_err("Error while Appending IEs");
 	if (s != NULL)
 		gtp_capture_data(&s->sig_cap, pbuff->head, pkt_buffer_len(pbuff),
 				 addr, &srv->s.addr, GTP_CAPTURE_FL_OUTPUT);
