@@ -135,7 +135,7 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 	char capname[60];
 	uint64_t seid;
 
-	s = calloc(1, sizeof (*s));
+	s = mpool_new(sizeof (*s), MPOOL_DEFAULT_SIZE);
 	if (!s)
 		return NULL;
 	INIT_LIST_HEAD(&s->next);
@@ -150,7 +150,7 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 	seid = pfcp_session_seid_alloc(r);
 	if (!seid) {
 		logf_warn("Something weird while allocating seid !!!");
-		free(s);
+		mpool_delete(s);
 		return NULL;
 	}
 	s->seid = seid;
@@ -166,7 +166,7 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 		snprintf(s->log.prefix, sizeof (s->log.prefix), "%ldd", seid);
 	}
 
-	logc_debug(s->log, "starting session");
+	logc_notice(s->log, "starting session");
 
 	/* Index by seid */
 	hlist_add_head(&s->hlist, pfcp_session_hashkey(pfcp_session_tab, s->seid));
@@ -276,6 +276,8 @@ pfcp_session_release(struct pfcp_session *s)
 	if (s->sig_cap.entry_id)
 		gtp_capture_stop(&s->sig_cap);
 
+	logc_notice(s->log, "stopping session");
+
 	if (pfcp_sessions_per_cpu && s->cpu < pfcp_sessions_nr_cpus)
 		__sync_sub_and_fetch(&pfcp_sessions_per_cpu[s->cpu], 1);
 	thread_del(s->timer);
@@ -292,7 +294,7 @@ pfcp_session_release(struct pfcp_session *s)
 		gtp_conn_refdec(&s->ue->c);
 	__sync_sub_and_fetch(&pfcp_sessions_count, 1);
 
-	free(s);
+	mpool_delete(s);
 }
 
 static void

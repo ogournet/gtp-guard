@@ -227,6 +227,8 @@ struct pfcp_ue {
 
 /* PFCP session */
 struct pfcp_session {
+	struct mpool		mp;
+
 	uint64_t		seid;
 	struct f_seid		remote_seid;
 
