@@ -41,6 +41,13 @@ struct {
 } upf_ttc SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, BPF_UPF_USER_COUNTER_MAP_SIZE);
+	__type(key, __u32);
+	__type(value, struct upf_mbr);
+} upf_mbr SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(max_entries, 512);
 	__type(key, int);
@@ -78,6 +85,71 @@ upf_li_pkt(struct xdp_md *ctx, struct upf_fwd_rule *u, __u16 offset, __u16 dir_f
 
 
 /*
+ * qer
+ */
+
+static __always_inline int
+upf_mbr_tb_consume(struct upf_mbr *qr, __u32 pkt_len, __u32 rnow, int is_dl)
+{
+	__u64 rate, burst, *tokens;
+	__u32 *last, elapsed;
+
+	rate = is_dl ? qr->tb_dl_rate : qr->tb_ul_rate;
+	if (!rate)
+		return 0;
+
+	tokens = is_dl ? &qr->tb_dl_tokens : &qr->tb_ul_tokens;
+	last = is_dl ? &qr->tb_dl_last : &qr->tb_ul_last;
+
+	/* refill */
+	if (*last != rnow) {
+		if (*last) {
+			elapsed = rnow - *last;
+			*tokens += (__u64)elapsed * rate;
+			burst = is_dl ? qr->tb_dl_burst : qr->tb_ul_burst;
+			if (*tokens > burst)
+				*tokens = burst;
+		}
+		*last = rnow;
+	}
+
+	/* consume */
+	__u64 cost = (__u64)pkt_len << 8;
+	if (*tokens < cost)
+		return -1;
+	*tokens -= cost;
+	return 0;
+}
+
+
+static __always_inline int
+upf_mbr_check(struct upf_fwd_rule *u, __u32 pkt_len, int is_dl)
+{
+	struct upf_mbr *qer;
+	__u32 idx, rnow;
+
+	if (u->mbr_idx) {
+		rnow = bpf_ktime_get_ns() >> 24;
+		idx = u->mbr_idx;
+		qer = bpf_map_lookup_elem(&upf_mbr, &idx);
+		if (qer && upf_mbr_tb_consume(qer, pkt_len, rnow, is_dl))
+			return -1;
+	}
+
+	if (u->ambr_idx) {
+		if (!u->mbr_idx)
+			rnow = bpf_ktime_get_ns() >> 24;
+		idx = u->mbr_idx;
+		qer = bpf_map_lookup_elem(&upf_mbr, &idx);
+		if (qer && upf_mbr_tb_consume(qer, pkt_len, rnow, is_dl))
+			return -1;
+	}
+
+	return 0;
+}
+
+
+/*
  * upf core gtp-u
  */
 
@@ -85,18 +157,23 @@ static __always_inline int
 _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, int v6)
 {
 	struct upf_ttc *tc = NULL;
+	struct upf_mbr *qer;
 	struct iphdr *iph;
 	struct udphdr *udph;
 	struct gtpuhdr *gtph;
 	void *data, *data_end;
 	int adjust_sz, pl_len;
-	__u32 csum = 0;
+	__u32 csum = 0, idx;
 
 	capture_xdp_to_userspc_in(ctx, &u->capture, BPF_CAPTURE_EFL_INPUT |
 				  BPF_CAPTURE_EFL_CORE);
 
+	if (u->flags & UPF_FWD_FL_GATE_DL_CLOSED)
+		goto drop;
+
 	if (u->ttc_idx) {
-		tc = bpf_map_lookup_elem(&upf_ttc, &u->ttc_idx);
+		idx = u->ttc_idx;
+		tc = bpf_map_lookup_elem(&upf_ttc, &idx);
 		if (tc == NULL)
 			return XDP_DROP;
 		if (tc->flags & UPF_FL_QUOTA_REACHED)
@@ -170,7 +247,7 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 			goto drop;
 		gtph->exthdr[0] = 1;	/* len */
 		gtph->exthdr[1] = 0;
-		gtph->exthdr[2] = 5;	/* qfi */
+		gtph->exthdr[2] = u->qfi;	/* qfi */
 		gtph->exthdr[3] = GTPU_ETYPE_NONE;
 	}
 
@@ -192,7 +269,10 @@ _encap_gtpu(struct xdp_md *ctx, struct if_rule_data *d, struct upf_fwd_rule *u, 
 	capture_xdp_to_userspc_out(d, &u->capture, BPF_CAPTURE_EFL_OUTPUT |
 				   BPF_CAPTURE_EFL_ACCESS);
 
-	if (tc) {
+	if (upf_mbr_check(u, pl_len, 1))
+		goto drop;
+
+	if (tc != NULL) {
 		++tc->dl_pkt;
 		tc->dl_bytes += pl_len;
 		upf_ttc_check_dl(tc);
@@ -281,6 +361,7 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 	struct upf_egress_key k;
 	struct upf_fwd_rule *u;
 	struct upf_ttc *tc = NULL;
+	struct upf_mbr *qer;
 	struct iphdr *ip4h_inner = NULL;
 	struct ipv6hdr *ip6h_inner;
 	struct gtpuhdr *gtph;
@@ -316,6 +397,9 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		if (tc->flags & UPF_FL_QUOTA_REACHED)
 			goto drop;
 	}
+
+	if (u->flags & UPF_FWD_FL_GATE_UL_CLOSED)
+		goto drop;
 
 	if (gtph->flags & GTPU_FL_E) {
 		gtph_len = GTPU_HLEN_LONG;
@@ -376,6 +460,9 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 			   &iph->daddr, bpf_ntohs(udph->dest),
 			   bpf_ntohl(gtph->teid));
 
+		if (upf_mbr_check(u, pkt_len, 0))
+			goto drop;
+
 		/* metrics (pkt_len includes gtpu) */
 		++u->fwd_v4_pkt;
 		u->fwd_v4_bytes += pkt_len;
@@ -422,6 +509,15 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 		goto drop;
 	}
 
+	if (upf_mbr_check(u, pkt_len, 0))
+		goto drop;
+
+	if (tc) {
+		++tc->ul_pkt;
+		tc->ul_bytes += pkt_len;
+		upf_ttc_check_ul(tc);
+	}
+
 	/* decap gtp-u */
 	if (bpf_xdp_adjust_head(ctx, adjust_sz) < 0)
 		return XDP_ABORTED;
@@ -429,12 +525,6 @@ _handle_gtpu(struct xdp_md *ctx, struct if_rule_data *d,
 
 	capture_xdp_to_userspc_out(d, &u->capture, BPF_CAPTURE_EFL_OUTPUT |
 				   BPF_CAPTURE_EFL_CORE);
-
-	if (tc) {
-		++tc->ul_pkt;
-		tc->ul_bytes += pkt_len;
-		upf_ttc_check_ul(tc);
-	}
 
 	if (u->li_id)
 		upf_li_pkt(ctx, u, d->pl_off, UPF_LI_FL_DIR_EGRESS);

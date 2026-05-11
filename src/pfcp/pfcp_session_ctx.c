@@ -62,19 +62,6 @@ pfcp_session_get_far_by_id(struct pfcp_session *s, uint32_t id)
 	return NULL;
 }
 
-static struct qer *
-pfcp_session_get_qer_by_id(struct pfcp_session *s, uint32_t id)
-{
-	struct qer *q;
-
-	list_for_each_entry(q, &s->qer_list, next) {
-		if (q->id == id)
-			return q;
-	}
-
-	return NULL;
-}
-
 static struct gtp_server *
 pfcp_session_get_gtp_server_by_interface(struct pfcp_router *r, uint8_t interface)
 {
@@ -469,22 +456,6 @@ pfcp_session_update_far(struct pfcp_session *s, struct pfcp_ie_update_far *uf)
 }
 
 static int
-pfcp_session_create_qer(struct pfcp_session *s, struct qer *qer,
-			struct pfcp_ie_create_qer *ie)
-{
-	qer->action = PFCP_ACT_CREATE;
-
-	qer->id = ie->qer_id->value;
-
-	if (ie->maximum_bitrate) {
-		qer->ul_mbr = ntohl(ie->maximum_bitrate->ul_mbr);
-		qer->dl_mbr = ntohl(ie->maximum_bitrate->dl_mbr);
-	}
-
-	return 0;
-}
-
-static int
 pfcp_session_pdi(struct pfcp_session *s, struct pdr *pdr, struct pfcp_ie_pdi *pdi,
 		 uint32_t *id)
 {
@@ -609,9 +580,17 @@ pfcp_session_create_pdr(struct pfcp_session *s, struct pdr *p,
 	}
 
 	if (ie->qer_id && ie->nr_qer_id) {
-		p->qer = pfcp_session_get_qer_by_id(s, ie->qer_id[0]->value);
-		if (!p->qer)
+		p->qer_msize = ie->nr_qer_id;
+		p->qer = mpool_zalloc(&s->mp, ie->nr_qer_id * sizeof(int));
+		if (p->qer == NULL)
 			return -1;
+		for (i = 0; i < ie->nr_qer_id; i++) {
+			idx = qers_find_by_qer_id(&s->qers,
+						  ie->qer_id[i]->value);
+			if (idx < 0)
+				continue;
+			p->qer[p->qer_n++] = idx;
+		}
 	}
 
 	if (ie->activate_predefined_rules) {
@@ -630,8 +609,9 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 	struct pfcp_fwd_rule *r = p->fwd_rule;
 	struct upf_fwd_rule *u = &r->rule;
 	struct far *f = p->far;
-	struct qer *q = p->qer;
+	struct qer *q;
 	sockaddr_t *laddr;
+	int k;
 
 	/* Rule flags init */
 	u->flags = 0;
@@ -656,11 +636,21 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 		u->gtpu_local_port = htons(GTP_U_PORT);
 	}
 
-	/* QER handling */
-	if (q && q->action) {
-		q->action = PFCP_ACT_NONE;
-		u->ul_mbr = q->ul_mbr;
-		u->dl_mbr = q->dl_mbr;
+	/* QER gate/MBR */
+	u->mbr_idx = 0;
+	u->ambr_idx = s->qers.ambr_qer_bpf_idx;
+	u->qfi = 0;
+	u->flags &= ~(UPF_FWD_FL_GATE_UL_CLOSED | UPF_FWD_FL_GATE_DL_CLOSED);
+	for (k = 0; k < p->qer_n; k++) {
+		q = &s->qers.q[p->qer[k]];
+		if (q->ul_gate)
+			u->flags |= UPF_FWD_FL_GATE_UL_CLOSED;
+		if (q->dl_gate)
+			u->flags |= UPF_FWD_FL_GATE_DL_CLOSED;
+		if (q->qfi)
+			u->qfi = q->qfi;
+		if (q->bpf_idx && !u->mbr_idx)
+			u->mbr_idx = q->bpf_idx;
 	}
 
 	/* FAR Level Marking */
@@ -752,13 +742,7 @@ pfcp_session_create(struct pfcp_session *s, struct pfcp_session_establishment_re
 	}
 
 	/* QER */
-	for (i = 0; i < req->nr_create_qer; i++) {
-		struct qer *qer = calloc(1, sizeof(*qer));
-		if (!qer)
-			return -1;
-		pfcp_session_create_qer(s, qer, req->create_qer[i]);
-		list_add_tail(&qer->next, &s->qer_list);
-	}
+	qers_on_create(s, req);
 
 	/* URR */
 	urrs_on_create(s, req);
@@ -775,6 +759,9 @@ pfcp_session_create(struct pfcp_session *s, struct pfcp_session_establishment_re
 		}
 		list_add_tail(&pdr->next, &s->pdr_list);
 	}
+
+	/* Push QER to BPF */
+	qers_after_create(s);
 
 	/* Create data-path forwarding rules */
 	pfcp_session_create_fwd_rules(s);
@@ -795,19 +782,17 @@ pfcp_session_update_fwd_rules(struct pfcp_session *s)
 	struct pfcp_fwd_rule *r;
 	struct pdr *p;
 	struct far *f;
-	struct qer *q;
 
 	list_for_each_entry(p, &s->pdr_list, next) {
 		r = p->fwd_rule;
 		f = p->far;
-		q = p->qer;
 
 		/* no fwd rules */
 		if (!r)
 			continue;
 
 		/* Update needed ? */
-		if (!p->action && (!f || !f->action) && (!q || !q->action) &&
+		if (!p->action && (!f || !f->action) && !s->qers.action &&
 		    !(s->data_cap.flags & GTP_CAPTURE_FL_NEED_BPF_UPDATE))
 			continue;
 
@@ -832,8 +817,15 @@ pfcp_session_modify(struct pfcp_session *s, struct pfcp_session_modification_req
 			return -1;
 	}
 
-	/* Handle URR */
+	/* Handle QER and URR */
+	qers_on_modify(s, req);
 	urrs_on_modify(s, req);
+
+	/* TODO: handle PDR create/remove/update here */
+	int pdr_changed = req->nr_create_pdr || req->nr_remove_pdr;
+
+	/* Rebuild or re-merge QER after all changes */
+	qers_after_modify(s, req, pdr_changed);
 
 	/* Update data-path forwarding rules */
 	pfcp_session_update_fwd_rules(s);
@@ -868,7 +860,6 @@ pfcp_session_delete(struct pfcp_session *s)
 {
 	struct pdr *p, *_p;
 	struct far *f, *_f;
-	struct qer *q, *_q;
 	struct traffic_endpoint *te, *_te;
 	int i;
 
@@ -885,11 +876,8 @@ pfcp_session_delete(struct pfcp_session *s)
 		free(f);
 	}
 
-	/* Free QER list */
-	list_for_each_entry_safe(q, _q, &s->qer_list, next) {
-		list_head_del(&q->next);
-		free(q);
-	}
+	/* Free QER BPF indices */
+	qers_release(s);
 
 	/* Free Traffic Endpoint list */
 	list_for_each_entry_safe(te, _te, &s->te_list, next) {

@@ -173,11 +173,41 @@ _pfcp_session_ttc_vty(struct vty *vty, const struct upf_ttc_cmd *c,
 }
 
 static void
+_pfcp_session_qer_vty(struct vty *vty, const struct qer *q)
+{
+	vty_out(vty, " . QER[%d] qer_id:%d", q->idx, ntohl(q->qer_id));
+	if (q->qfi)
+		vty_out(vty, " qfi:%d", q->qfi);
+	if (q->correlation_id)
+		vty_out(vty, " correlation_id:%d", q->correlation_id);
+	vty_out(vty, "%s", VTY_NEWLINE);
+
+	vty_out(vty, "     gate    : ul:%s dl:%s\n",
+		q->ul_gate ? "CLOSED" : "OPEN",
+		q->dl_gate ? "CLOSED" : "OPEN");
+
+	if (q->ul_mbr || q->dl_mbr) {
+		vty_out(vty, "     mbr     :");
+		if (q->ul_mbr)
+			vty_out(vty, " ul:%d kbps", q->ul_mbr);
+		if (q->dl_mbr)
+			vty_out(vty, " dl:%d kbps", q->dl_mbr);
+		vty_out(vty, "%s", VTY_NEWLINE);
+	}
+
+	if (q->averaging_window)
+		vty_out(vty, "     avg-wnd : %d ms\n",
+			q->averaging_window);
+}
+
+static void
 _pfcp_session_pdr_vty(struct vty *vty, struct pfcp_session *s,
 		      bool details)
 {
 	struct gtp_bpf_prog *prg = s->router->bpf_prog;
 	struct upf_fwd_rule *u;
+	struct qers *qs;
+	struct urrs *us;
 	struct pdr *p;
 	struct pfcp_teid *t;
 	int j;
@@ -209,13 +239,23 @@ _pfcp_session_pdr_vty(struct vty *vty, struct pfcp_session *s,
 			pfcp_bpf_teid_vty(vty, prg, UPF_FWD_FL_INGRESS, &s->ue_ip, t);
 		}
 
-		if (details && p->urr_n) {
-			struct urrs *us = &s->urrs;
+		if (details && p->qer_n) {
+			qs = &s->qers;
+			vty_out(vty, "            ref-qer:");
+			for (j = 0; j < p->qer_n; j++) {
+				struct qer *rq = &qs->q[p->qer[j]];
+				vty_out(vty, " %d", ntohl(rq->qer_id));
+				if (rq->bpf_idx)
+					vty_out(vty, "(bpf:%d)", rq->bpf_idx);
+			}
+			vty_out(vty, "%s", VTY_NEWLINE);
+		}
 
+		if (details && p->urr_n) {
+			us = &s->urrs;
 			vty_out(vty, "            ref-urr:");
 			for (j = 0; j < p->urr_n; j++)
-				vty_out(vty, " %d",
-					us->u[p->urr[j]].urr_id);
+				vty_out(vty, " %d", ntohl(us->u[p->urr[j]].urr_id));
 			vty_out(vty, "%s", VTY_NEWLINE);
 		}
 	}
@@ -259,7 +299,16 @@ pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 		_pfcp_session_pdr_vty(vty, s, details);
 
 		if (details) {
+			struct qers *qs = &s->qers;
 			struct urrs *us = &s->urrs;
+
+			for (i = 0; i < qs->n; i++)
+				_pfcp_session_qer_vty(vty, &qs->q[i]);
+			if (qs->ambr_qer_idx >= 0)
+				vty_out(vty, " . AMBR: qer_id:%d bpf:%d\n",
+					ntohl(qs->q[qs->ambr_qer_idx].qer_id),
+					qs->ambr_qer_bpf_idx);
+
 			for (i = 0; i < us->n; i++)
 				_pfcp_session_urr_vty(vty, us, i);
 			for (i = 0; i < us->ttc_n; i++)

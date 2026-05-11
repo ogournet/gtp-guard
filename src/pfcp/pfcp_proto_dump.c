@@ -215,10 +215,10 @@ pfcp_session_establishment_req_format(struct pfcp_msg *msg, char *buffer, size_t
 				pos += scnprintf(buffer + pos, size - pos,
 						 "    FAR ID: %u\n",
 						 ntohl(req->create_pdr[i]->far_id->value));
-			if (req->create_pdr[i]->nr_qer_id)
+			for (int q = 0; q < req->create_pdr[i]->nr_qer_id; q++)
 				pos += scnprintf(buffer + pos, size - pos,
 						 "    QER ID: %u\n",
-						 ntohl(req->create_pdr[i]->qer_id[0]->value));
+						 ntohl(req->create_pdr[i]->qer_id[q]->value));
 			if (req->create_pdr[i]->urr_id)
 				pos += pfcp_urr_id_format(req->create_pdr[i]->urr_id,
 							  req->create_pdr[i]->nr_urr_id,
@@ -381,10 +381,10 @@ pfcp_session_modification_req_format(struct pfcp_msg *msg, char *buffer, size_t 
 				pos += scnprintf(buffer + pos, size - pos,
 						 "    FAR ID: %u\n",
 						 ntohl(req->create_pdr[i]->far_id->value));
-			if (req->create_pdr[i]->nr_qer_id)
+			for (int q = 0; q < req->create_pdr[i]->nr_qer_id; q++)
 				pos += scnprintf(buffer + pos, size - pos,
 						 "    QER ID: %u\n",
-						 ntohl(req->create_pdr[i]->qer_id[0]->value));
+						 ntohl(req->create_pdr[i]->qer_id[q]->value));
 			if (req->create_pdr[i]->urr_id)
 				pos += pfcp_urr_id_format(req->create_pdr[i]->urr_id,
 							  req->create_pdr[i]->nr_urr_id,

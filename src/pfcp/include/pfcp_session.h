@@ -105,12 +105,27 @@ struct far {
 };
 
 struct qer {
-	uint8_t			action;
-	uint32_t		id;
-	uint32_t		ul_mbr;
-	uint32_t		dl_mbr;
+	uint32_t		idx;		/* index in qers arrays */
+	uint32_t		qer_id;		/* ie.qer_id */
+	uint8_t			ul_gate;	/* 0=open, 1=closed */
+	uint8_t			dl_gate;
+	uint32_t		ul_mbr;		/* kbps */
+	uint32_t		dl_mbr;		/* kbps */
+	uint32_t		averaging_window; /* ms */
+	uint32_t		correlation_id;
+	uint8_t			qfi;
+	uint32_t		bpf_idx;	/* upf_mbr map index, 0=unused */
+};
 
-	struct list_head	next;
+struct qers {
+	int			n;
+	int			msize;
+	struct qer		*q;
+	uint8_t			action;
+
+	/* aggregated mbr (session-wide) */
+	int			ambr_qer_idx;
+	uint32_t		ambr_qer_bpf_idx;
 };
 
 struct urr_volume {
@@ -191,13 +206,17 @@ struct pdr {
 	struct traffic_endpoint *te;
 
 	struct far		*far;
-	struct qer		*qer;
-	struct pfcp_fwd_rule	*fwd_rule;
-	char			predefined_rule[PFCP_STR_MAX_LEN];
 
-	int			*urr;	/* indices into urrs.u[] */
+	int			*qer;
+	int			qer_n;
+	int			qer_msize;
+
+	int			*urr;
 	int			urr_n;
 	int			urr_msize;
+
+	struct pfcp_fwd_rule	*fwd_rule;
+	char			predefined_rule[PFCP_STR_MAX_LEN];
 
 	uint16_t		flags;
 
@@ -230,8 +249,10 @@ struct pfcp_session {
 
 	struct list_head	pdr_list;
 	struct list_head	far_list;
-	struct list_head	qer_list;
 	struct list_head	te_list;
+
+	/* qer handling */
+	struct qers		qers;
 
 	struct ue_ip_address	ue_ip;
 	struct thread		*ue_ip_ra_timer;
@@ -319,3 +340,15 @@ int urrs_on_create(struct pfcp_session *s,
 		   struct pfcp_session_establishment_request *req);
 int urrs_on_modify(struct pfcp_session *s,
 		   struct pfcp_session_modification_request *req);
+
+/* pfcp_session_qer.c */
+int qers_find_by_qer_id(const struct qers *qs, uint32_t qer_id);
+int qers_on_create(struct pfcp_session *s,
+		   struct pfcp_session_establishment_request *req);
+int qers_after_create(struct pfcp_session *s);
+int qers_on_modify(struct pfcp_session *s,
+		   struct pfcp_session_modification_request *req);
+int qers_after_modify(struct pfcp_session *s,
+		      struct pfcp_session_modification_request *req,
+		      int pdr_changed);
+void qers_release(struct pfcp_session *s);

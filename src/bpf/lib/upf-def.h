@@ -55,6 +55,8 @@ struct upf_egress_key {
 	(UPF_FWD_FL_ACT_CREATE_OUTER_HEADER |	\
 	 UPF_FWD_FL_ACT_REMOVE_OUTER_HEADER)
 #define UPF_FWD_FL_GTP_EXTHDR			(1 << 8)
+#define UPF_FWD_FL_GATE_UL_CLOSED		(1 << 9)
+#define UPF_FWD_FL_GATE_DL_CLOSED		(1 << 10)
 
 /* rules set by userapp. */
 struct upf_fwd_rule {
@@ -64,14 +66,16 @@ struct upf_fwd_rule {
 	__be16		gtpu_remote_port;
 	__be16		gtpu_local_port;
 
-	__u32		ul_mbr;
-	__u32		dl_mbr;
-
 	__u8		tos_tclass;
 	__u8		tos_mask;
+	__u8		qfi;		/* 0: unset */
+	__u8		_pad;
 	__u16		flags;
 
-	__u32		ttc_idx;	/* index to upf_ttc. 0: unused */
+	/* indexes to upf_tcc / upf_mbr. 0: unused */
+	__u32		ttc_idx;
+	__u32		mbr_idx;
+	__u32		ambr_idx;
 
 	__u32		li_id;		/* 0: disabled */
 	__u64		seid;
@@ -217,6 +221,27 @@ struct upf_ttc_report_data {
 	__u32		duration;		/* total duraction (wrt inactive time) */
 };
 
+
+
+/********************************************************************/
+/* UPF QoS Enforcement Rule (QER) */
+
+/*
+ * Token bucket state for MBR enforcement.
+ * Tokens stored as bytes << 8 for fractional precision.
+ * Time base: ns >> 24 (~16.7 ms resolution), same as upf_ttc.
+ */
+struct upf_mbr {
+	__u32		tb_ul_last;		/* last refill ts (ns >> 24) */
+	__u32		tb_dl_last;
+	__u64		tb_ul_tokens;		/* current UL tokens */
+	__u64		tb_dl_tokens;		/* current DL tokens */
+	__u64		tb_ul_rate;		/* UL refill rate */
+	__u64		tb_dl_rate;		/* DL refill rate */
+	__u64		tb_ul_burst;		/* UL max bucket size */
+	__u64		tb_dl_burst;		/* DL max bucket size */
+	__u64		_pad;
+};
 
 
 /********************************************************************/

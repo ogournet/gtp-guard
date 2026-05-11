@@ -13,12 +13,21 @@ Commands (stdin):
   urr show [<id>]
   urr clear [<id>]
 
+  qer set id <n> [gate {open|closed}] [ul-gate {open|closed}]
+                 [dl-gate {open|closed}]
+                 [mbr <kbps>] [ul-mbr <kbps>] [dl-mbr <kbps>]
+                 [avg-wnd <ms>] [corr-id <n>] [qfi <n>]
+  qer show [<id>]
+  qer clear [<id>]
+
   session add [imsi <d>] [msisdn <d>] [imei <d>]
               [dnn <n>] [pool <n>] [pdn {v4|v6|v4v6}]
               [enb-ip <ip>] [enb-teid <teid>]
-              [urr <id[:nolink],...>]
+              [urr <id[:nolink],...>] [qer <id,...>]
   session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
                            [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
+                           [add-qer <id,...>] [update-qer <id,...>]
+                           [remove-qer <id,...>]
   session delete <cp_seid>
   session ping   <cp_seid> [<dst_ip>] [count <n>] [size <bytes>] [v6]
   session rs     <cp_seid>       — send ND Router Solicitation, print RA prefix
@@ -105,8 +114,11 @@ class IET:
     CREATE_FAR                     = 3
     FORWARDING_PARAMS              = 4
     CREATE_URR                     = 6
+    CREATE_QER                     = 7
     UPDATE_URR                     = 13
+    UPDATE_QER                     = 14
     REMOVE_URR                     = 17
+    REMOVE_QER                     = 18
     CREATED_PDR                    = 8
     CAUSE                          = 19
     SOURCE_INTERFACE               = 20
@@ -130,7 +142,9 @@ class IET:
     END_TIME                       = 76
     URR_ID                         = 81
     LINKED_URR_ID                  = 82
-    USAGE_REPORT_SRR               = 80
+    USAGE_REPORT_SMR               = 78   # in Session Modification Response
+    USAGE_REPORT_SDR               = 79   # in Session Deletion Response
+    USAGE_REPORT_SRR               = 80   # in Session Report Request
     OUTER_HEADER_CREATION          = 84
     CP_FUNC_FEATURES               = 89
     UE_IP_ADDRESS                  = 93
@@ -151,6 +165,12 @@ class IET:
     QUOTA_HOLDING_TIME             = 71
     DURATION_MEASUREMENT           = 67
     UE_IP_ADDRESS_POOL_INFORMATION = 233
+    GATE_STATUS                    = 25
+    MBR                            = 26
+    QER_CORRELATION_ID             = 28
+    QER_ID                         = 109
+    QFI                            = 124
+    AVERAGING_WINDOW               = 157
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -178,6 +198,10 @@ VT_DLVOL   = 0x04
 # Report Type  (§8.2.21)
 RPT_USAR   = 0x02
 RPT_UPIR   = 0x01
+
+# Gate Status (§8.2.7)
+GATE_OPEN   = 0
+GATE_CLOSED = 1
 
 # Interfaces
 IF_ACCESS  = 0
@@ -335,6 +359,29 @@ class URRConfig:
 
 
 @dataclass
+class QERConfig:
+    qer_id:            int
+    ul_gate:           int        = GATE_OPEN
+    dl_gate:           int        = GATE_OPEN
+    ul_mbr:            int | None = None   # kbps
+    dl_mbr:            int | None = None   # kbps
+    averaging_window:  int | None = None   # ms
+    correlation_id:    int | None = None
+    qfi:               int | None = None
+
+    def summary(self) -> str:
+        parts = [f"id={self.qer_id}"]
+        parts.append(f"gate=ul:{'CLOSED' if self.ul_gate else 'OPEN'},"
+                     f"dl:{'CLOSED' if self.dl_gate else 'OPEN'}")
+        if self.ul_mbr is not None: parts.append(f"ul_mbr={self.ul_mbr}kbps")
+        if self.dl_mbr is not None: parts.append(f"dl_mbr={self.dl_mbr}kbps")
+        if self.averaging_window is not None: parts.append(f"avg_wnd={self.averaging_window}ms")
+        if self.correlation_id is not None: parts.append(f"corr_id={self.correlation_id}")
+        if self.qfi is not None: parts.append(f"qfi={self.qfi}")
+        return "  ".join(parts)
+
+
+@dataclass
 class UsageReport:
     urr_id:   int       = 0
     seqn:     int       = 0
@@ -375,6 +422,7 @@ class Session:
     upf_teid:    int       = 0
     upf_gtpu_ip: str       = ""
     urr_ids:     list[int] = field(default_factory=list)
+    qer_ids:     list[int] = field(default_factory=list)
     imsi:        str       = ""
     msisdn:      str       = ""
     imei:        str       = ""
@@ -707,7 +755,9 @@ class GTPUSender:
 
     async def ping(self, sess: Session, dst_ip: str = "8.8.8.8",
                    count: int = 1, v6: bool = False,
-                   payload_size: int = 0) -> int:
+                   payload_size: int = 0,
+                   timeout: float = 0,
+                   interval: float = 1.0) -> int:
         if v6:
             if not sess.ue_ipv6 or not sess.upf_gtpu_ip or not sess.upf_teid:
                 log.error("Session missing UE IPv6 or UPF GTP-U endpoint")
@@ -737,7 +787,7 @@ class GTPUSender:
                                             sa5g=self.sa5g,
                                             payload_size=payload_size)
             try:
-                r = await asyncio.wait_for(fut, timeout=self.TIMEOUT)
+                r = await asyncio.wait_for(fut, timeout=timeout or self.TIMEOUT)
                 log.info(f"GTP-U ← reply from {r['src_ip']}  "
                          f"id={r['icmp_id']}  seq={r['seq']}  rtt={r['rtt_ms']:.2f}ms")
                 ok += 1
@@ -745,7 +795,7 @@ class GTPUSender:
                 log.warning(f"GTP-U ← timeout  seq={seq}")
                 self._proto._pending.pop(icmp_id, None)
             if i < count - 1:
-                await asyncio.sleep(1)
+                await asyncio.sleep(interval)
         return ok
 
     async def send_rs(self, sess: Session) -> list[tuple[str, int]] | None:
@@ -930,18 +980,24 @@ def ie_pdi_dl(network_instance: str, pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
                ie_ue_ip_address_dl(pdn))
 
 def ie_create_pdr_ul(network_instance: str, urr_ids: list[int],
+                     qer_id: int | None = None,
                      pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
-    return _ie(IET.CREATE_PDR,
-               ie_pdr_id(1) + ie_precedence(100) +
-               ie_pdi_ul(network_instance, pdn) + ie_far_id(1) +
-               b"".join(ie_urr_id(u) for u in urr_ids))
+    body = (ie_pdr_id(1) + ie_precedence(100) +
+            ie_pdi_ul(network_instance, pdn) + ie_far_id(1) +
+            b"".join(ie_urr_id(u) for u in urr_ids))
+    if qer_id is not None:
+        body += ie_qer_id(qer_id)
+    return _ie(IET.CREATE_PDR, body)
 
 def ie_create_pdr_dl(network_instance: str, urr_ids: list[int],
+                     qer_id: int | None = None,
                      pdn: int = UEIP_CHV4 | UEIP_CHV6) -> bytes:
-    return _ie(IET.CREATE_PDR,
-               ie_pdr_id(2) + ie_precedence(200) +
-               ie_pdi_dl(network_instance, pdn) + ie_far_id(2) +
-               b"".join(ie_urr_id(u) for u in urr_ids))
+    body = (ie_pdr_id(2) + ie_precedence(200) +
+            ie_pdi_dl(network_instance, pdn) + ie_far_id(2) +
+            b"".join(ie_urr_id(u) for u in urr_ids))
+    if qer_id is not None:
+        body += ie_qer_id(qer_id)
+    return _ie(IET.CREATE_PDR, body)
 
 def ie_create_far_ul() -> bytes:
     return _ie(IET.CREATE_FAR,
@@ -995,6 +1051,53 @@ def ie_update_urr_from_config(urr: URRConfig) -> bytes:
 
 def ie_remove_urr(urr_id: int) -> bytes:
     return _ie(IET.REMOVE_URR, ie_urr_id(urr_id))
+
+def ie_qer_id(v: int) -> bytes:
+    return _ie(IET.QER_ID, struct.pack("!I", v))
+
+def ie_gate_status(ul_gate: int, dl_gate: int) -> bytes:
+    return _ie(IET.GATE_STATUS, bytes([(ul_gate & 0x03) << 2 | (dl_gate & 0x03)]))
+
+def ie_mbr(ul_kbps: int | None = None, dl_kbps: int | None = None) -> bytes:
+    ul = ul_kbps or 0
+    dl = dl_kbps or 0
+    return _ie(IET.MBR,
+               struct.pack("!BI", (ul >> 32) & 0xFF, ul & 0xFFFFFFFF) +
+               struct.pack("!BI", (dl >> 32) & 0xFF, dl & 0xFFFFFFFF))
+
+def ie_qer_correlation_id(v: int) -> bytes:
+    return _ie(IET.QER_CORRELATION_ID, struct.pack("!I", v))
+
+def ie_qfi(v: int) -> bytes:
+    return _ie(IET.QFI, bytes([v & 0x3F]))
+
+def ie_averaging_window(ms: int) -> bytes:
+    return _ie(IET.AVERAGING_WINDOW, struct.pack("!I", ms))
+
+def ie_create_qer_from_config(qer: QERConfig) -> bytes:
+    body = (ie_qer_id(qer.qer_id) +
+            ie_gate_status(qer.ul_gate, qer.dl_gate))
+    if qer.ul_mbr is not None or qer.dl_mbr is not None:
+        body += ie_mbr(qer.ul_mbr, qer.dl_mbr)
+    if qer.correlation_id is not None:
+        body += ie_qer_correlation_id(qer.correlation_id)
+    if qer.qfi is not None:
+        body += ie_qfi(qer.qfi)
+    if qer.averaging_window is not None:
+        body += ie_averaging_window(qer.averaging_window)
+    return _ie(IET.CREATE_QER, body)
+
+def ie_update_qer_from_config(qer: QERConfig) -> bytes:
+    body = ie_qer_id(qer.qer_id)
+    body += ie_gate_status(qer.ul_gate, qer.dl_gate)
+    if qer.ul_mbr is not None or qer.dl_mbr is not None:
+        body += ie_mbr(qer.ul_mbr, qer.dl_mbr)
+    if qer.averaging_window is not None:
+        body += ie_averaging_window(qer.averaging_window)
+    return _ie(IET.UPDATE_QER, body)
+
+def ie_remove_qer(qer_id: int) -> bytes:
+    return _ie(IET.REMOVE_QER, ie_qer_id(qer_id))
 
 def ie_query_urr(urr_id: int) -> bytes:
     return _ie(IET.QUERY_URR, ie_urr_id(urr_id))
@@ -1160,6 +1263,7 @@ class SMF:
         self._next_cp_seid   = 1
         self.sessions:    dict[int, Session]   = {}
         self.urr_configs: dict[int, URRConfig] = {}
+        self.qer_configs: dict[int, QERConfig] = {}
         # (cp_seid, urr_id) → end_time string of last received report
         self._last_report_end: dict[tuple[int,int], str] = {}
         self.report_queue: asyncio.Queue[SessionReport] = asyncio.Queue()
@@ -1170,6 +1274,18 @@ class SMF:
         await asyncio.get_running_loop().create_datagram_endpoint(
             lambda: proto, local_addr=(self.local_ip, 0))
         self._proto = proto
+
+    def _queue_usage_reports(self, cp_seid: int, ies: dict, ie_type: int):
+        """Extract usage reports from a response and queue them."""
+        usage_reports = []
+        for ur_raw in ies.get(ie_type, []):
+            ur = parse_usage_report_ie(ur_raw)
+            log.info(f"   Usage Report (response): {ur.summary()}")
+            usage_reports.append(ur)
+        if usage_reports:
+            sr = SessionReport(cp_seid=cp_seid, report_type=RPT_USAR,
+                               usage_reports=usage_reports)
+            self.report_queue.put_nowait(sr)
 
     def _on_session_report(self, sr: SessionReport) -> int:
         sess = self.sessions.get(sr.cp_seid)
@@ -1253,15 +1369,24 @@ class SMF:
         enb_teid:         int | None = None,
         urr_ids:          list[int] | None = None,
         pdr_urr_ids:      list[int] | None = None,
+        qer_ids:          list[int] | None = None,
+        pdr_qer_id:       int | None = None,
         pdn:              int = UEIP_CHV4 | UEIP_CHV6,
     ) -> Session | None:
         if urr_ids is None:
             urr_ids = list(self.urr_configs.keys())
         if pdr_urr_ids is None:
             pdr_urr_ids = list(urr_ids)
+        if qer_ids is None:
+            qer_ids = list(self.qer_configs.keys())
+        if pdr_qer_id is None and qer_ids:
+            pdr_qer_id = qer_ids[0]
         missing = [uid for uid in urr_ids if uid not in self.urr_configs]
         if missing:
             log.error(f"URR(s) not configured: {missing}"); return None
+        missing = [qid for qid in qer_ids if qid not in self.qer_configs]
+        if missing:
+            log.error(f"QER(s) not configured: {missing}"); return None
 
         cp_seid = self._next_cp_seid
         self._next_cp_seid += 1
@@ -1275,12 +1400,16 @@ class SMF:
         body = (
             ie_node_id_ipv4(self.local_ip)                            +
             ie_fseid(cp_seid, self.local_ip)                          +
-            ie_create_pdr_ul(network_instance, pdr_urr_ids, pdn)      +
-            ie_create_pdr_dl(network_instance, pdr_urr_ids, pdn)      +
+            ie_create_pdr_ul(network_instance, pdr_urr_ids,
+                             qer_id=pdr_qer_id, pdn=pdn)             +
+            ie_create_pdr_dl(network_instance, pdr_urr_ids,
+                             qer_id=pdr_qer_id, pdn=pdn)             +
             ie_create_far_ul()                                        +
             far_dl                                                    +
             b"".join(ie_create_urr_from_config(self.urr_configs[uid])
                      for uid in urr_ids)                              +
+            b"".join(ie_create_qer_from_config(self.qer_configs[qid])
+                     for qid in qer_ids)                              +
             ie_apn_dnn(network_instance)                              +
             ie_ue_ip_address_pool_information(network_instance,
                                               pool_name)              +
@@ -1300,7 +1429,7 @@ class SMF:
 
         sess = Session(cp_seid=cp_seid, imsi=imsi or "",
                        msisdn=msisdn or "", imei=imei or "",
-                       urr_ids=list(urr_ids))
+                       urr_ids=list(urr_ids), qer_ids=list(qer_ids))
 
         fseid_raw = ies.get(IET.FSEID, [None])[0]
         if fseid_raw and len(fseid_raw) >= 9:
@@ -1343,6 +1472,9 @@ class SMF:
         remove_urrs: list[int] | None = None,
         query_urrs:  list[int] | None = None,
         qaurr:       bool = False,
+        add_qers:    list[int] | None = None,
+        update_qers: list[int] | None = None,
+        remove_qers: list[int] | None = None,
     ) -> bool:
         sess = self.sessions.get(cp_seid)
         if sess is None:
@@ -1352,17 +1484,27 @@ class SMF:
         update_urrs = update_urrs or []
         remove_urrs = remove_urrs or []
         query_urrs  = query_urrs  or []
+        add_qers    = add_qers    or []
+        update_qers = update_qers or []
+        remove_qers = remove_qers or []
 
         missing = [uid for uid in add_urrs + update_urrs
                    if uid not in self.urr_configs]
         if missing:
             log.error(f"URR(s) not configured: {missing}"); return False
+        missing = [qid for qid in add_qers + update_qers
+                   if qid not in self.qer_configs]
+        if missing:
+            log.error(f"QER(s) not configured: {missing}"); return False
 
         body = b""
         for uid in add_urrs:    body += ie_create_urr_from_config(self.urr_configs[uid])
         for uid in update_urrs: body += ie_update_urr_from_config(self.urr_configs[uid])
         for uid in remove_urrs: body += ie_remove_urr(uid)
         for uid in query_urrs:  body += ie_query_urr(uid)
+        for qid in add_qers:    body += ie_create_qer_from_config(self.qer_configs[qid])
+        for qid in update_qers: body += ie_update_qer_from_config(self.qer_configs[qid])
+        for qid in remove_qers: body += ie_remove_qer(qid)
         if qaurr:               body += ie_pfcpsmreq_flags(SMREQ_QAURR)
 
         try:
@@ -1376,6 +1518,8 @@ class SMF:
         if cause != CAUSE_ACCEPTED:
             log.error(f"←  {hdr['name']}  cause={cause_str}  (REJECTED)")
             return False
+
+        self._queue_usage_reports(cp_seid, ies, IET.USAGE_REPORT_SMR)
 
         for uid in add_urrs:
             if uid not in sess.urr_ids: sess.urr_ids.append(uid)
@@ -1403,6 +1547,8 @@ class SMF:
         if cause != CAUSE_ACCEPTED:
             log.error(f"←  {hdr['name']}  cause={cause_str}  (REJECTED)")
             return False
+
+        self._queue_usage_reports(cp_seid, ies, IET.USAGE_REPORT_SDR)
 
         del self.sessions[cp_seid]
         log.info(f"←  {hdr['name']}  (seq={hdr['seq']}, cause={cause_str}, "
@@ -1526,16 +1672,28 @@ HELP_TEXT = """\
   urr show [<id>]
   urr clear [<id>]
 
+── QER ──────────────────────────────────────────────────────────────────
+  qer set id <n> [gate {open|closed}] [ul-gate {open|closed}]
+                 [dl-gate {open|closed}]
+                 [mbr <kbps>] [ul-mbr <kbps>] [dl-mbr <kbps>]
+                 [avg-wnd <ms>] [corr-id <n>] [qfi <n>]
+  qer show [<id>]
+  qer clear [<id>]
+
 ── Session ───────────────────────────────────────────────────────────────
   session add [imsi <d>] [msisdn <d>] [imei <d>]
               [dnn <n>] [pool <n>] [pdn {v4|v6|v4v6}]
               [enb-ip <ip>] [enb-teid <teid>]
               [urr <id[:nolink],...>]
+              [qer <id,...>]
       pdn: PDN type — v4 (IPv4 only), v6 (IPv6 only), v4v6 (dual-stack, default).
       id:nolink — include URR in establish request but do not reference it in PDR.
+      qer: first QER ID is referenced in both PDRs.
 
   session modify <cp_seid> [add-urr <id,...>] [update-urr <id,...>]
                            [remove-urr <id,...>] [query-urr <id,...>] [qaurr]
+                           [add-qer <id,...>] [update-qer <id,...>]
+                           [remove-qer <id,...>]
       add-urr/update-urr: must be configured with 'urr set'.
       query-urr: request immediate report for specific URR(s).
       qaurr: set PFCPSMREQ-Flags QAURR bit (query all URRs).
@@ -1645,6 +1803,47 @@ def parse_urr_set(tokens: list[str]) -> URRConfig:
     )
 
 
+def parse_qer_set(tokens: list[str]) -> QERConfig:
+    qer_id = None
+    ul_gate = GATE_OPEN
+    dl_gate = GATE_OPEN
+    ul_mbr = None
+    dl_mbr = None
+    averaging_window = None
+    correlation_id = None
+    qfi = None
+
+    it = iter(tokens)
+    for key in it:
+        match key:
+            case "id":       qer_id = int(next(it))
+            case "ul-gate":
+                val = next(it)
+                ul_gate = GATE_CLOSED if val == "closed" else GATE_OPEN
+            case "dl-gate":
+                val = next(it)
+                dl_gate = GATE_CLOSED if val == "closed" else GATE_OPEN
+            case "gate":
+                val = next(it)
+                g = GATE_CLOSED if val == "closed" else GATE_OPEN
+                ul_gate = dl_gate = g
+            case "ul-mbr":   ul_mbr = int(next(it))
+            case "dl-mbr":   dl_mbr = int(next(it))
+            case "mbr":      ul_mbr = dl_mbr = int(next(it))
+            case "avg-wnd":  averaging_window = int(next(it))
+            case "corr-id":  correlation_id = int(next(it))
+            case "qfi":      qfi = int(next(it))
+            case _:          raise ValueError(f"Unknown qer option: {key!r}")
+
+    if qer_id is None:
+        raise ValueError("qer id is required")
+
+    return QERConfig(qer_id=qer_id, ul_gate=ul_gate, dl_gate=dl_gate,
+                     ul_mbr=ul_mbr, dl_mbr=dl_mbr,
+                     averaging_window=averaging_window,
+                     correlation_id=correlation_id, qfi=qfi)
+
+
 def parse_session_add(tokens: list[str]) -> dict:
     params: dict = {}
     it = iter(tokens)
@@ -1675,13 +1874,18 @@ def parse_session_add(tokens: list[str]) -> dict:
                         pdr_ids.append(uid)
                 params["urr_ids"]     = all_ids
                 params["pdr_urr_ids"] = pdr_ids
+            case "qer":
+                qer_toks = next(it).split(",")
+                params["qer_ids"] = [int(q) for q in qer_toks]
+                params["pdr_qer_id"] = int(qer_toks[0])
             case _:          raise ValueError(f"Unknown session option: {key!r}")
     return params
 
 
 def parse_session_modify(tokens: list[str]) -> dict:
     params: dict = {"add_urrs": [], "update_urrs": [], "remove_urrs": [],
-                    "query_urrs": [], "qaurr": False}
+                    "query_urrs": [], "qaurr": False,
+                    "add_qers": [], "update_qers": [], "remove_qers": []}
     it = iter(tokens)
     for key in it:
         match key:
@@ -1690,21 +1894,26 @@ def parse_session_modify(tokens: list[str]) -> dict:
             case "remove-urr": params["remove_urrs"] = [int(x) for x in next(it).split(",")]
             case "query-urr":  params["query_urrs"]  = [int(x) for x in next(it).split(",")]
             case "qaurr":      params["qaurr"]       = True
+            case "add-qer":    params["add_qers"]    = [int(x) for x in next(it).split(",")]
+            case "update-qer": params["update_qers"] = [int(x) for x in next(it).split(",")]
+            case "remove-qer": params["remove_qers"] = [int(x) for x in next(it).split(",")]
             case _:            raise ValueError(f"Unknown session modify option: {key!r}")
     return params
 
 
-def parse_session_ping(tokens: list[str]) -> tuple[str, int, bool, int]:
-    dst_ip, count, v6, size = None, 1, False, 0
+def parse_session_ping(tokens: list[str]) -> tuple[str, int, bool, int, float, float]:
+    dst_ip, count, v6, size, timeout, interval = None, 1, False, 0, 5.0, 1.0
     it = iter(tokens)
     for tok in it:
-        if   tok == "count": count = int(next(it))
-        elif tok == "size":  size = int(next(it))
-        elif tok == "v6":    v6 = True
-        else:                dst_ip = tok
+        if   tok == "count":    count = int(next(it))
+        elif tok == "size":     size = int(next(it))
+        elif tok == "timeout":  timeout = float(next(it))
+        elif tok == "interval": interval = float(next(it))
+        elif tok == "v6":       v6 = True
+        else:                   dst_ip = tok
     if dst_ip is None:
         dst_ip = "2001:4860:4860::8888" if v6 else "8.8.8.8"
-    return dst_ip, count, v6, size
+    return dst_ip, count, v6, size, timeout, interval
 
 
 def _parse_one_urr_expect(it) -> dict:
@@ -1813,6 +2022,29 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                         smf.urr_configs.clear()
                         print("all URRs cleared", flush=True)
 
+                # ── QER ────────────────────────────────────────────────
+                case ["qer", "set", *rest]:
+                    qer = parse_qer_set(rest)
+                    smf.qer_configs[qer.qer_id] = qer
+                    print(f"qer configured: {qer.summary()}", flush=True)
+
+                case ["qer", "show", *rest]:
+                    filt    = int(rest[0]) if rest else None
+                    configs = {filt: smf.qer_configs[filt]} if filt else smf.qer_configs
+                    if not configs:
+                        print("(no QERs configured)", flush=True)
+                    for qer in configs.values():
+                        print(f"  {qer.summary()}", flush=True)
+
+                case ["qer", "clear", *rest]:
+                    if rest:
+                        qid = int(rest[0])
+                        smf.qer_configs.pop(qid, None)
+                        print(f"qer {qid} cleared", flush=True)
+                    else:
+                        smf.qer_configs.clear()
+                        print("all QERs cleared", flush=True)
+
                 # ── Session ────────────────────────────────────────────
                 case ["sessions"]:
                     if not smf.sessions:
@@ -1854,9 +2086,10 @@ async def command_loop(smf: SMF, gtpu: GTPUSender, stop_event: asyncio.Event):
                     if sess is None:
                         print(f"error: unknown cp_seid {seid_str}", flush=True)
                     else:
-                        dst_ip, count, v6, size = parse_session_ping(rest)
+                        dst_ip, count, v6, size, tout, intv = parse_session_ping(rest)
                         ok = await gtpu.ping(sess, dst_ip=dst_ip, count=count,
-                                             v6=v6, payload_size=size)
+                                             v6=v6, payload_size=size,
+                                             timeout=tout, interval=intv)
                         print(f"ping{'6' if v6 else ''} {ok}/{count} replies from {dst_ip}",
                               flush=True)
 

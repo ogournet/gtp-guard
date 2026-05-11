@@ -620,6 +620,61 @@ session ping 1 8.8.8.8 count 3
 session delete 1
 EOF
 
+    # ── QER tests ──────────────────────────────────────────────
+
+    # gate closed: traffic should be dropped, check deletion report
+    _hash_set testset qer1 <<EOF
+qer set id 1 gate closed
+urr set id 1 measure volume
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 qer 1 urr 1
+session ping 1 8.8.8.8 count 2 timeout 1
+session delete 1
+expect report timeout 3 cp_seid 1 urr_id 1 trigger termr total 0
+EOF
+
+    # gate open (default): traffic should pass
+    _hash_set testset qer2 <<EOF
+qer set id 1 gate open
+urr set id 1 measure volume
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 qer 1 urr 1
+session ping 1 8.8.8.8 count 2
+session delete 1
+expect report timeout 3 cp_seid 1 urr_id 1 trigger termr total_min 80
+EOF
+
+    # low MBR, some packets should be dropped (1250Bps)
+    _hash_set testset qer3 <<EOF
+qer set id 1 ul-mbr 10 dl-mbr 10 qfi 5
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 qer 1
+session ping 1 8.8.8.8 count 5 size 500 interval 0.2 timeout 2
+session delete 1
+EOF
+
+    # QER update: start with gate open, then close via modify.
+    _hash_set testset qer4 <<EOF
+qer set id 1 gate open mbr 1000
+urr set id 1 measure volume
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 qer 1 urr 1
+session ping 1 8.8.8.8 count 1
+qer set id 1 gate closed
+session modify 1 update-qer 1 query-urr 1
+expect report timeout 3 cp_seid 1 urr_id 1 trigger immer total_min 80
+session ping 1 8.8.8.8 count 2 timeout 1
+session delete 1
+expect report timeout 3 cp_seid 1 urr_id 1 trigger termr total 0
+EOF
+
+    # UL gate closed, DL gate open: pings should fail (UL blocked),
+    # deletion report shows 0 bytes
+    _hash_set testset qer5 <<EOF
+qer set id 1 ul-gate closed dl-gate open
+urr set id 1 measure volume
+session add imsi 208010101234568 dnn boa.com.example.fr enb-ip 192.168.61.2 enb-teid 8 qer 1 urr 1
+session ping 1 8.8.8.8 count 2 timeout 1
+session delete 1
+expect report timeout 3 cp_seid 1 urr_id 1 trigger termr total 0
+EOF
+
     if [ "$test_id" ]; then
 	if [ "${testset[$test_id]}" ]; then
 	    # echo "*****"
