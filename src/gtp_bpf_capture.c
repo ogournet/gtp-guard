@@ -91,7 +91,7 @@ struct gtp_bpf_capture_ctx
 struct gtp_capture_file
 {
 	char				name[32];
-	char				filename[64];
+	char				filename[92];
 	struct gtp_bpf_prog		*p;
 	struct xpcapng_dumper		*pcapng;
 	struct thread			*flush_ev;
@@ -318,9 +318,8 @@ static int
 capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 {
 	struct gtp_interface *iface;
-	char pathname[600];
-	char linkname[400];
-	char ifname[200];
+	char pathname[600], linkname[400];
+	char ifname[200], strdate[16], *r;
 	struct tm date;
 	time_t now;
 	uint32_t k;
@@ -331,7 +330,6 @@ capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 		return -1;
 	cf->p = p;
 
-	/* set filename from name, if not set */
 	if (!*cf->filename)
 		snprintf(cf->filename, sizeof (cf->filename), "%s", cf->name);
 
@@ -339,22 +337,26 @@ capture_file_start(struct gtp_capture_file *cf, struct gtp_bpf_prog *p)
 		snprintf(pathname, sizeof (pathname), "%s/%s.pcap",
 			 cfg_pcap_path, cf->filename);
 	} else {
-		/* filename with creation date */
-		now = time(NULL);
-		strftime(ifname, sizeof(ifname), "%y%m%d_%H%M%S",
-			 localtime_r(&now, &date));
-		snprintf(pathname, sizeof (pathname), "%s/%s-%s.pcap",
-			 cfg_pcap_path, cf->filename, ifname);
-
-		/* symlink to it */
+		/* trim date from filename, rotate and create symlink name */
+		r = strchrnul(cf->filename, '-');
+		*r = 0;
+		capture_file_rotate(cf);
 		snprintf(linkname, sizeof (linkname), "%s/%s.pcap",
 			 cfg_pcap_path, cf->filename);
-		unlink(linkname);
+
+		/* append or replace creation date to filename */
+		now = time(NULL);
+		strftime(strdate, sizeof(strdate), "%y%m%d_%H%M%S",
+			 localtime_r(&now, &date));
+		snprintf(r, sizeof (cf->filename) - (r - cf->filename),
+			 "-%s", strdate);
+		snprintf(pathname, sizeof (pathname), "%s/%s.pcap",
+			 cfg_pcap_path, cf->filename);
+
+		/* symlink to it */
+		(void)unlink(linkname);
 		if (symlink(pathname, linkname) < 0)
 			log_message(LOG_INFO, "symlink{%s}: %m", linkname);
-
-		/* remove file after nth element */
-		capture_file_rotate(cf);
 	}
 
 	/* open pcap */
