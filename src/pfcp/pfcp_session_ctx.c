@@ -609,8 +609,8 @@ pfcp_session_create_pdr(struct pfcp_session *s, struct pdr *pdr,
 		}
 	}
 
-	if (ie->qer_id) {
-		pdr->qer = pfcp_session_get_qer_by_id(s, ie->qer_id->value);
+	if (ie->qer_id && ie->nr_qer_id) {
+		pdr->qer = pfcp_session_get_qer_by_id(s, ie->qer_id[0]->value);
 		if (!pdr->qer)
 			return -1;
 	}

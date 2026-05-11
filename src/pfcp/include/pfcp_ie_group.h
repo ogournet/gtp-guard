@@ -180,7 +180,7 @@ struct pfcp_ie_create_pdr {
 	struct pfcp_ie_outer_header_removal *outer_header_removal;
 	struct pfcp_ie_far_id *far_id;
 	struct pfcp_ie_urr_id **urr_id;
-	struct pfcp_ie_qer_id *qer_id;
+	struct pfcp_ie_qer_id **qer_id;
 	struct pfcp_ie_mar_id *mar_id;
 	struct pfcp_ie_activate_predefined_rules *activate_predefined_rules;
 	struct pfcp_ie_activation_time *activation_time;
@@ -188,6 +188,7 @@ struct pfcp_ie_create_pdr {
 	struct pfcp_ie_ue_ip_address_pool_identity *ue_ip_address_pool_identity;
 	struct pfcp_ie_rat_type *rat_type;
 	int nr_urr_id;
+	int nr_qer_id;
 };
 
 /* Create FAR (Forwarding Action Rule) Grouped IE */
@@ -458,11 +459,12 @@ struct pfcp_ie_update_pdr {
 	struct pfcp_ie_pdi *pdi;
 	struct pfcp_ie_far_id *far_id;
 	struct pfcp_ie_urr_id *urr_id;
-	struct pfcp_ie_qer_id *qer_id;
+	struct pfcp_ie_qer_id **qer_id;
 	struct pfcp_ie_activate_predefined_rules *activate_predefined_rules;
 	struct pfcp_ie_deactivate_predefined_rules *deactivate_predefined_rules;
 	struct pfcp_ie_activation_time *activation_time;
 	struct pfcp_ie_deactivation_time *deactivation_time;
+	int nr_qer_id;
 };
 
 /* Update Forwarding Parameters Grouped IE */

@@ -944,7 +944,11 @@ pfcp_parse_ie_create_pdr(void *m, void *n, const uint8_t *cp)
 		break;
 
 	case PFCP_IE_QER_ID:
-		pfcp_msg_alloc_scheme(msg, (void **)&create_pdr->qer_id, cp, size);
+		pfcp_parse_add_ie_to_array(msg, cp, (void ***)&create_pdr->qer_id,
+					   &create_pdr->nr_qer_id,
+					   sizeof(struct pfcp_ie_qer_id), NULL);
+		pfcp_msg_alloc_scheme(msg, (void **)&create_pdr->qer_id[create_pdr->nr_qer_id - 1],
+				      cp, size);
 		break;
 
 	case PFCP_IE_MAR_ID:
@@ -1903,7 +1907,11 @@ pfcp_parse_ie_update_pdr(void *m, void *n, const uint8_t *cp)
 		break;
 
 	case PFCP_IE_QER_ID:
-		pfcp_msg_alloc_scheme(msg, (void **)&update_pdr->qer_id, cp, size);
+		pfcp_parse_add_ie_to_array(msg, cp, (void ***)&update_pdr->qer_id,
+					   &update_pdr->nr_qer_id,
+					   sizeof(struct pfcp_ie_qer_id), NULL);
+		pfcp_msg_alloc_scheme(msg, (void **)&update_pdr->qer_id[update_pdr->nr_qer_id - 1],
+				      cp, size);
 		break;
 
 	case PFCP_IE_ACTIVATE_PREDEFINED_RULES:
