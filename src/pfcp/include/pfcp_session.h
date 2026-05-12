@@ -183,7 +183,8 @@ struct urrs {
 	/* bpf's ttc mapping */
 	int				ttc_n;
 	int				ttc_msize;
-	struct pfcp_ttc_cmd		*ttc;
+	struct upf_ttc_cmd		*ttc;
+	bool				ttc_pending;
 
 	/* misc. */
 	uint8_t				cmd_cur_id;
@@ -281,7 +282,6 @@ struct pfcp_session {
 
 	/* urr handling */
 	struct urrs		urrs;
-	struct list_head	urr_cmd_pending_list;
 	struct pkt_buffer	*pending_pbuff;
 	sockaddr_t		pending_addr;
 

@@ -469,20 +469,22 @@ static void *
 _thread_main_loop(void *arg)
 {
 	struct pfcp_bpf_data_thread *th = arg;
-	struct list_head tmp_list = LIST_HEAD_INIT(tmp_list);
-	struct pfcp_ttc_cmd *ptc;
+	struct list_head tmp_list;
+	struct pfcp_ttc_cmd *ptc, *_ptc;
 
 	pthread_mutex_lock(&th->lock);
 	while (th->run) {
 		if (list_empty(&th->cmd_list))
 			pthread_cond_wait(&th->cond, &th->lock);
-		list_splice_init(&th->cmd_list, &tmp_list);
-
-		pthread_mutex_unlock(&th->lock);
-		list_for_each_entry(ptc, &tmp_list, clist) {
-			_thread_ttc_ctl(th->bd, &ptc->tc);
-		}
 		INIT_LIST_HEAD(&tmp_list);
+		list_splice_init(&th->cmd_list, &tmp_list);
+		pthread_mutex_unlock(&th->lock);
+
+		list_for_each_entry_safe(ptc, _ptc, &tmp_list, clist) {
+			_thread_ttc_ctl(th->bd, &ptc->tc);
+			free(ptc);
+		}
+
 		pthread_mutex_lock(&th->lock);
 	}
 	pthread_mutex_unlock(&th->lock);
@@ -520,10 +522,11 @@ _thread_start(struct pfcp_bpf_data *bd, int cpu)
 }
 
 int
-pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct pfcp_ttc_cmd *ptc)
+pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct upf_ttc_cmd *tc)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
 	struct pfcp_bpf_data_thread *th;
+	struct pfcp_ttc_cmd *ptc;
 
 	if (bd == NULL)
 		return -1;
@@ -538,15 +541,20 @@ pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct pfcp_ttc_cmd *ptc)
 
 	if (!++s->urrs.cmd_cur_id)
 		s->urrs.cmd_cur_id = 1;
-	ptc->tc.request_id = s->urrs.cmd_cur_id;
+
+	ptc = malloc(sizeof (*ptc));
+	if (ptc == NULL)
+		return -1;
+
+	tc->request_id = s->urrs.cmd_cur_id;
+	ptc->tc = *tc;
+	s->urrs.ttc_pending = true;
 
 	pthread_mutex_lock(&th->lock);
 	if (list_empty(&th->cmd_list))
 		pthread_cond_signal(&th->cond);
 	list_add_tail(&ptc->clist, &th->cmd_list);
 	pthread_mutex_unlock(&th->lock);
-
-	list_add_tail(&ptc->plist, &s->urr_cmd_pending_list);
 
 	return 0;
 }
@@ -647,56 +655,56 @@ pfcp_bpf_release_qer_idx(struct pfcp_session *s, uint32_t qer_idx)
 static int
 pfcp_bpf_ring_buffer_process(void *ctx, void *data, size_t size)
 {
-	struct upf_ttc_report *ur;
-	struct upf_ttc_report_data *urd;
-	struct pfcp_ttc_cmd *ptc;
+	struct upf_ttc_report *tr;
+	struct upf_ttc_report_data *trd;
 	struct pfcp_session *s;
+	int i;
 
-	if (size == sizeof (*urd)) {
-		urd = data;
-		ur = data;
-	} else if (sizeof (*ur)) {
-		ur = data;
+	if (size == sizeof (*trd)) {
+		trd = data;
+		tr = data;
+	} else if (sizeof (*tr)) {
+		tr = data;
 	} else {
 		logf_warn("unexpected size: %ld", size);
 		return 0;
 	}
 
 	/* get pfcp session */
-	s = pfcp_session_get(ur->seid);
+	s = pfcp_session_get(tr->seid);
 	if (s == NULL) {
 		logf_debug("report (size:%ld) for unknown seid %lld",
-			   size, ur->seid);
+			   size, tr->seid);
 		return 0;
 	}
 
-	/* report data included */
-	if (urd != NULL) {
-		urrs_save_metrics(&s->urrs, urd, s->router->mono2ntptime_off);
-
-		/* trigger included */
-		if (urd->r.report_flags)
-			urrs_report_triggered(s, urd);
+	/* report data / trigger included */
+	if (trd != NULL) {
+		urrs_save_metrics(&s->urrs, trd, s->router->mono2ntptime_off);
+		if (trd->r.report_flags)
+			urrs_report_triggered(s, trd);
 	}
 
-	if (!ur->request_id)
+	if (!tr->request_id)
 		return 0;
 
 
 	/* it's a ack for a previous command */
-	list_for_each_entry(ptc, &s->urr_cmd_pending_list, plist) {
-		if (ptc->tc.request_id == ur->request_id) {
-			list_del(&ptc->plist);
-			ptc->tc.request_id = 0;
-			goto next;
+	bool found = false;
+	s->urrs.ttc_pending = false;
+	for (i = 0; i < s->urrs.ttc_n; i++) {
+		if (tr->request_id == s->urrs.ttc[i].request_id) {
+			s->urrs.ttc[i].request_id = 0;
+			found = true;
 		}
+		s->urrs.ttc_pending |= s->urrs.ttc[i].request_id > 0;
 	}
-	log_debug("urr request_id %d doesn't match any request", ur->request_id);
+	if (!found)
+		log_debug("urr request_id %d doesn't match any request", tr->request_id);
 
- next:
 	/* no more pending urr command, send reply */
 	/* XXX should go elsewhere */
-	if (s->pending_pbuff != NULL && list_empty(&s->urr_cmd_pending_list)) {
+	if (s->pending_pbuff != NULL && !s->urrs.ttc_pending) {
 		struct pkt_buffer *pbuff = s->pending_pbuff;
 		struct pfcp_hdr *pfcph = (struct pfcp_hdr *) pbuff->head;
 		bool delete = false;

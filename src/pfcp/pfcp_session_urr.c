@@ -470,7 +470,7 @@ _recalc_thresholds(struct pfcp_session *s,
 		   const struct upf_ttc_report_data *urd)
 {
 	struct urrs *us = &s->urrs;
-	struct upf_ttc_cmd *tc = &us->ttc[0].tc;
+	struct upf_ttc_cmd *tc = &us->ttc[0];
 	uint64_t total, delta;
 	uint64_t prev_to = tc->total_th;
 	uint64_t prev_ul = tc->ul_th;
@@ -875,16 +875,16 @@ urrs_on_create(struct pfcp_session *s,
 		idx = pfcp_bpf_alloc_ttc_idx(s);
 		if (!idx)
 			return -1;
-		us->ttc = mpool_zalloc(&s->mp, sizeof(struct pfcp_ttc_cmd));
+		us->ttc = mpool_zalloc(&s->mp, sizeof(struct upf_ttc_cmd));
 		if (us->ttc == NULL)
 			return -1;
-		us->ttc[0].tc.seid = s->seid;
-		us->ttc[0].tc.ttc_idx = idx;
+		us->ttc[0].seid = s->seid;
+		us->ttc[0].ttc_idx = idx;
 		us->ttc_n = 1;
 		us->ttc_msize = 1;
 	}
 
-	tc = &us->ttc[0].tc;
+	tc = &us->ttc[0];
 	tc->cmd = UPF_TTC_CMD_INIT;
 	urrs_merge_flags(us, tc);
 	urrs_merge_volume_threshold(us, tc, router->urr_merge_threshold_pct);
@@ -902,7 +902,7 @@ urrs_on_modify(struct pfcp_session *s,
 	struct pfcp_router *router = s->router;
 	struct pfcp_ie_query_urr_reference *ie_urr_ref = req->query_urr_reference;
 	struct urrs *us = &s->urrs;
-	struct pfcp_ttc_cmd *ptc;
+	struct upf_ttc_cmd *tc;
 	uint32_t changed = URR_CHG_NONE;
 	int bpf_action = 0;
 	bool query_all;
@@ -956,22 +956,22 @@ urrs_on_modify(struct pfcp_session *s,
 		return 0;
 
 	/* update cached TTC command, only re-merge changed fields */
-	ptc = &us->ttc[0];
-	ptc->tc.cmd = bpf_action;
+	tc = &us->ttc[0];
+	tc->cmd = bpf_action;
 	if (bpf_action == UPF_TTC_CMD_UPDATE) {
-		urrs_merge_flags(us, &ptc->tc);
+		urrs_merge_flags(us, tc);
 		if (changed & URR_CHG_VOLUME_THRESHOLD) {
-			urrs_merge_volume_threshold(us, &ptc->tc,
+			urrs_merge_volume_threshold(us, tc,
 						    router->urr_merge_threshold_pct);
 		}
 		if (changed & URR_CHG_VOLUME_QUOTA)
-			urrs_merge_volume_quota(us, &ptc->tc);
+			urrs_merge_volume_quota(us, tc);
 		if (changed & (URR_CHG_TIME_THRESHOLD | URR_CHG_TIME_QUOTA |
 			       URR_CHG_TIME_PERIODIC | URR_CHG_INACTIVITY |
 			       URR_CHG_QUOTA_HOLDTIME))
-			urrs_merge_time(us, &ptc->tc);
+			urrs_merge_time(us, tc);
 	}
-	pfcp_bpf_ttc_ctl(s, ptc);
+	pfcp_bpf_ttc_ctl(s, tc);
 
 	return 0;
 }

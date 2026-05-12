@@ -659,7 +659,7 @@ pfcp_session_set_fwd_rule(struct pfcp_session *s, struct pdr *p)
 
 	/* TTC map index */
 	if (s->urrs.ttc_n > 0)
-		u->ttc_idx = s->urrs.ttc[0].tc.ttc_idx;
+		u->ttc_idx = s->urrs.ttc[0].ttc_idx;
 
 	/* Packet capture */
 	u->capture.flags = s->data_cap.flags &
@@ -887,9 +887,7 @@ pfcp_session_delete(struct pfcp_session *s)
 
 	/* Free BPF TTC indices */
 	for (i = 0; i < s->urrs.ttc_n; i++)
-		pfcp_bpf_release_ttc_idx(s, s->urrs.ttc[i].tc.ttc_idx);
-	if (!list_empty(&s->urr_cmd_pending_list))
-		logfc_debug(s->log, "entries remain in urr_cmd_pending_list");
+		pfcp_bpf_release_ttc_idx(s, s->urrs.ttc[i].ttc_idx);
 
 	return 0;
 }

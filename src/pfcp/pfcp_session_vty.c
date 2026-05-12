@@ -312,7 +312,7 @@ pfcp_session_vty(struct vty *vty, struct gtp_conn *c, void *arg)
 			for (i = 0; i < us->n; i++)
 				_pfcp_session_urr_vty(vty, us, i);
 			for (i = 0; i < us->ttc_n; i++)
-				_pfcp_session_ttc_vty(vty, &us->ttc[i].tc, i);
+				_pfcp_session_ttc_vty(vty, &us->ttc[i], i);
 		}
 	}
 	return 0;

@@ -369,7 +369,7 @@ pfcp_session_establishment_request(struct pfcp_msg *msg, struct pfcp_server *srv
 	pfcph->seid = s->remote_seid.id;
 
 	/* Some urr commands are still pending, delay reply */
-	if (!list_empty(&s->urr_cmd_pending_list)) {
+	if (s->urrs.ttc_pending) {
 		s->pending_addr = *addr;
 		s->pending_pbuff = pbuff;
 		return PFCP_ROUTER_DELAYED;
@@ -424,7 +424,7 @@ pfcp_session_modification_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 	}
 
 	/* Some urr commands are still pending, delay reply */
-	if (!list_empty(&s->urr_cmd_pending_list)) {
+	if (s->urrs.ttc_pending) {
 		s->pending_addr = *addr;
 		s->pending_pbuff = pbuff;
 		srv->s.pbuff = NULL;
@@ -481,9 +481,9 @@ pfcp_session_deletion_request(struct pfcp_msg *msg, struct pfcp_server *srv,
 
 	/* Delete URRs, and generate the last report */
 	if (s->urrs.ttc_n) {
-		struct pfcp_ttc_cmd *ptc = &s->urrs.ttc[0];
-		ptc->tc.cmd = UPF_TTC_CMD_DELETE;
-		pfcp_bpf_ttc_ctl(s, ptc);
+		struct upf_ttc_cmd *tc = &s->urrs.ttc[0];
+		tc->cmd = UPF_TTC_CMD_DELETE;
+		pfcp_bpf_ttc_ctl(s, tc);
 
 		s->pending_addr = *addr;
 		s->pending_pbuff = srv->s.pbuff;

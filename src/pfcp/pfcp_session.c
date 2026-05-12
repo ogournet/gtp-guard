@@ -142,7 +142,6 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 	INIT_LIST_HEAD(&s->pdr_list);
 	INIT_LIST_HEAD(&s->far_list);
 	INIT_LIST_HEAD(&s->te_list);
-	INIT_LIST_HEAD(&s->urr_cmd_pending_list);
 	s->apn = apn;
 	s->router = r;
 	time_now_to_calendar(&s->creation_time);

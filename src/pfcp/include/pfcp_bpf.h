@@ -31,7 +31,6 @@ struct pfcp_ttc_cmd
 {
 	struct upf_ttc_cmd	tc;
 	struct list_head	clist;
-	struct list_head	plist;
 };
 
 struct pfcp_bpf_data
@@ -60,7 +59,7 @@ struct pfcp_bpf_data
 };
 
 /* Prototypes */
-int pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct pfcp_ttc_cmd *ptc);
+int pfcp_bpf_ttc_ctl(struct pfcp_session *s, struct upf_ttc_cmd *tc);
 int pfcp_bpf_teid_action(struct pfcp_router *r, int action, struct pfcp_teid *t,
 			 struct ue_ip_address *ue);
 int pfcp_bpf_action(struct pfcp_session *s, struct pfcp_fwd_rule *r,
