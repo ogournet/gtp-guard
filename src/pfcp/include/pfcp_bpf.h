@@ -48,10 +48,12 @@ struct pfcp_bpf_data
 	int			ttc_ctl_prog_fd;
 	struct pfcp_bpf_data_thread **ctl_task;
 
-	/* qer */
+	/* mbr */
 	struct bpf_map		*upf_mbr;
-	uint8_t			*qer_alloc;
-	int			qer_alloc_cur;
+	uint8_t			*mbr_alloc;
+	int			mbr_alloc_cur;
+	void			*mbr_map;
+	size_t			mbr_map_size;
 
 	/* upf_events ring_buffer */
 	struct ring_buffer	*rbuf;
@@ -68,10 +70,7 @@ int pfcp_bpf_teid_vty(struct vty *vty, struct gtp_bpf_prog *p, int dir,
 		      struct ue_ip_address *ue, struct pfcp_teid *t);
 uint32_t pfcp_bpf_alloc_ttc_idx(struct pfcp_session *s);
 void pfcp_bpf_release_ttc_idx(struct pfcp_session *s, uint32_t ttc_idx);
-int pfcp_bpf_qer_update(struct pfcp_session *s, uint32_t qer_idx,
-			const struct upf_mbr *qr);
-int pfcp_bpf_qer_lookup(struct pfcp_session *s, uint32_t qer_idx,
-			 struct upf_mbr *qr);
-uint32_t pfcp_bpf_alloc_qer_idx(struct pfcp_session *s);
-void pfcp_bpf_release_qer_idx(struct pfcp_session *s, uint32_t qer_idx);
+struct upf_mbr *pfcp_bpf_mbr_data(struct pfcp_session *s, uint32_t mbr_idx);
+uint32_t pfcp_bpf_alloc_mbr_idx(struct pfcp_session *s);
+void pfcp_bpf_release_mbr_idx(struct pfcp_session *s, uint32_t mbr_idx);
 uint64_t pfcp_bpf_lookup_seid(struct pfcp_router *r, const struct upf_egress_key *ek);

@@ -42,6 +42,7 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(map_flags, BPF_F_MMAPABLE);
 	__uint(max_entries, BPF_UPF_USER_COUNTER_MAP_SIZE);
 	__type(key, __u32);
 	__type(value, struct upf_mbr);

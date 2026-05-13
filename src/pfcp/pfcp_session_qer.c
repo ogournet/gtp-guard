@@ -76,41 +76,32 @@ qers_update_bpf(struct pfcp_session *s, const struct qer *q,
 {
 	const uint64_t rate_factor = 537;
 	const uint32_t default_avg_window = 1000;
-	struct upf_mbr qr;
+	struct upf_mbr *qr;
 	uint32_t avg_window;
 
-	memset(&qr, 0, sizeof(qr));
+	qr = pfcp_bpf_mbr_data(s, bpf_idx);
+	if (qr == NULL)
+		return;
+
 	avg_window = q->averaging_window ?: default_avg_window;
 
 	if (q->ul_mbr) {
-		qr.tb_ul_rate = q->ul_mbr * rate_factor;
-		qr.tb_ul_burst = (q->ul_mbr * avg_window / 8) << 8;
+		qr->tb_ul_rate = q->ul_mbr * rate_factor;
+		qr->tb_ul_burst = (q->ul_mbr * avg_window / 8) << 8;
 	}
 	if (q->dl_mbr) {
-		qr.tb_dl_rate = q->dl_mbr * rate_factor;
-		qr.tb_dl_burst = (q->dl_mbr * avg_window / 8) << 8;
+		qr->tb_dl_rate = q->dl_mbr * rate_factor;
+		qr->tb_dl_burst = (q->dl_mbr * avg_window / 8) << 8;
 	}
 
 	if (is_update) {
 		/* preserve current tokens, cap to new burst */
-		struct upf_mbr cur;
-		if (!pfcp_bpf_qer_lookup(s, bpf_idx, &cur)) {
-			qr.tb_ul_tokens = min(cur.tb_ul_tokens,
-					      qr.tb_ul_burst);
-			qr.tb_dl_tokens = min(cur.tb_dl_tokens,
-					      qr.tb_dl_burst);
-			qr.tb_ul_last = cur.tb_ul_last;
-			qr.tb_dl_last = cur.tb_dl_last;
-		} else {
-			qr.tb_ul_tokens = qr.tb_ul_burst;
-			qr.tb_dl_tokens = qr.tb_dl_burst;
-		}
+		qr->tb_ul_tokens = min(qr->tb_ul_tokens, qr->tb_ul_burst);
+		qr->tb_dl_tokens = min(qr->tb_dl_tokens, qr->tb_dl_burst);
 	} else {
-		qr.tb_ul_tokens = qr.tb_ul_burst;
-		qr.tb_dl_tokens = qr.tb_dl_burst;
+		qr->tb_ul_tokens = qr->tb_ul_burst;
+		qr->tb_dl_tokens = qr->tb_dl_burst;
 	}
-
-	pfcp_bpf_qer_update(s, bpf_idx, &qr);
 }
 
 
@@ -204,7 +195,7 @@ qers_remove(struct pfcp_session *s, uint32_t qer_id)
 
 	/* release BPF entry before overwriting */
 	if (qs->q[idx].bpf_idx)
-		pfcp_bpf_release_qer_idx(s, qs->q[idx].bpf_idx);
+		pfcp_bpf_release_mbr_idx(s, qs->q[idx].bpf_idx);
 
 	qs->n--;
 	if (idx == qs->n)
@@ -224,7 +215,7 @@ _qer_sync_bpf(struct pfcp_session *s, struct qer *q)
 {
 	if (!q->ul_mbr && !q->dl_mbr) {
 		if (q->bpf_idx) {
-			pfcp_bpf_release_qer_idx(s, q->bpf_idx);
+			pfcp_bpf_release_mbr_idx(s, q->bpf_idx);
 			q->bpf_idx = 0;
 		}
 
@@ -232,7 +223,7 @@ _qer_sync_bpf(struct pfcp_session *s, struct qer *q)
 		qers_update_bpf(s, q, q->bpf_idx, true);
 
 	} else {
-		q->bpf_idx = pfcp_bpf_alloc_qer_idx(s);
+		q->bpf_idx = pfcp_bpf_alloc_mbr_idx(s);
 		if (!q->bpf_idx)
 			return -1;
 		qers_update_bpf(s, q, q->bpf_idx, false);
@@ -249,12 +240,12 @@ qers_release(struct pfcp_session *s)
 
 	for (i = 0; i < qs->n; i++) {
 		if (qs->q[i].bpf_idx) {
-			pfcp_bpf_release_qer_idx(s, qs->q[i].bpf_idx);
+			pfcp_bpf_release_mbr_idx(s, qs->q[i].bpf_idx);
 			qs->q[i].bpf_idx = 0;
 		}
 	}
 	if (qs->ambr_qer_bpf_idx) {
-		pfcp_bpf_release_qer_idx(s, qs->ambr_qer_bpf_idx);
+		pfcp_bpf_release_mbr_idx(s, qs->ambr_qer_bpf_idx);
 		qs->ambr_qer_bpf_idx = 0;
 	}
 	qs->ambr_qer_idx = -1;
@@ -307,7 +298,7 @@ qers_after_create(struct pfcp_session *s)
 
 	/* manage session ambr bpf qer entry */
 	if (qs->ambr_qer_idx >= 0 && !qs->ambr_qer_bpf_idx) {
-		qs->ambr_qer_bpf_idx = pfcp_bpf_alloc_qer_idx(s);
+		qs->ambr_qer_bpf_idx = pfcp_bpf_alloc_mbr_idx(s);
 		if (!qs->ambr_qer_bpf_idx)
 			return -1;
 		qers_update_bpf(s, &qs->q[qs->ambr_qer_idx],
@@ -318,7 +309,7 @@ qers_after_create(struct pfcp_session *s)
 				qs->ambr_qer_bpf_idx, true);
 
 	} else if (qs->ambr_qer_bpf_idx) {
-		pfcp_bpf_release_qer_idx(s, qs->ambr_qer_bpf_idx);
+		pfcp_bpf_release_mbr_idx(s, qs->ambr_qer_bpf_idx);
 		qs->ambr_qer_bpf_idx = 0;
 	}
 

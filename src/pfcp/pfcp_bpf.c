@@ -24,6 +24,8 @@
 #include <arpa/inet.h>
 #include <sys/epoll.h>
 #include <bpf.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 #include "pfcp_bpf.h"
 #include "pfcp_router.h"
@@ -32,6 +34,7 @@
 #include "gtp_bpf_capture.h"
 #include "gtp_bpf_utils.h"
 #include "list_head.h"
+#include "utils.h"
 #include "addr.h"
 #include "logger.h"
 #include "table.h"
@@ -589,62 +592,45 @@ pfcp_bpf_release_ttc_idx(struct pfcp_session *s, uint32_t urr_idx)
 
 
 /*************************************************************************/
-/* QER BPF control */
+/* MBR BPF control */
 
-int
-pfcp_bpf_qer_update(struct pfcp_session *s, uint32_t qer_idx,
-		     const struct upf_mbr *qr)
+struct upf_mbr *
+pfcp_bpf_mbr_data(struct pfcp_session *s, uint32_t mbr_idx)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
-	int ret;
+	struct upf_mbr *aqr;
 
 	if (bd == NULL)
-		return -1;
+		return NULL;
 
-	ret = bpf_map__update_elem(bd->upf_mbr, &qer_idx, sizeof(qer_idx),
-				   qr, sizeof(*qr), BPF_ANY);
-	if (ret)
-		logfc_err(s->log, "bpf qer_update idx:%u failed (%m)", qer_idx);
-	return ret;
-}
-
-int
-pfcp_bpf_qer_lookup(struct pfcp_session *s, uint32_t qer_idx,
-		     struct upf_mbr *qr)
-{
-	struct pfcp_bpf_data *bd = s->router->bpf_data;
-
-	if (bd == NULL)
-		return -1;
-
-	return bpf_map__lookup_elem(bd->upf_mbr, &qer_idx, sizeof(qer_idx),
-				    qr, sizeof(*qr), 0);
+	aqr = bd->mbr_map;
+	return &aqr[mbr_idx];
 }
 
 uint32_t
-pfcp_bpf_alloc_qer_idx(struct pfcp_session *s)
+pfcp_bpf_alloc_mbr_idx(struct pfcp_session *s)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
 	int i;
 
 	for (i = 0; i < BPF_UPF_USER_COUNTER_MAP_SIZE; i++) {
-		if (++bd->qer_alloc_cur == BPF_UPF_USER_COUNTER_MAP_SIZE)
-			bd->qer_alloc_cur = 1;
-		if (!bd->qer_alloc[bd->qer_alloc_cur]) {
-			bd->qer_alloc[bd->qer_alloc_cur] = 1;
-			return bd->qer_alloc_cur;
+		if (++bd->mbr_alloc_cur == BPF_UPF_USER_COUNTER_MAP_SIZE)
+			bd->mbr_alloc_cur = 1;
+		if (!bd->mbr_alloc[bd->mbr_alloc_cur]) {
+			bd->mbr_alloc[bd->mbr_alloc_cur] = 1;
+			return bd->mbr_alloc_cur;
 		}
 	}
 	return 0;
 }
 
 void
-pfcp_bpf_release_qer_idx(struct pfcp_session *s, uint32_t qer_idx)
+pfcp_bpf_release_mbr_idx(struct pfcp_session *s, uint32_t mbr_idx)
 {
 	struct pfcp_bpf_data *bd = s->router->bpf_data;
 
 	if (bd != NULL)
-		bd->qer_alloc[qer_idx] = 0;
+		bd->mbr_alloc[mbr_idx] = 0;
 }
 
 
@@ -772,13 +758,13 @@ pfcp_bpf_alloc(struct gtp_bpf_prog *p)
 		return NULL;
 
 	bd->ttc_alloc = calloc(BPF_UPF_USER_COUNTER_MAP_SIZE, 1);
-	bd->qer_alloc = calloc(BPF_UPF_USER_COUNTER_MAP_SIZE, 1);
+	bd->mbr_alloc = calloc(BPF_UPF_USER_COUNTER_MAP_SIZE, 1);
 	bd->ctl_task = calloc(libbpf_num_possible_cpus(),
 			      sizeof (*bd->ctl_task));
-	if (bd->ttc_alloc == NULL || bd->qer_alloc == NULL ||
+	if (bd->ttc_alloc == NULL || bd->mbr_alloc == NULL ||
 	    bd->ctl_task == NULL) {
 		free(bd->ttc_alloc);
-		free(bd->qer_alloc);
+		free(bd->mbr_alloc);
 		free(bd);
 		return NULL;
 	}
@@ -810,7 +796,7 @@ pfcp_bpf_release(struct gtp_bpf_prog *p, void *udata)
 	}
 	free(bd->ctl_task);
 	free(bd->ttc_alloc);
-	free(bd->qer_alloc);
+	free(bd->mbr_alloc);
 	free(bd);
 }
 
@@ -856,6 +842,20 @@ pfcp_bpf_loaded(struct gtp_bpf_prog *p, void *udata, bool reload)
 	bd->rbuf_th = thread_add_read(master, pfcp_bpf_ring_buffer_event_cb,
 				      bd, fd, TIMER_NEVER, 0);
 
+	/* mmap upf_mbr */
+	int map_fd = bpf_map__fd(bd->upf_mbr);
+	size_t size = bpf_map__value_size(bd->upf_mbr) *
+		bpf_map__max_entries(bd->upf_mbr);
+	size_t page = sysconf(_SC_PAGESIZE);
+	bd->mbr_map_size = __ALIGN_MASK(size, page - 1);
+	bd->mbr_map = mmap(NULL, bd->mbr_map_size, PROT_READ | PROT_WRITE,
+			   MAP_SHARED, map_fd, 0);
+	if (bd->mbr_map == MAP_FAILED) {
+		logf_err("mmap: %m");
+		bd->mbr_map_size = 0;
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -868,6 +868,8 @@ pfcp_bpf_closed(struct gtp_bpf_prog *p, void *udata)
 	bd->rbuf_th = NULL;
 	if (bd->rbuf != NULL)
 		ring_buffer__free(bd->rbuf);
+	if (bd->mbr_map_size)
+		munmap(bd->mbr_map, bd->mbr_map_size);
 	bd->rbuf = NULL;
 }
 
