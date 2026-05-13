@@ -199,8 +199,8 @@ gtp_conn_refdec(struct gtp_conn *c)
 		return;
 
 	if (--c->refcnt == 0) {
-		log_message(LOG_INFO, "IMSI:%ld - no more sessions - Releasing tracking"
-			            , c->imsi);
+		log_message(LOG_DEBUG, "IMSI:%ld - no more sessions - Releasing tracking"
+				     , c->imsi);
 		gtp_conn_unhash(c);
 		free(c);
 	}

@@ -41,25 +41,37 @@ static const char *priority_colors[] = {
 };
 
 static struct log_options log_opts;
+static struct log_ctx log_def_ctx = {
+	.timestamp = LOG_TS_SHORT,
+	.priority = LOG_INFO,
+};
 
 void
 log_set_options(const struct log_options *opts)
 {
 	log_opts = *opts;
+	log_def_ctx.priority = opts->priority;
+	log_def_ctx.timestamp = opts->timestamp;
 }
+
+void log_ctx_set_defaults(struct log_ctx *ctx)
+{
+	ctx->timestamp = log_def_ctx.timestamp;
+	ctx->priority = log_def_ctx.priority;
+}
+
 
 void
 log_vprintf(const struct log_ctx *ctx, int priority, const char *fmt, va_list ap)
 {
-	enum log_timestamp ts_mode = LOG_TS_NONE;
 	char buf[256];
 	char *p = buf;
 	va_list ap_cp;
 	int off = 0, n;
 
-	if (priority < 0 || priority > LOG_DEBUG)
-		priority = LOG_DEBUG;
-	if (priority == LOG_DEBUG && !log_opts.debug)
+	ctx = ctx ?: &log_def_ctx;
+
+	if (priority < 0 || priority > ctx->priority)
 		return;
 
 	if (log_opts.sd_prefix) {
@@ -72,16 +84,14 @@ log_vprintf(const struct log_ctx *ctx, int priority, const char *fmt, va_list ap
 	}
 
 	/* timestamp — per-context override, fallback to global */
-	if (!log_opts.sd_prefix &&
-	    (ts_mode = ctx && ctx->timestamp != LOG_TS_NONE ?
-	     ctx->timestamp : log_opts.timestamp) != LOG_TS_NONE) {
+	if (!log_opts.sd_prefix && ctx->timestamp != LOG_TS_NONE) {
 		struct timespec ts;
 		struct tm tm;
 
 		clock_gettime(CLOCK_REALTIME, &ts);
 		localtime_r(&ts.tv_sec, &tm);
 
-		if (ts_mode == LOG_TS_LONG)
+		if (ctx->timestamp == LOG_TS_LONG)
 			off += scnprintf(buf + off, sizeof(buf) - off,
 					 "%04d-%02d-%02d",
 					 tm.tm_year + 1900, tm.tm_mon + 1,
@@ -95,13 +105,14 @@ log_vprintf(const struct log_ctx *ctx, int priority, const char *fmt, va_list ap
 	/* module prefix */
 	if (ctx && *ctx->prefix)
 		off += scnprintf(buf + off, sizeof(buf) - off, "%s[%s]",
-				 ts_mode != LOG_TS_NONE ? " " : "", ctx->prefix);
+				 ctx->timestamp != LOG_TS_NONE ? " " : "",
+				 ctx->prefix);
 
 	/* color reset */
 	if (log_opts.color)
 		off += scnprintf(buf + off, sizeof(buf) - off, "\033[0m");
 
-	if (ts_mode != LOG_TS_NONE || (ctx && *ctx->prefix))
+	if (ctx->timestamp != LOG_TS_NONE || (ctx && *ctx->prefix))
 		buf[off++] = ' ';
 
 	/* print message.  */

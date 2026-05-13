@@ -153,6 +153,10 @@ pfcp_session_alloc(struct pfcp_ue *ue, struct gtp_apn *apn, struct pfcp_router *
 	}
 	s->seid = seid;
 
+	log_ctx_set_defaults(&s->log);
+	if (s->log.priority < LOG_DEBUG)
+		s->log.priority = LOG_WARNING;
+
 	/* Link to UE, if present */
 	if (ue != NULL) {
 		s->ue = ue;
@@ -300,7 +304,7 @@ pfcp_session_expire(struct thread *t)
 {
 	struct pfcp_session *s = THREAD_ARG(t);
 
-	logc_notice(s->log, "Expiring pfcp-session-id:0x%" PRIx64, s->seid);
+	logc_notice(s->log, "session expired");
 	pfcp_session_release(s);
 }
 

@@ -40,21 +40,21 @@ enum log_timestamp {
 
 struct log_options {
 	enum log_timestamp	timestamp;
+	int			priority;
 	bool			color;
 	bool			sd_prefix;	/* systemd <priority> prefix */
-	bool			debug;
 };
 
 struct log_ctx {
 	char			prefix[48];
 	enum log_timestamp	timestamp;
+	int			priority;
 };
 
-extern void log_set_options(const struct log_options *opts);
-extern void log_vprintf(const struct log_ctx *ctx, int priority,
-			const char *fmt, va_list ap);
-extern void log_printf(const struct log_ctx *ctx, int priority,
-		       const char *fmt, ...)
+void log_set_options(const struct log_options *opts);
+void log_ctx_set_defaults(struct log_ctx *ctx);
+void log_vprintf(const struct log_ctx *ctx, int priority, const char *fmt, va_list ap);
+void log_printf(const struct log_ctx *ctx, int priority, const char *fmt, ...)
 	__attribute__((format(printf, 3, 4)));
 
 /* convenient macro, with and without a log context */

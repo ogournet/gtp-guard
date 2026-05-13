@@ -45,6 +45,7 @@
 static char *pid_file = PROG_PID_FILE;
 static struct log_options log_opt = {
 	.timestamp = LOG_TS_SHORT,
+	.priority = LOG_INFO
 };
 
 /* Daemon stop sequence */
@@ -190,7 +191,7 @@ parse_cmdline(int argc, char **argv)
 			break;
 		case 'd':
 			debug |= 8;
-			log_opt.debug = true;
+			log_opt.priority = LOG_DEBUG;
 			break;
 		case 'b':
 			debug |= 16;
