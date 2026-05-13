@@ -30,10 +30,12 @@
 #include "gtp_teid.h"
 #include "gtp_session.h"
 #include "gtp_vty_shell.h"
+#include "cpu.h"
 #include "command.h"
 #include "bitops.h"
 #include "signals.h"
 #include "pidfile.h"
+#include "process.h"
 #include "utils.h"
 #include "logger.h"
 #include "memory.h"
@@ -152,6 +154,7 @@ parse_cmdline(int argc, char **argv)
 		{"use-file",		required_argument,	NULL, 'f'},
 		{"vty-shell",		optional_argument,	NULL, 'V'},
 		{"cli",			optional_argument,	NULL, 'V'},
+		{"cpu",			required_argument,      NULL, 'c'},
 		{"version",		no_argument,		NULL, 'v'},
 		{"help",		no_argument,		NULL, 'h'},
 		{NULL,			0,			NULL,  0 }
@@ -162,7 +165,7 @@ parse_cmdline(int argc, char **argv)
 		exit(gtp_vtysh(VTY_UNIX_PATH));
 
 	curind = optind;
-	while (longindex = -1, (c = getopt_long(argc, argv, ":dt:bf:V::vh",
+	while (longindex = -1, (c = getopt_long(argc, argv, ":dt:bf:V::c:vh",
 						long_options, &longindex)) != -1) {
 		if (longindex >= 0 &&
 		    long_options[longindex].has_arg == required_argument &&
@@ -181,6 +184,12 @@ parse_cmdline(int argc, char **argv)
 			usage(argv[0]);
 			exit(EXIT_SUCCESS);
 			break;
+		case 'c':
+		{
+			cpu_set_t cpus;
+			cpulist_to_set(optarg, &cpus);
+			set_process_cpu_affinity(&cpus, argv[0]);
+		}
 		case 't':
 			if (!strcmp(optarg, "short"))
 				log_opt.timestamp = LOG_TS_SHORT;
